@@ -1,0 +1,7 @@
+{
+  "name": "tabichat",
+  "private": true,
+  "dependencies": {
+    "mqtt": "^5.10.0"
+  }
+}

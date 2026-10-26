@@ -1,0 +1,127 @@
+#!/bin/sh
+# Guard: block ADDED lines containing known secrets (deletions of them must stay committable) from
+# entering any commit in this repo.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+#
+# The list is one hex-encoded literal per line — hex uses only [0-9a-f], so the guard can never
+# contain a plaintext it guards (base64 could not, and a decoder would still be needed either way).
+#
+# ---------------------------------------------------------------------------
+# WHY THIS FILE WAS REWRITTEN, and the class of bug it answers.
+#
+# The version this replaces decoded each line with the external decoder command and ended the line
+# `decoded=$(… | <decoder> -r -p) || exit 0`. That decoder is NOT installed on idaho. So the
+# substitution failed, `|| exit 0` fired, and **the guard passed every commit on this box without
+# comparing anything** — silently, and it printed one stderr line (`pre-commit: … xxd: not found`)
+# that nobody read because the commit landed anyway. Measured on this seat's own two commits on
+# 2026-10-18: they went through it. That is a security control that fails OPEN, which this project
+# has ruled against twice, and the fix is to make the check real — never to widen or silence it.
+#
+# THREE fail-opens were removed. All three mattered:
+#   1. `|| exit 0` on the decode         → gone; a decode that cannot happen is a REFUSAL.
+#   2. `[ -f "$FORBIDDEN" ] || exit 0`   → gone; a missing list is a refusal, not a pass.
+#   3. `[ -n "$args" ] || exit 0`        → gone; an empty pattern list is a refusal, not a pass.
+#      Item 3 is the one that would have survived fixing item 1 alone, which is exactly why "install
+#      the decoder" is not the answer to this bug: with an empty list the guard passes whether or
+#      not a decoder works.
+#
+# THE MECHANISM, and why THIS one: the hex is decoded BY THE SHELL ITSELF — character-by-character
+# with POSIX parameter expansion, a `case` for validation, `$(( ))` for the value, and octal escapes
+# in `printf`'s FORMAT string for the byte. There is no external decoder of any kind to be absent:
+# not the one that broke here, not the usual alternatives either. Swapping one optional external
+# tool for another would have left the identical hole with a different tool name in it.
+#
+# Why the format-string trick is safe here: every byte of the decoded literal arrives as an octal
+# escape, INCLUDING a `%` (which is written `\045`), so the built string contains no format specifier
+# for printf to interpret and no way for a pattern to change what gets printed.
+#
+# EVERY EXIT IS NOW ACCOUNTED FOR: `exit 1` with a named reason when the guard cannot run or when
+# something matches; `exit 0` only AFTER a real comparison of a real, non-empty pattern list against
+# a real staged diff, and it says so out loud. An empty result is never a pass, and "nothing to
+# check" is stated as its own message so a reader can tell it apart from "checked and clean".
+# ---------------------------------------------------------------------------
+
+die() {
+    printf 'pre-commit: BLOCKED — secret guard cannot run: %s\n' "$1" >&2
+    printf 'pre-commit: nothing was committed. Fix the cause, or get the guard repaired — do NOT use --no-verify.\n' >&2
+    exit 1
+}
+
+FORBIDDEN="$(dirname "$0")/forbidden-strings.hex"
+[ -f "$FORBIDDEN" ] || die "the pattern list $FORBIDDEN is missing (a guard with no patterns checks nothing)"
+[ -r "$FORBIDDEN" ] || die "the pattern list $FORBIDDEN is not readable"
+
+# The scratch file holding the decoded literals. It lives in the GIT DIRECTORY, never in the
+# worktree: this repo is shared by up to eleven lanes and a stray file in the worktree is one that
+# another lane's broad `git add` could sweep into a commit under their name. Contents are the
+# literals themselves, so: 0600, removed on every exit path by the trap, and NEVER printed.
+GDIR="${GIT_DIR:-$(git rev-parse --git-dir 2>/dev/null)}"
+[ -n "$GDIR" ] || die "cannot determine the git directory to hold a scratch pattern file"
+PATTERNS=$(mktemp "$GDIR/.forbidden-strings.XXXXXX") || die "cannot create a temp pattern file in $GDIR"
+chmod 600 "$PATTERNS" 2>/dev/null
+cleanup() { [ -n "$PATTERNS" ] && rm -f "$PATTERNS"; }
+trap cleanup EXIT INT TERM
+
+# hex -> octal printf escapes, in pure sh. Two chars at a time, taken off the front of the line with
+# ${var%"${var#?}"} so the loop needs no cut/head/wc — no external command is involved in decoding.
+hex_to_esc() {
+    _rest="$1"
+    _esc=""
+    while [ -n "$_rest" ]; do
+        _c1=${_rest%"${_rest#?}"}; _rest=${_rest#?}
+        if [ -z "$_rest" ]; then
+            die "pattern list has an odd number of hex characters (a truncated row): '$_c1' with nothing after it"
+        fi
+        _c2=${_rest%"${_rest#?}"}; _rest=${_rest#?}
+        _hh="$_c1$_c2"
+        case "$_hh" in
+            ''|*[!0-9a-fA-F]*) die "pattern list line contains a non-hex pair: '$_hh'" ;;
+        esac
+        _d=$((0x$_hh))
+        _esc="$_esc\\$(printf '%03o' "$_d")"
+    done
+    printf '%s' "$_esc"
+}
+
+count=0
+while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+        ''|' '*) continue ;;            # blank / indented-blank rows carry no pattern
+        '#'*)   continue ;;             # comments, same convention as the list's own header
+    esac
+    esc=$(hex_to_esc "$line") || die "could not decode pattern row $((count + 1))"
+    [ -n "$esc" ] || die "a decoded pattern row is empty — a guard comparing against \"\" is not a guard"
+    # the format string IS the escapes; there is no `%` in it to interpret (see header)
+    printf "$esc\n" >> "$PATTERNS" || die "could not write the scratch pattern file"
+    count=$((count + 1))
+done < "$FORBIDDEN"
+
+[ "$count" -gt 0 ] || die "the pattern list has 0 usable rows (read $FORBIDDEN: is it empty?)"
+[ -s "$PATTERNS" ] || die "the decoded pattern file is empty though the list had $count row(s)"
+
+# What is being compared: ADDED lines only, so removing a secret stays committable (that is the
+# guard's own stated rule, and the test asserts it as a cell).
+staged=$(git diff --cached -U0) || die "git diff --cached failed"
+added=$(printf '%s\n' "$staged" | grep -s '^+' | grep -v '^+++' | sed '/^+$/d')
+if [ -z "$added" ]; then
+    printf 'pre-commit: secret guard ran — %s pattern(s), and the diff has no added lines to check.\n' "$count" >&2
+    exit 0
+fi
+
+# -F: FIXED strings, never regexes. Without it a literal containing [ ] ( ) | ? + * narrows itself
+# into matching almost nothing, and the guard passes real secrets while looking intact — which is the
+# same defect class wearing a different hat. -f: patterns come from the scratch file, so no literal
+# ever appears in a command line where `ps` could read it.
+if printf '%s\n' "$added" | grep -s -F -f "$PATTERNS" >/dev/null; then
+    files=$(git diff --cached --name-only | tr '\n' ' ')
+    printf 'pre-commit: BLOCKED — a staged ADDED line matches .githooks/forbidden-strings.hex\n' >&2
+    printf 'pre-commit:   patterns checked: %s (class: known dev/owner secret literals, hex-listed so this hook cannot itself contain one)\n' "$count" >&2
+    printf 'pre-commit:   staged paths: %s\n' "$files" >&2
+    printf 'pre-commit:   WHICH of the %s matched is deliberately not printed — echoing it would put the secret in your terminal, in the room, and in any report that quotes this failure.\n' "$count" >&2
+    printf 'pre-commit: nothing was committed — remove the secret and rotate it where it is live.\n' >&2
+    exit 1
+fi
+
+printf 'pre-commit: secret guard ran clean — %s pattern(s) against the staged added lines.\n' "$count" >&2
+exit 0
