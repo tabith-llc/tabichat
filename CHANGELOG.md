@@ -1,7 +1,5 @@
 # Changelog
 
-## Unreleased
-
 ## [0.1.1] - 2026-11-02
 
 ### New Features
@@ -19,7 +17,7 @@
 
 - `chat_read scope="peers"` reports the presence beats this seat has heard, with age and an explicit `stale` state, instead of a bare "online" (#11)
 - Unconsumed test files are registered as gates, and a missing shipped module or unregistered gate now fails the deploy (#13)
-- Requires pi 1.5.0; pi 1.4.x also loads the extension
+- Built and tested against pi 1.5.0, the latest release of the harness; pi 1.4.x also loads the extension
 
 ### Fixed
 
