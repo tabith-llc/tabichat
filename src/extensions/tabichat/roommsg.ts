@@ -108,11 +108,36 @@ export const controlTopic = (room: string): string => `chat/${room}/_ctl`;
  * publishing there before every reader subscribes `msg/+` silences the room — both are the failure
  * this gate exists to prevent.
  */
+export const topicLeaf = (nick: string): string =>
+  (nick ?? "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
+
 export const msgTopic = (room: string, nick: string): string => {
-  const leaf = (nick ?? "").trim().replace(/[^a-zA-Z0-9_-]/g, "");
+  const leaf = topicLeaf(nick);
   // an empty leaf after sanitising would aim the publish at `chat/<room>/msg/` — a different topic
   // with a trailing separator, i.e. nowhere anyone reads. Refuse, do not misroute.
   return leaf ? `chat/${room}/msg/${leaf}` : "";
+};
+/**
+ * The retained per-lane TAIL BOARD (leg 800, flag `MQTT_HIST_BOARD=1`, default OFF): one topic per
+ * lane, overwritten on every send, so a late subscriber is handed the lane's last few lines the
+ * moment it subscribes. Same sanitised leaf as `msgTopic` — one filter, never a re-implementation.
+ * An empty leaf returns "" for the same reason `msgTopic` refuses: a trailing-separator topic is
+ * aimed nowhere anyone reads.
+ */
+export const histTopic = (room: string, nick: string): string => {
+  const leaf = topicLeaf(nick);
+  return leaf ? `chat/${room}/hist/${leaf}` : "";
+};
+/** The read half of the tail board: every lane hears every lane's board, one level only. */
+export const histWild = (room: string): string => `chat/${room}/hist/+`;
+/** The lane a `chat/<room>/hist/<leaf>` topic names, or "" when the topic is not of that shape. */
+export const nickFromHistTopic = (topic: string, room: string): string => {
+  const pre = `chat/${room}/hist/`;
+  if (!topic.startsWith(pre)) return "";
+  const leaf = topic.slice(pre.length);
+  // one level, and EXACTLY the sanitised form `histTopic` writes: wildcards, spaces, and anything
+  // a real publisher could not have produced are nobody's board.
+  return /^[a-zA-Z0-9_-]+$/.test(leaf) ? leaf : "";
 };
 /** The read half of the same shape: every lane hears every sender. */
 export const msgWild = (room: string): string => `chat/${room}/msg/+`;
@@ -224,8 +249,15 @@ export const peerRecordWins = (prev: PeerSeen | undefined, incoming: PeerSeen): 
 
 /**
  * Liveness, three honest states. A peer is "stale" once its beat is older than
- * the allowance — the lane may be wedged, not quiet. A future ts (a peer's clock
- * ahead of ours) is treated as online, never as offline.
+ * the allowance — the lane may be wedged, not quiet. A small clock skew (a peer's clock a little
+ * ahead of ours) is still read as online: it is one beat, and one beat we can time.
+ *
+ * WHAT THIS FUNCTION CAN NEVER KNOW. The stamp is the PEER'S clock, and the age is taken against
+ * OURS, so a record stamped more than one whole allowance ahead of us is not a beat we can time at
+ * all — it is a clock we cannot trust. It used to read `online`, and it read `online` for as long as
+ * the skew kept the age negative, which is how a seat whose process was gone stayed live on the
+ * peers board and got lanes staffed off it (R-2717 item 3; the board was never a process check and
+ * never said so). Such a record is `stale` now: "we heard something, we cannot rank it".
  */
 export const peerState = (
   seen: PeerSeen | undefined,
@@ -236,8 +268,33 @@ export const peerState = (
   // an unstamped record says nothing about liveness: it cannot be proof of life
   if (seen.ts <= 0) return "stale";
   const age = nowMs - seen.ts;
-  if (!Number.isFinite(age) || age < -staleAfterMs) return "online";
+  // an age we cannot compute, or a stamp further ahead than one allowance, ranks as nothing.
+  if (!Number.isFinite(age) || age < -staleAfterMs) return "stale";
   return age > staleAfterMs ? "stale" : "online";
+};
+
+/**
+ * The one line a peers surface must carry: what it actually measured.
+ *
+ * "Who is live" is a claim about a process. Nothing in this repo looks at a process — the reading is
+ * the last presence beat THIS seat heard on the room's presence topic, ranked against THIS seat's
+ * clock, with the beat interval and the allowance as the only numbers in it. A seat that died without
+ * its last will reaching the broker keeps reading `stale` here, and a `stale` row is not evidence that
+ * anyone is gone. Say that on the surface, because a reader who is not sitting on the broker cannot
+ * derive it from three words and a number (s305: the witnesses for a running process are /proc and
+ * lane-exits.log, and this board is neither).
+ */
+export const PEERS_INSTRUMENT =
+  "measured: the last presence beat THIS seat heard per nick on this room's presence topic, ranked against THIS seat's clock; a beat is not a process check, so `stale` here never means gone";
+
+/** How one row was arrived at, in the row itself: never an age invented from a stamp we cannot rank. */
+export const peerAge = (seen: PeerSeen, nowMs: number): string => {
+  if (seen.ts <= 0) return "no stamp";
+  const age = nowMs - seen.ts;
+  if (!Number.isFinite(age)) return "unrankable";
+  // a stamp ahead of us prints the skew it carries, not a clamped "0s" that reads as "just now"
+  if (age < 0) return `ahead ${ageLabel(-age)}`;
+  return ageLabel(age);
 };
 
 /** Compact age: 42s, 3m12s, 2h05m. */
@@ -271,6 +328,20 @@ export interface RoomLine {
    * change makes inert, and a line that reads `to=all` cannot be mistaken for a broadcast.
    */
   to?: string;
+  /**
+   * The line came from HISTORY — the on-disk journal or a retained tail board (leg 800), not from
+   * the live room. Replayed lines must never read as news: they carry this flag so every render
+   * shows `hist`, and the wiring never injects or re-journals them.
+   */
+  hist?: boolean;
+  /**
+   * The MONOTONIC ARRIVAL STAMP (leg 804, D1). `pushRoomLine` assigns it; `takeUnseen` compares
+   * against it. An absolute INDEX into a capped, shifting array cannot carry the unseen boundary:
+   * once `shift()` fires, every stored index silently points one line too far, and a reader at the
+   * saturated length sees nothing EVER AGAIN — proven pre-existing on `dev` by leg 803's control
+   * block (0/5 surfaced with no journal involved). The boundary must be a number that only grows.
+   */
+  seq?: number;
 }
 
 /** " to=<field>" when the line names an addressee, "" when it carries no field. */
@@ -279,9 +350,9 @@ const toLabel = (to: string | undefined): string => {
   return t ? ` to=${t}` : "";
 };
 
-/** One rendered room line: [HH:MM:SS chat:nick to=<field>] text */
+/** One rendered room line: [HH:MM:SS chat:nick to=<field> hist] text — ` hist` only for replayed lines. */
 export const renderLine = (l: RoomLine): string =>
-  `[${tsLabel(l.ts)} chat:${l.nick}${toLabel(l.to)}] ${l.message}`;
+  `[${tsLabel(l.ts)} chat:${l.nick}${toLabel(l.to)}${l.hist ? " hist" : ""}] ${l.message}`;
 
 /**
  * Provenance for one INBOUND line (owner order 2026-10-08, after a lane published six
@@ -297,7 +368,7 @@ export const lineTag = (id: string | undefined, ts: number): string =>
 
 /** How a lane sees one inbound line: [chat:<nick> id=<id> @HH:MM:SS to=<field>] text */
 export const renderInbound = (l: RoomLine): string =>
-  `[chat:${l.nick}${lineTag(l.id, l.ts)}${toLabel(l.to)}] ${l.message}`;
+  `[chat:${l.nick}${lineTag(l.id, l.ts)}${toLabel(l.to)}${l.hist ? " hist" : ""}] ${l.message}`;
 
 /**
  * Per-sender tally of received mentions: `lead-agent x1, dust x2`. This is the number a lane
@@ -339,15 +410,44 @@ export const planInbound = (o: {
 
 /**
  * Lines the reader has not been shown yet, plus the cursor to store afterwards.
- * A cursor past the end (a cleared buffer) yields nothing rather than the world.
+ *
+ * STAMPED mode (leg 804): when the array's lines carry `seq`, the boundary is the last STAMP shown,
+ * not an array position — `seen = l.seq > cursor`. This is provably shift-immune: `Array.shift()`
+ * removes elements, it cannot move a stamp, so a reader parked at 50 still sees the line stamped 51
+ * after the window wrapped. An array with NO stamps keeps the historical index semantics for
+ * legacy/un-stampable callers (unit models of the old shape) — the shipped room buffer always
+ * pushes through `pushRoomLine`, so shipped reads are always in stamped mode.
  */
 export const takeUnseen = <T>(
   buf: readonly T[],
   cursor: number,
-): { lines: T[]; cursor: number } => ({
-  lines: buf.slice(Math.min(Math.max(cursor, 0), buf.length)),
-  cursor: buf.length,
-});
+): { lines: T[]; cursor: number } => {
+  const head = buf.length ? (buf[0] as { seq?: unknown }).seq : undefined;
+  if (typeof head === "number") {
+    const out = buf.filter((l) => (((l as { seq?: number }).seq ?? Number.MAX_SAFE_INTEGER) > cursor));
+    const last = out.length ? ((out[out.length - 1] as { seq?: number }).seq ?? cursor) : cursor;
+    return { lines: out, cursor: last };
+  }
+  return { lines: buf.slice(Math.min(Math.max(cursor, 0), buf.length)), cursor: buf.length };
+};
+
+/**
+ * The ONE way a room line enters the capped window (leg 804, D1): stamp the next monotonic seq,
+ * append, and let the oldest fall when the cap is reached. Callers that hand-rolled
+ * `buffer.push(...); if (buffer.length > BUFFER_MAX) buffer.shift();` held the exact index-vs-shift
+ * drift this function exists to close — a pushed line sat BELOW the stored cursor forever.
+ * Returns the stamped line (the one in the window; the caller's own object stays unstamped).
+ */
+export const pushRoomLine = <T extends RoomLine>(buf: T[], line: T, cap: number): T => {
+  const prev = buf.length ? (buf[buf.length - 1].seq ?? buf.length) : 0;
+  const stamped = { ...line, seq: prev + 1 } as T;
+  buf.push(stamped);
+  if (buf.length > cap) buf.shift();
+  return stamped;
+};
+/** The unseen cursor to store after a read has shown everything in the window. */
+export const lastSeq = <T extends { seq?: number }>(buf: readonly T[]): number =>
+  buf.length ? (buf[buf.length - 1].seq ?? buf.length) : 0;
 
 /** Rendered peer listing, self excluded, stale and offline last. */
 export const renderPeers = (
@@ -361,11 +461,37 @@ export const renderPeers = (
     .filter(([nick]) => nick !== self)
     .map(([nick, seen]) => {
       const st = peerState(seen, nowMs, staleAfterMs);
-      const age = seen.ts > 0 ? ageLabel(Math.max(0, nowMs - seen.ts)) : "no stamp";
-      return { nick, st, text: `${nick} ${st === "online" ? "online" : st} ${age}` };
+      return { nick, st, text: `${nick} ${st === "online" ? "online" : st} ${peerAge(seen, nowMs)}` };
     })
     .sort((a, b) => rank[a.st] - rank[b.st] || a.nick.localeCompare(b.nick))
     .map((p) => `${p.st === "online" ? "*" : p.st === "stale" ? "?" : "-"} ${p.text}`);
+};
+
+/**
+ * The whole peers surface in one string: the rows, then the line saying how they were arrived at.
+ *
+ * This exists because two readers — the `/peers` command and `chat_read scope="peers"` — both used to
+ * print the rows bare, and bare rows read as a census. They are not one: the listing is derived from
+ * the beats THIS seat has received, so a seat that has heard nothing prints nothing about the room it
+ * is in. The instrument line travels with the rows for both readers, including the empty case, which
+ * is the one a coordinator is most likely to act on.
+ */
+export const renderPeersBoard = (
+  peers: readonly [string, PeerSeen][],
+  nowMs: number,
+  self: string,
+  room: string,
+  staleAfterMs: number = PEER_STALE_AFTER_MS_DEFAULT,
+): string => {
+  const rows = renderPeers(peers, nowMs, self, staleAfterMs);
+  const heard = peers.filter(([nick, seen]) => nick !== self && seen.ts > 0).length;
+  return [
+    rows.length ? rows.join("\n") : `no other peer heard of in ${room}`,
+    PEERS_INSTRUMENT,
+    rows.length
+      ? `rows: ${rows.length} (stamped: ${heard}; unstamped: ${rows.length - heard})`
+      : `rows: 0 — this seat has received no presence beat from another nick, which is a fact about this seat's subscription, not about the room`,
+  ].join("\n");
 };
 
 /**

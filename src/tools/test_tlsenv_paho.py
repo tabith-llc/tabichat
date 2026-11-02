@@ -98,8 +98,44 @@ if not os.path.isfile(STATE):
     )
 
 name, fix_dir, port, room, phase = open(STATE, encoding="utf-8").read().split()
+
+
+def fixture_nick():
+    """Which client the fixture actually minted, read from the material rather than typed here.
+
+    The harness used to mint a live lane's nick and this file spelled that name out; the fixture now
+    mints a site-neutral pair unless a caller declares names in ``TABICHAT_FIXTURE_NICKS``, so a
+    spelled-out name stops describing the tree. ``pki/clients/<nick>/`` is where the mint records what
+    it produced — the state line carries name, dir, port, room and phase, and no nick. A declaration that
+    names nothing the fixture minted refuses rather than quietly proving on some other lane's
+    certificate: which client a run spoke as is a fact the caller should have to be right about.
+    """
+    clients = os.path.join(fix_dir, "pki", "clients")
+    minted = (
+        sorted(
+            d
+            for d in os.listdir(clients)
+            if os.path.isfile(os.path.join(clients, d, "cert.pem")) and os.path.isfile(os.path.join(clients, d, "key.pem"))
+        )
+        if os.path.isdir(clients)
+        else []
+    )
+    if not minted:
+        fail_hard("the fixture minted no client cert/key pair under %s (is the fixture still up?)" % clients)
+    requested = [n for n in (os.environ.get("TABICHAT_FIXTURE_NICKS") or "").split() if n]
+    if requested and not (set(requested) & set(minted)):
+        fail_hard(
+            "TABICHAT_FIXTURE_NICKS declares %s but this fixture minted %s under %s — start the fixture "
+            "with the same declaration, or run this file without one."
+            % (requested, minted, clients)
+        )
+    declared = [n for n in requested if n in minted]
+    return declared[0] if declared else minted[0]
+
+
+NICK = fixture_nick()
 CA = os.path.join(fix_dir, "pki", "ca", "ca.crt")
-CLIENT_DIR = os.path.join(fix_dir, "pki", "clients", "flash6")
+CLIENT_DIR = os.path.join(fix_dir, "pki", "clients", NICK)
 CERT = os.path.join(CLIENT_DIR, "cert.pem")
 KEY = os.path.join(CLIENT_DIR, "key.pem")
 ROGUE_CA = os.path.join(fix_dir, "pki", "rogue", "ca.crt")
@@ -107,7 +143,10 @@ for p in (CA, CERT, KEY, ROGUE_CA):
     if not os.path.isfile(p):
         fail_hard("fixture material missing at %s (is the fixture still up?)" % p)
 
-print("paho %s | mosquitto fixture %s on 127.0.0.1:%s | acl=%s" % (PAHO_VERSION, name, port, phase))
+print(
+    "paho %s | mosquitto fixture %s on 127.0.0.1:%s | acl=%s | client=%s"
+    % (PAHO_VERSION, name, port, phase, NICK)
+)
 
 PLAIN_PORT = None
 PLAIN_CONTAINER = None
@@ -136,7 +175,7 @@ def publish_and_expect(host, port, env, want_connected=True, label=""):
         plan = transport_kwargs(url, env)
     except (TransportRefusal, TransportBlocked) as exc:
         return "refused-at-plan", str(exc)
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="flash6-tls-cell")
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="%s-tls-cell" % NICK)
     try:
         apply_to_client(client, plan)
     except (TransportRefusal, TransportBlocked) as exc:
@@ -153,7 +192,9 @@ def publish_and_expect(host, port, env, want_connected=True, label=""):
             time.sleep(0.05)
         if not client.is_connected():
             return "not-connected", "no connection within 6s (rc=%r)" % (rc_box[0],)
-        info = client.publish("chat/%s/msg/flash6" % room, '{"nick":"flash6","message":"tls cell"}')
+        # Own topic, the nick the broker minted this certificate for: the phase-2 ACL carries a
+        # client on its OWN topic and drops another's, so the publish has to name the same lane.
+        info = client.publish("chat/%s/msg/%s" % (room, NICK), '{"nick":"%s","message":"tls cell"}' % NICK)
         info.wait_for_publish(timeout=5)
         return "connected", "published rc=%r" % (rc_box[0],)
     finally:

@@ -54,11 +54,16 @@ import {
   postTooLongNote,
   peerRecordWins,
   peerState,
+  peerAge,
+  renderPeersBoard,
+  PEERS_INSTRUMENT,
   presenceTopic,
   presenceWild,
   renderLine,
   renderPeers,
   takeUnseen,
+  pushRoomLine,
+  lastSeq,
   tsLabel,
   type PeerSeen,
   type RoomLine,
@@ -250,6 +255,43 @@ check(
   "offline",
 );
 check("a peer clock slightly ahead reads online", peerState(seen("online", now + 30_000), now), "online");
+// THE FIDELITY PAIR (R-2717 item 3, the s305 lesson). The stamp is the PEER'S clock and the age is
+// taken against OURS, so a record further ahead than one whole allowance is not a beat that can be
+// timed — it is a clock this seat cannot rank. It used to read `online`, permanently, for as long as
+// the skew held the age negative: a seat whose process was gone stayed live on the peers board and
+// this office staffed lanes off it. An unrankable stamp is `stale` now, and it says so in its age.
+check(
+  "a stamp ahead by more than the allowance is not proof of life (stale, not online)",
+  peerState(seen("online", now + 10 * 60_000), now),
+  "stale",
+);
+check(
+  "a stamp ahead by exactly the allowance still ranks (the bound is not a cliff in the unsafe direction)",
+  peerState(seen("online", now + 90_000), now),
+  "online",
+);
+check(
+  "PAIRED NEGATIVE — an explicit offline beats a fresh-looking stamp: the stamp is not the claim",
+  peerState(seen("offline", now + 10 * 60_000), now),
+  "offline",
+);
+check(
+  "PAIRED NEGATIVE — a future stamp does not make a missing record live",
+  peerState(undefined, now),
+  "offline",
+);
+check("a beat 42s old prints its age", peerAge(seen("online", now - 42_000), now), "42s");
+check(
+  "THE ROW NAMING THAT LIED: a future stamp used to clamp to '0s', which reads as just-now — it prints its skew instead",
+  peerAge(seen("online", now + 600_000), now),
+  "ahead 10m00s",
+);
+check("an unstamped row says unstamped, never an age", peerAge(seen("online", 0), now), "no stamp");
+check(
+  "the listing carries the skew, not a clamped zero",
+  renderPeers([["flash7", seen("online", now + 600_000)]] as [string, PeerSeen][], now, "ultra"),
+  ["? flash7 stale ahead 10m00s"],
+);
 check("age label seconds", ageLabel(42_000), "42s");
 check("age label minutes", ageLabel(192_000), "3m12s");
 check("age label hours", ageLabel(7_500_000), "2h05m");
@@ -288,6 +330,51 @@ check(
   "markers: live peer is *, quiet peer is ?, gone peer is -",
   listing.map((l) => l.split(" ")[0]),
   ["*", "?", "-"],
+);
+
+// --- presence fidelity: the surface names its own instrument (R-2717 item 3) ----------------
+// The rows alone read as a census of the room, and a census is a claim about processes. Nothing here
+// looks at a process: the reading is the last beat THIS seat heard, ranked against THIS seat's clock.
+// The board now prints that sentence with the rows — and on the empty face, which is the one that was
+// acted on twice.
+const board = renderPeersBoard(
+  [
+    ["ultra", seen("online", now)],
+    ["flash1", seen("online", now - 10_000)],
+    ["flash2", seen("online", now - 400_000)],
+  ] as [string, PeerSeen][],
+  now,
+  "ultra",
+  "dust-6",
+);
+check("the board still renders every peer row", board.includes("* flash1 online 10s"), true);
+check(
+  "and it states the instrument, verbatim, beside the rows",
+  board.split("\n").some((l) => l === PEERS_INSTRUMENT),
+  true,
+);
+check(
+  "the instrument sentence names the two things it actually measured",
+  [PEERS_INSTRUMENT.includes("beat THIS seat heard"), PEERS_INSTRUMENT.includes("not a process check")],
+  [true, true],
+);
+check("the board counts its rows and says how many were stamped", board.includes("rows: 2 (stamped: 2; unstamped: 0)"), true);
+check(
+  "PAIRED — an unstamped record is counted as unstamped, not silently ranked as life",
+  renderPeersBoard([["flash9", seen("online", 0)]] as [string, PeerSeen][], now, "ultra", "dust-6").includes(
+    "rows: 1 (stamped: 0; unstamped: 1)",
+  ),
+  true,
+);
+const empty = renderPeersBoard([["ultra", seen("online", now)]] as [string, PeerSeen][], now, "ultra", "dust-6");
+check(
+  "THE FACE THAT COST TWO LANES: an empty board says it heard nothing, and never that the room is empty",
+  [
+    empty.includes("no other peer heard of in dust-6"),
+    empty.includes("this seat's subscription, not about the room"),
+    empty.includes(PEERS_INSTRUMENT),
+  ],
+  [true, true, true],
 );
 
 // --- P3: timestamps and the unseen cursor ----------------------------------
@@ -389,6 +476,65 @@ check("a cursor mid-buffer resumes there", takeUnseen(buf, 2).lines, ["c"]);
 check("a cursor past the end yields nothing, not the world", takeUnseen(buf, 99).lines, []);
 check("a negative cursor is clamped, not sliced from the end", takeUnseen(buf, -1).lines, ["a", "b", "c"]);
 check("the cursor still advances when nothing was new", takeUnseen(buf, 99).cursor, 3);
+
+// --- LEG 804 D1: the unseen boundary is a MONOTONIC STAMP, not an index into a shifting window ---
+// The defect (peer review 803, lead-verified on the OFFICIAL dev face with no journal at all):
+// `cursor = buffer.length` is an absolute index; once `shift()` fires every later line lands BELOW
+// the stored cursor and `unseen_only` is deaf FOREVER. Leg 800 made saturation the boot default
+// (replay 50 == BUFFER_MAX 50), so it bit every busy seat every session. The fix is `pushRoomLine`
+// stamping arrival numbers that never move, and `takeUnseen` comparing stamps, not positions.
+{
+  const CAP = 50;
+  const win: RoomLine[] = [];
+  for (let i = 1; i <= CAP; i++) pushRoomLine(win, { nick: "old", message: `pre ${i}`, ts: i }, CAP);
+  let cursor = lastSeq(win); // a reader caught up at saturation: cursor 50, buffer 50
+  let surfaced = 0;
+  for (let j = 1; j <= 5; j++) {
+    pushRoomLine(win, { nick: "wren", message: `live ${j}`, ts: 9000 + j }, CAP);
+    const g = takeUnseen(win, cursor);
+    cursor = g.cursor;
+    surfaced += g.lines.length;
+  }
+  check("D1 ACCEPTANCE: a wrapped window still surfaces every later line (5/5, was 0/5 on dev)", surfaced, 5);
+  check("D1: the window never exceeds the cap", win.length, CAP);
+  check("D1: stamp mode is detected from the lines, not from a caller flag", takeUnseen(win, cursor).lines.length, 0);
+  // replay-saturated boot (800's default state): history stays history — marked, never news —
+  // and the five live lines AFTER it all surface (spec acceptance 2)
+  const rb: RoomLine[] = [];
+  for (let i = 0; i < CAP; i++) pushRoomLine(rb, { nick: "lead", message: `retained ${i}`, ts: 1000 + i, id: `h${i}`, hist: true }, CAP);
+  const bootCursor = lastSeq(rb);
+  let liveSurfaced = 0;
+  let histLeak = 0;
+  let liveCursor = bootCursor;
+  for (let j = 1; j <= 5; j++) {
+    pushRoomLine(rb, { nick: "wren", message: `live ${j}`, ts: 9000 + j, id: `l${j}` }, CAP);
+    const g = takeUnseen(rb, liveCursor);
+    liveCursor = g.cursor;
+    histLeak += g.lines.filter((l) => l.hist).length;
+    liveSurfaced += g.lines.filter((l) => !l.hist).length;
+  }
+  check("D1 after a replay-saturated boot: all 5 live lines surface", liveSurfaced, 5);
+  check("D1 after a replay-saturated boot: no history line EVER surfaces as unseen", histLeak, 0);
+  // NEGATIVE CONTROL (acceptance 3): the identical scenario with NO stamps — the shipped legacy
+  // shape, which is what dev does today — MUST reproduce the deafness. If this cell ever goes
+  // green-by-convergence, the instrument has stopped biting.
+  const legacy: { nick: string; message: string }[] = [];
+  for (let i = 1; i <= CAP; i++) legacy.push({ nick: "old", message: `pre ${i}` });
+  let lc = legacy.length;
+  let lsurfaced = 0;
+  for (let j = 1; j <= 5; j++) {
+    legacy.push({ nick: "wren", message: `live ${j}` });
+    if (legacy.length > CAP) legacy.shift();
+    const g = takeUnseen(legacy, lc);
+    lc = g.cursor;
+    lsurfaced += g.lines.length;
+  }
+  check("NEGATIVE CONTROL: the un-stamped index shape stays deaf (0/5) — proof the stamp is what closes D1", lsurfaced, 0);
+  // a reader who NEVER saw a shift keeps the old experience exactly (acceptance 4)
+  const small: RoomLine[] = [pushRoomLine([], { nick: "a", message: "1", ts: 1 }, 50)];
+  const s1 = takeUnseen(small, 0);
+  check("below the cap the read is the same one line, once", [s1.lines.length, s1.cursor], [1, 1]);
+}
 
 // --- P6: per-message retained receipts (a late joiner must still be able to ask) ---
 const A = (id: string, by: string, to: string, ts: number) => ackPayload(id, by, to, ts);

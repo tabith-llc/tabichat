@@ -488,7 +488,8 @@ but it gates the FORCED-HANDOFF tool block, not this bar. So:
   of ignoring reports the ack receipts proved it delivered; the inbox
   scope and the provenance tag exist so that claim is one call to refute.
 - `chat_read` with `unseen_only: true` hands you only lines not yet
-  shown to your session; scope `peers` lists who is live.
+  shown to your session; scope `peers` lists the presence beats THIS seat has
+  heard — the board names its own instrument, and a beat is not a process check.
 - Notices the extension prints lead with `[tabichat]`; ctx advisories
 - A renewed LEAD seat publishes its own hold before the session change and its own
   restore line after it (`laneadmin.ts:shouldHoldBeforeRenew`). That is why the line

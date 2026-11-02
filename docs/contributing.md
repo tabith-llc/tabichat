@@ -6,7 +6,62 @@
 
 Deploys go through `src/tools/deploy-tabichat.sh` (it runs every gate in
 `src/tools/`; never hand-copy into `~/.pi/agent/extensions/`). Enable
-the secret guard once per clone: `git config core.hooksPath .githooks`.
+the secret guard once per clone with the shipped enabler:
+
+```
+sh src/tools/enable_hook_chain.sh
+```
+
+That, and not `git config core.hooksPath .githooks`, because `core.hooksPath` is single-valued: a
+local write replaces the global and system values for EVERY hook name at once. On a host that keeps a
+guard in a global hooksPath directory — an identity check, a commit-msg rule, a pre-push — the bare
+line stops all of them silently: no error, no changed exit code, commits keep landing. Nine clones on
+one machine were in exactly that state and only a deliberate census found them (iid 15). The enabler
+reads what is installed and FORWARDS to it: one small wrapper per hook name, written inside this
+clone's own `.git`, running the host's hook first and this repo's guard after, and the first refusal
+wins. On a host with nothing installed it writes the plain local value and says so, and `--check`
+answers without touching anything — which is the form to use when you are only asking.
+
+That command replaces the whole hook set git consults: a clone that already had a
+`pre-commit` (a project check, husky, a personal guard) would otherwise stop running it
+in silence. It no longer does. In the enabled state the guard chains that prior hook
+itself — after its own checks, with its exit status propagated — so nothing you had is
+lost and the refusal of either check refuses the commit. If instead you keep a DIFFERENT
+hook set (`core.hooksPath` pointing somewhere else), make that hook set invoke
+`.githooks/pre-commit` and return its exit status — the guard recognises that shape and
+says so out loud rather than refusing.
+
+If it cannot recognise that shape it refuses, and the refusal now tells you what it is
+displacing — the value it found, the executable hooks git is consulting there instead of this
+guard's own file, and the legacy hook the same value hides — plus the one prefix that proceeds
+deliberately once you have read that:
+
+```
+TABICHAT_GUARD_PROCEED=1 git commit
+```
+
+The prefix waives the displacement refusal only. A staged secret, an unreadable or empty
+pattern list, and a refusing chained hook still stop the commit with it set, so it is a
+record of a decision taken, not an override of the check. It writes nothing to your
+configuration either: the guard refuses rather than re-aiming your `core.hooksPath`.
+
+To check where you stand, in this clone, before you commit anything:
+
+```
+sh src/tools/check_guard_armed.sh
+sh src/tools/check_attributions.sh
+```
+
+The first prints one line — `ARMED` (naming a prior hook at the legacy path and whether the guard
+chains it, when one exists), `ARMED (chained)`, or `NOT ARMED` with the command that arms it — and
+exits non-zero when the guard is not on the path git would consult, or when a prior hook sits
+displaced behind a guard that does not chain it. The second reads the lines this branch ADDED since
+the published line and exits non-zero if any of them credits a decision to a person or to a seat —
+the rule that a commit message says what the code does and nothing else, applied to the repo's
+public bytes instead of only to the message. It looks at added lines alone, so what the repo
+already carries is not this branch's to fix, and it always prints how many lines it scanned, so a
+run that looked at nothing cannot read as a pass. `deploy-tabichat.sh` runs both, which is the only
+reason either is a requirement rather than a suggestion.
 
 **Run the gates with one env flag.** The `.ts` gates compare the seat's own
 routing nick against the shipped default, so from your own shell:

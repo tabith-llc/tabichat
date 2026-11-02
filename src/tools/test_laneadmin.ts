@@ -67,6 +67,10 @@ import {
   isStaleCtxError,
   parkInbound,
   takeParked,
+  MQTT_CLIENT_KEY,
+  CLIENT_EVENTS,
+  endPriorClient,
+  type ClosableClient,
   type CtlEntry,
 } from "../extensions/tabichat/laneadmin.ts";
 // §5 item 1 ACT B imports the matcher and its stat type from ctxwarn.ts, where they live.
@@ -748,7 +752,9 @@ check("self-renew travels the SAME runAdmin as a remote renew", index.includes('
 check("the process-scoped auto-renew cap is set BEFORE the dispatch, not after", /AUTO_RENEWED\.add\(nick\);[\s\S]{0,900}runAdmin\("renew"/.test(index), true);
 check("and the handler stops after renewing (no work behind a dying session)", /runAdmin\("renew", "auto-renew", ctx\);\s*\n\s*return;/.test(index), true);
 check("the floor is the forced-handoff number, not a new constant invented here", index.includes("floorPct: CTX_FORCE"), true);
-check("the verdict runs before the advisory early-return", index.indexOf("autoRenewVerdict({") < index.indexOf('const absDue = absoluteSessionDue(s, CTX_TOKENS, lastCtxWarnTokens);\n    if (!pctDue && !absDue) return;', 100), true);
+// the needle is the call as it is written in index.ts; leg 652 added the warn percent to it, so the
+// text moved with it. The assertion is the ORDERING, and it still asserts exactly that.
+check("the verdict runs before the advisory early-return", index.indexOf("autoRenewVerdict({") < index.indexOf('const absDue = absoluteSessionDue(s, CTX_TOKENS, lastCtxWarnTokens, CTX_WARN);\n    if (!pctDue && !absDue) return;', 100), true);
 
 // --- tabichat#3: ONE renew, ONE session — the fork guard, both truth-table halves ---------
 // The runtime proof is the two-seat reproduction (s146): with the old bytes ONE publish of ONE
@@ -924,6 +930,194 @@ check("takeParked hands back the whole backlog in order", takeParked([P0, { ...P
 check("takeParked on an empty park is empty, not undefined", takeParked([]), []);
 check("takeParked does not mutate the caller's array", (() => { const a = [P0]; takeParked(a); return a.length; })(), 1);
 
+// iid 20 endPriorClient truth table — the socket handle is process-scoped, so this is the ONE place a
+// replaced session's client can still be reached. A fake client RECORDS the calls; nothing here opens a
+// socket. The labelled source-shape cells below are what prove index.ts really calls it, in the right
+// order — the same two-half shape the park cells above use, for the same reason.
+const fakeClient = (endThrows = false) => {
+  const calls: string[] = [];
+  return {
+    calls,
+    end(force?: boolean) {
+      calls.push(`end:${force === true}`);
+      if (endThrows) throw new Error("socket gone");
+    },
+    removeAllListeners(ev?: string | symbol) {
+      calls.push(`off:${String(ev)}`);
+    },
+  };
+};
+const noPrior = endPriorClient({ current: null }, "test");
+check("#20 no prior client -> nothing called, nothing claimed", [noPrior.ended, noPrior.unhooked, noPrior.note.includes("no prior client")], [true, 0, true]);
+const oneClient = fakeClient();
+const oneStore = { current: oneClient };
+const onePrior = endPriorClient(oneStore, "test");
+check("#20 prior client -> force-closed FIRST, then unhooked, in that order (end() runs mqtt's own close bookkeeping)", oneClient.calls, ["end:true", "off:connect", "off:error", "off:message"]);
+check("#20 prior client -> the store is emptied, so the next run cannot inherit a second socket", oneStore.current, null);
+check("#20 and the caller is told how many handlers came off", onePrior.unhooked, 3);
+check("#20 the events unhooked are exactly the events index.ts registers", CLIENT_EVENTS.join(","), "connect,error,message");
+const badClient = fakeClient(true);
+const badStore = { current: badClient };
+const badVerdict = endPriorClient(badStore, "test");
+check("#20 NEGATIVE: a client that throws on end() is STILL unhooked — unhooking is the half that stops the duplication", badClient.calls, ["end:true", "off:connect", "off:error", "off:message"]);
+check("#20 NEGATIVE: and the failed close is RETURNED, not swallowed — ended false, reason named", [badVerdict.ended, badVerdict.note.includes("NOT closed"), badVerdict.note.includes("socket gone")], [false, true, true]);
+check("#20 NEGATIVE: an unhook that throws on one event does not stop the other two", (() => {
+  const c = fakeClient();
+  c.removeAllListeners = (ev?: string | symbol) => {
+    c.calls.push(`off:${String(ev)}`);
+    if (ev === "connect") throw new Error("emitter gone");
+  };
+  const r = endPriorClient({ current: c }, "test");
+  return [c.calls.filter((x) => x.startsWith("off:")).length, r.unhooked];
+})(), [3, 2]);
+check("#20 the handle key is a named process symbol, the house pattern for a cross-session store", typeof MQTT_CLIENT_KEY, "symbol");
+
+// STALLED CLOSE (leg 890's renewal, measured): a graceful close at shutdown leaves `disconnecting` set, and
+// `end(true)` returns early on exactly that flag (mqtt client.js:818-820), so the force never reaches
+// `_cleanUp(forced)` and the transport stays open. The client is unhooked and hears nothing — which is why
+// the duplication is gone — but it still holds a descriptor and a broker session. The cells below name the
+// destroy, its negative (a client that never started a close must NOT be touched), and the failure face.
+const stalledClient = (destroyThrows = false) => {
+  const calls: string[] = [];
+  return {
+    calls,
+    disconnecting: true,
+    stream: { destroy: () => { calls.push("destroy"); if (destroyThrows) throw new Error("stream gone"); } },
+    end(force?: boolean) { calls.push(`end:${force === true}`); },
+    removeAllListeners(ev?: string | symbol) { calls.push(`off:${String(ev)}`); },
+  };
+};
+const stalledStore = { current: stalledClient() as unknown as ClosableClient | null };
+const stalledVerdict = endPriorClient(stalledStore, "test") as { ended: boolean; unhooked: number; destroyed: boolean; note: string };
+check("#20 stalled close: the store is emptied AND the destroy was reported to the caller",
+  [stalledStore.current, stalledVerdict.destroyed, stalledVerdict.ended],
+  [null, true, true]);
+check("#20 stalled close: the order is end -> unhook -> destroy, so mqtt's own bookkeeping is not outrun",
+  (() => { const c = stalledClient(); endPriorClient({ current: c }, "test"); return c.calls; })(),
+  ["end:true", "off:connect", "off:error", "off:message", "destroy"]);
+check("#20 stalled close: the caller is told it was the destroy that closed it, not the end",
+  stalledVerdict.note.includes("stalled prior client destroyed"), true);
+check("#20 NEGATIVE: a client that never started a close is left alone — end(true) already destroyed it",
+  (() => {
+    const c = stalledClient();
+    c.disconnecting = false;
+    const r = endPriorClient({ current: c }, "test");
+    return [c.calls.includes("destroy"), (r as { destroyed: boolean }).destroyed, r.note.includes("closed the prior client before connecting")];
+  })(),
+  [false, false, true]);
+check("#20 NEGATIVE: and a destroy that throws is RETURNED, not swallowed — ended false, reason named",
+  (() => {
+    const c = stalledClient(true);
+    const r = endPriorClient({ current: c }, "test");
+    return [r.ended, r.unhooked, r.note.includes("NOT destroyed"), r.note.includes("stream gone")];
+  })(),
+  [false, 3, true, true]);
+check("#20 NEGATIVE: a stalled client with no stream member is still unhooked and still dropped (optional chain, no throw)",
+  (() => {
+    const c = stalledClient();
+    delete (c as { stream?: unknown }).stream;
+    const store = { current: c as unknown as ClosableClient | null };
+    const r = endPriorClient(store, "test");
+    return [store.current, r.unhooked, (r as { destroyed: boolean }).destroyed];
+  })(),
+  [null, 3, true]);
+check("#20 the healthy face is byte-unchanged: no prior, no destroy, same words",
+  (() => { const no = endPriorClient({ current: null }, "t"); const ok = endPriorClient({ current: fakeClient() }, "t"); return [no.destroyed, ok.destroyed, no.note.includes("no prior client")]; })(),
+  [false, false, true]);
+check("#20 index.ts logs the destroy path too, so a stalled close is never silent",
+  readFileSync(join(SRC, "index.ts"), "utf8").includes("|| prior.destroyed"), true);
+
+// A SECOND fake, with real listener semantics, because the acceptance moved (spec 872 at 0c80d6ad8): the
+// observation is "no SECOND EXECUTION", not "socket closed" — a closed client whose `message` listener is
+// still reachable keeps duplicating, and one inbound line was measured executing in four stale instances.
+// So this fake RUNS the handler on emit, until removeAllListeners takes it away.
+const emitterClient = () => {
+  const attached = new Set<string>();
+  const log: string[] = [];
+  return {
+    log,
+    on(ev: string) {
+      attached.add(ev);
+    },
+    removeAllListeners(ev?: string | symbol) {
+      attached.delete(String(ev));
+    },
+    end(force?: boolean) {
+      log.push(`end:${force === true}`);
+    },
+    /** how many times a `message` handler on THIS client would execute for one inbound line */
+    executions: (ev: string) => (attached.has(ev) ? 1 : 0),
+  };
+};
+const arm = (c: ReturnType<typeof emitterClient>) => {
+  for (const ev of ["connect", "error", "message"]) c.on(ev);
+  return c;
+};
+const ec = arm(emitterClient());
+check("#20 listener: before teardown this client executes one room line once", ec.executions("message"), 1);
+endPriorClient({ current: ec }, "test");
+check("#20 listener: AFTER teardown the prior message handler is UNREACHABLE — 0 executions, which is the acceptance", ec.executions("message"), 0);
+check("#20 listener: and all three events are gone, not only the one the room happens to duplicate on", ["connect", "error", "message"].map((ev) => ec.executions(ev)), [0, 0, 0]);
+check("#20 listener: the socket is force-closed beside the unhook — the listener cell does not replace closing it", ec.log, ["end:true"]);
+// Two runs sharing one store: the property the row is actually about.
+const proc = { current: null as unknown as ReturnType<typeof emitterClient> };
+const runA = arm(emitterClient());
+proc.current = runA;
+const runB = arm(emitterClient());
+endPriorClient(proc, "run 2 about to connect");
+proc.current = runB;
+check("#20 two runs, one process: run 1's client can no longer execute a room line", runA.executions("message"), 0);
+check("#20 and run 2's client still can — the fix removes duplication, it does not remove the seat", runB.executions("message"), 1);
+check("#20 NEGATIVE: the helper touches ONLY the handle on the store — it is no global unhook, which is why index.ts writes the handle on every connect", (() => {
+  const bystander = arm(emitterClient());
+  endPriorClient({ current: null }, "test");
+  return bystander.executions("message");
+})(), 1);
+
+// Finding A at 9ba3207d1, run as an ORDER. pi's documented sequence is shutdown the old instance, then
+// reload and start the new one (docs/extensions.md:512, restated at :1474), so the OUTGOING run's
+// shutdown statement is the first thing that touches the store on every replacement. The cells below run
+// that order against one store; the statement they model is pinned to the shipped file by the source-shape
+// cells beside the verdict, in the same two-half shape the park cells above use.
+const shutdownStatement = <T extends ClosableClient>(store: { current: T | null }, mine: T | null) => {
+  if (store.current === mine) endPriorClient(store, "session_shutdown");
+};
+{
+  const store: { current: ReturnType<typeof emitterClient> | null } = { current: null };
+  const run1 = arm(emitterClient());
+  store.current = run1;
+  shutdownStatement(store, run1);
+  const incoming = endPriorClient(store, "session_start, before connect");
+  check("#20 A: a shutdown naming its own client unhooks it — one inbound line executes 0 times afterwards", run1.executions("message"), 0);
+  check("#20 A: and all three events are unreachable, not only the one the room happens to duplicate on", ["connect", "error", "message"].map((ev) => run1.executions(ev)), [0, 0, 0]);
+  check("#20 A: the incoming run finds an EMPTY store and says so — the work was done by the run that owned the socket", [store.current, incoming.unhooked, incoming.note.includes("no prior client")], [null, 0, true]);
+}
+{
+  const store: { current: ReturnType<typeof emitterClient> | null } = { current: null };
+  const run1 = arm(emitterClient());
+  const run2 = arm(emitterClient());
+  store.current = run2;
+  shutdownStatement(store, run1);
+  check("#20 A NEGATIVE: a shutdown whose client is NOT the store's leaves the incoming run's handle alone", store.current === run2, true);
+  check("#20 A NEGATIVE: and that socket still executes a room line — a late shutdown cannot deafen the new seat", run2.executions("message"), 1);
+}
+{
+  const bad = fakeClient(true);
+  const store: { current: typeof bad | null } = { current: bad };
+  shutdownStatement(store, bad);
+  check("#20 A: a client that throws on end() is still unhooked by its own shutdown and still dropped from the store", [store.current, bad.calls], [null, ["end:true", "off:connect", "off:error", "off:message"]]);
+}
+{
+  // The paired negative for the change itself: the statement this leg replaces, run through the same
+  // order. A bare store-clear leaves the socket ARMED and the incoming run reports nothing to close.
+  const store: { current: ReturnType<typeof emitterClient> | null } = { current: null };
+  const run1 = arm(emitterClient());
+  store.current = run1;
+  if (store.current === run1) store.current = null;
+  const after = endPriorClient(store, "session_start, before connect");
+  check("#20 A: and the statement this leg RETIRES is proven wrong, not merely different — clear-only leaves the handler armed", [run1.executions("message"), after.unhooked, after.note.includes("no prior client")], [1, 0, true]);
+}
+
 // THE FIX, as wired. These are source-shape cells and say so; the runtime half above is the decision.
 check("#4 wiring: the alarm string is STILL printed, unchanged — the belt was not silenced",
   indexCode.includes("inbound line dropped, handler threw"), true);
@@ -933,6 +1127,26 @@ check("#4 wiring: an overflow is announced with a COUNT, never a silent trim",
   /p\.dropped[\s\S]{0,400}inbound park OVERFLOWED/.test(indexCode), true);
 check("#4 wiring: a non-stale throw is refused a park AND named to the operator as a real loss",
   /!stale && !handedOff[\s\S]{0,400}The line IS lost/.test(indexCode), true);
+// tabichat#19 — the storm's source, pinned as a shape. pi 1.4.0 guards `pi.sendUserMessage` with an
+// assertActive on the SHARED extension runtime (loader.js:309-311 -> :115), and that flag is set by
+// AgentSession.dispose() and never cleared, because the replacement runner is built over the SAME
+// runtime object (agent-session.js:2983). So after one replacement, every hand-off made from a socket
+// callback threw forever, the belt parked it, and the park overflowed once per line. The fix is a
+// re-armed send handle. These cells pin the wiring; the EXECUTED half is the two-seat renew cell.
+const withAt = indexCode.indexOf("withSession: async (next)");
+const rearm = indexCode.slice(withAt, indexCode.indexOf("wakeRenewedSeat", withAt));
+check("#19 wiring: the re-arm points the send handle at the REPLACEMENT session's own send",
+  /sendUser = \(content, options\) => next\.sendUserMessage\(content, options\)/.test(rearm), true);
+check("#19 wiring NEGATIVE: no load-time pi.sendUserMessage survives in the inbound message callback",
+  (() => {
+    const s0 = indexCode.indexOf('client.on("message"');
+    return /pi\.sendUserMessage/.test(indexCode.slice(s0, indexCode.indexOf("\n  });", s0)));
+  })(), false);
+check("#19 wiring: the park is drained on the renew re-arm, not only on socket connect",
+  indexCode.includes('drainPark?.("socket connect")') && indexCode.includes('drainPark?.("renew re-arm")'), true);
+check("#19 wiring ORDER: the drain runs AFTER the send handle is re-armed — drained first, a replayed " +
+  "line throws on the dead send and is re-parked instead of delivered",
+  rearm.indexOf("sendUser = ") < rearm.indexOf('drainPark?.("renew re-arm")'), true);
 // The #585 structural gate scans inside the socket callback for the bare identifier `ctx`, and a
 // STRING LITERAL naming the word trips it exactly like a captured context does — measured on this leg,
 // where the first wording of that refusal printed "a pi ctx invalidation" and reddened
@@ -960,6 +1174,62 @@ check("#4 wiring: and it is factory-scoped, because the belt is a sibling of han
   /^\s*let handedOff = false;$/m.test(indexCode), true);
 check("#4 store: the park is a process globalThis array, never a per-factory closure",
   /\(globalThis as Record<PropertyKey, unknown>\)\[INBOUND_PARK_KEY\] \?\?=\s*\[\] as Array</.test(indexCode), true);
+
+// iid 20 — the client handle, pinned as a shape. Runtime truth lives in the cells above; these prove
+// the shipped file really reaches that helper on the ONLY path that makes a client, and in the order
+// that matters: teardown before connect. A teardown after the connect is the same leak in a new coat.
+check("#20 store: the client handle is a process globalThis holder, never a per-factory closure",
+  /\(globalThis as Record<PropertyKey, unknown>\)\[MQTT_CLIENT_KEY\] \?\?=\s*\{ current: null/.test(indexCode), true);
+check("#20 store: this run's `client` STARTS from that holder, so an incoming run can see what it inherited",
+  /let client: mqtt\.MqttClient \| null = MQTT_CLIENT\.current;/.test(indexCode), true);
+/** The order predicate, factored so the two negative cells below can hand it the WRONG tree. */
+const teardownBeforeConnect = (src: string) => {
+  const t = src.indexOf("endPriorClient(MQTT_CLIENT,");
+  const c = src.indexOf("client = mqtt.connect(");
+  return t >= 0 && c >= 0 && t < c;
+};
+check("#20 wiring: the teardown call exists and precedes the one construction site", teardownBeforeConnect(indexCode), true);
+check("#20 wiring NEGATIVE: the same predicate on a teardown AFTER the connect returns false — it can fail",
+  teardownBeforeConnect("client = mqtt.connect(u, {});\nendPriorClient(MQTT_CLIENT, x);"), false);
+check("#20 wiring NEGATIVE: and on a tree with no teardown at all, false — silence is not a pass",
+  teardownBeforeConnect("client = mqtt.connect(u, {});"), false);
+check("#20 wiring: the handle is written to the store AFTER that construction site, so the next run can find it",
+  indexCode.indexOf("MQTT_CLIENT.current = client;") > indexCode.indexOf("client = mqtt.connect("), true);
+check("#20 wiring: the old early return is GONE — `if (client) return;` is the leak this row closes",
+  /\n[ \t]*if \(client\) return;/.test(indexCode), false);
+check("#20 wiring: a shutdown hands the store to the SAME helper the start path uses, only while it still holds ITS OWN client, so a late shutdown cannot wipe the incoming run's handle",
+  /if \(MQTT_CLIENT\.current === client\) endPriorClient\(MQTT_CLIENT, "session_shutdown"\);/.test(indexCode), true);
+check("#20 wiring NEGATIVE: the bare store-clear it replaced is GONE — clearing without unhooking is what left a retained socket hearing the room",
+  /if \(MQTT_CLIENT\.current === client\) MQTT_CLIENT\.current = null;/.test(indexCode), false);
+check("#20 wiring: BOTH paths reach the helper — the incoming run's and the outgoing run's",
+  (indexCode.match(/endPriorClient\(MQTT_CLIENT, /g) ?? []).length, 2);
+check("#20 wiring: the shutdown path keeps its GRACEFUL close — presence publish and an awaited end(), because force at shutdown drops queued publishes",
+  indexCode.includes("await done(client.end());") && /await done\(\s*client\.publish\(/.test(indexCode), true);
+check("#20 wiring: and the helper is reached AFTER that graceful end(), so its end(true) is mqtt's idempotent branch and not a dropped queue",
+  indexCode.indexOf("await done(client.end());") < indexCode.indexOf('endPriorClient(MQTT_CLIENT, "session_shutdown")'), true);
+/** Finding C's placement predicate, factored so the negative can be handed the WRONG tree. */
+const teardownBelowGuards = (src: string) => {
+  const t = src.indexOf('endPriorClient(MQTT_CLIENT, "session_start');
+  const c = src.indexOf("client = mqtt.connect(");
+  const guards = Math.max(
+    src.indexOf('if (brokerRefusal !== "") {'),
+    src.indexOf("if (!room) {"),
+    src.indexOf('if (TRANSPORT.mode === "refuse") {'),
+  );
+  return t >= 0 && c >= 0 && guards >= 0 && guards < t && t < c;
+};
+check("#20 finding C: the teardown sits BELOW the three config guards and ABOVE the one construction site — a run that cannot connect must not close the connection",
+  teardownBelowGuards(indexCode), true);
+check("#20 finding C NEGATIVE: the same predicate on a teardown ABOVE the guards is false — the shape this leg moves away from",
+  teardownBelowGuards('const prior = endPriorClient(MQTT_CLIENT, "session_start, before connect");\nif (brokerRefusal !== "") { return; }\nif (!room) { return; }\nif (TRANSPORT.mode === "refuse") { return; }\nclient = mqtt.connect(u, {});'), false);
+check("#20 finding C: the discriminator string still lives in the helper's note template, so a grep of the deployed diag log still matches",
+  readFileSync(join(SRC, "laneadmin.ts"), "utf8").includes("closed the prior client before connecting"), true);
+check("#20 finding C: the WARN guard carries the note verbatim and honours ALL THREE signals — unhooked, failed close, and the stalled destroy",
+  /if \(prior\.unhooked \|\| !prior\.ended \|\| prior\.destroyed\) diag\("WARN", `\[tabichat\]\[client\] \$\{prior\.note\}`\);/.test(indexCode), true);
+check("#20 finding C NEGATIVE: a guard that dropped the destroy signal is refused by the same predicate",
+  /if \(prior\.unhooked \|\| !prior\.ended \|\| prior\.destroyed\) diag\("WARN", `\[tabichat\]\[client\] \$\{prior\.note\}`\);/.test(
+    'const prior = endPriorClient(MQTT_CLIENT, "x"); if (prior.unhooked || !prior.ended) diag("WARN", `[tabichat][client] ${prior.note}`);'), false);
+check("#20 wiring: a failed close is LOUD, not a silent shrug", /\[tabichat\]\[client\] \$\{prior\.note\}/.test(indexCode), true);
 
 // THE VERDICT IS AT THE END OF THE FILE, NOT HERE. This block used to sit at this line and every
 // section appended since has run AFTER it — 301 `check()` calls, including the whole #10 wiring block

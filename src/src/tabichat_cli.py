@@ -35,7 +35,7 @@ COMMANDS
     /connect [host[:port]]  connect to the broker (no argument = the broker you configured:
                            the site config "mqttUrl", or $MQTT_URL, or $MQTT_HOST/$MQTT_PORT)
     /join <room>            join a room (topic chat/<room>)
-    /names                  who is live: * online, ? quiet too long, - gone
+    /names                  the beats this client heard: * online, ? quiet or unrankable, - gone
     /up [rows]  /down [rows]   scroll the window (default: a screen)
     /top                    oldest line in the buffer
     /live | /back           newest, and clears the unread counter
@@ -84,7 +84,7 @@ import paho.mqtt.client as mqtt
 
 from addressing import mentions_self as _mentions_self, receives  # noqa: F401 (mentions_self re-exported below)
 from paste import enter_is_paste, fold_message
-from presence import peer_record_wins, peer_state as record_state
+from presence import peer_record_wins, peer_state as record_state, peer_age, PEERS_INSTRUMENT
 from broker import BrokerError, resolve_broker, resolve_broker_url
 # transport: TLS + client certificates, decided by the pure module next to this one. It is a
 # separate file because the pi extension enforces the SAME refusal rules in tlsopts.ts, and two
@@ -185,7 +185,7 @@ CLEAR_KEEP = threading.Event()   # /clear screen handshake
 HELP = [
     "/connect [host[:port]]  connect to the broker",
     "/join <room>            join a room (topic chat/<room>)",
-    "/names                  who is live: * online, ? quiet too long, - gone",
+    "/names                  the beats this client heard: * online, ? quiet or unrankable, - gone",
     "/up [rows] /down [rows] scroll the window (default: a screen)",
     "/top   /live | /back    oldest, newest (clears the unread count)",
     "/depth                  how far the buffer reaches",
@@ -1058,13 +1058,23 @@ def cmd_names():
     rows = []
     for nick in sorted(ONLINE, key=lambda n: (peer_state_for(n) != "online", n)):
         st = peer_state_for(nick)
-        age = "no stamp" if ONLINE[nick][1] <= 0 else f"{int(max(0.0, time.time() - ONLINE[nick][1]))}s"
+        # the age column says HOW it was arrived at: a stamp ahead of this clock prints its skew, not a
+        # clamped "0s" that reads as "just now" to whoever is staffing lanes off this screen
+        age = peer_age(ONLINE.get(nick), time.time())
         mark = "*" if st == "online" else "?" if st == "stale" else "-"
         rows.append(f"{mark} {BLUE}{nick}{RESET} {st} {age}")
     note(
         f"{ts()} {len(rows) + 1} in {TOPIC}: {BLUE}{SELF}{RESET} online, "
         + (", ".join(rows) if rows else "no other peer reported")
     )
+    # R-2717 item 3: this is a board of BEATS. The empty case used to read as an empty room, and a
+    # coordinator acted on it, so the surface now says what it measured every time it answers.
+    note(f"{ts()}   {PEERS_INSTRUMENT}")
+    if not rows:
+        note(
+            f"{ts()}   no other beat heard HERE since this client joined {TOPIC} — that is a fact about "
+            f"this subscription, not a statement that the room is empty"
+        )
     if ACKS:
         note(
             f"{ts()}   {len(ACKS)} receipt(s) on {CTL}; newest: "

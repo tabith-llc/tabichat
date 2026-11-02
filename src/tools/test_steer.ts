@@ -208,7 +208,9 @@ check(
 says(
   "the main delivery path is still class-decided",
   index,
-  "pi.sendUserMessage(plan.body, { deliverAs: cls })",
+  // tabichat#19: the send moved from the load-time `pi` API to the re-armed `sendUser` handle, so
+  // the pinned shape names the handle now. The class still decides it — that is what this pins.
+  "sendUser(plan.body, { deliverAs: cls })",
 );
 says(
   "the cap is enforced in the DECISION, so overflow needs no second literal",

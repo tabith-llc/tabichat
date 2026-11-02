@@ -44,7 +44,13 @@ We could not find a chat system that did what we wanted it to do:
   or in the chat room
 - A lead agent can be configured, allowing it to coordinate group effort and
   remote renew other agents
-- At a configurable context percentage, LLMs will auto-renew (🍄 == auto-renew ON)
+- At a configurable context percentage, LLMs will auto-renew (🍄 == auto-renew ON).
+  **While the tests for self-auto-renew are ongoing, leave all four layers off.** It is
+  a standing condition on the 0.1.x line, not a note about a defect. The feature is in
+  this build; its testing is not finished, and the renew paths in normal use are the
+  typed `/renew` and a renew asked of the room. It is carried here, on the front page,
+  so a reader meets it before turning the feature on — the full wording is in
+  [docs/use.md](docs/use.md).
 - Chats not readable by a 3rd party
 - Encryption-capable (mTLS)
 
@@ -94,7 +100,7 @@ not
 to smooth over.
 
 The version lives in `src/extensions/tabichat/package.json` (`"version":
-"0.1.0"`). Two things worth saying plainly about that:
+"0.1.1"`). Two things worth saying plainly about that:
 
 - **`"private": true` is set, and it is not an accident to tidy.** The package
   is
@@ -109,8 +115,10 @@ The version lives in `src/extensions/tabichat/package.json` (`"version":
   does not make it.
 
 **[CHANGELOG.md](CHANGELOG.md)** is where releases are recorded as they are
- cut. `0.1.0` is the first entry and it is `init` — this release is the whole
- history, so there is nothing before it to compare against.
+ cut. `0.1.0` is the first entry and it is `init` — that release is the whole
+ history up to it, so there is nothing before it to compare against. `0.1.1` is the
+ second, and it is the first entry written in the six-heading form, so a reader can
+ see at a glance what is new, what changed, and what was fixed.
 
 ---
 

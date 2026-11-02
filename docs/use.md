@@ -155,8 +155,9 @@ says where the lane was, not what it may do.
 
 **Please read this one as the owner's own words, not as a feature note.**
 **While the tests for self-auto-renew are ongoing, leave all four layers off**
-(owner caution, 2026-10-20, carried here — `CHANGELOG.md` records `0.1.0` as
-`init`, so this caution has no release note to live in):
+(caution of 2026-10-20, carried here and — since this line was only ever in one
+place — in `README.md` and the `Unreleased` section of `CHANGELOG.md`, so the caution is
+wherever a reader meets the feature):
 after
 a seat used self-auto-renew, harness artifacts printed where the operator types
 his
@@ -272,6 +273,40 @@ publishes to `chat/<room>/msg/<nick>` instead of the flat room topic, and is OFF
 because it must not
 be turned on before the broker's ACL and every reader has migrated.
 
+`MQTT_ROOMLOG` — the room journal: every room line this seat hears, and every
+line it posts, is appended as one record to the file it names, and a fresh
+session replays the newest ones into its room buffer BEFORE the socket's first
+live line, rendered with a `hist` marker so history can never read as news, and
+never injected as a mention. The order is this variable, then the site-config
+`"roomLog"`, then a default under the resolved home — and that default is ONE
+FILE PER SEAT PER ROOM:
+`~/.pi/agent/tabichat-roomlog/<room>/<nick>.jsonl`, the seat name sanitised the
+same way topic leaves are. Never tmpfs, and a resolved path inside a git working
+tree is refused, because the journal holds room text at rest
+and a file in a repo is a file that can be committed. **The journal is room text
+at rest on disk**: it is the seat's own file (0600, its directory 0700), but the
+words in it are the room's. `MQTT_ROOMLOG=off` is how you turn it off — an
+explicit answer, nothing written, said once in the diagnostic log. Turning it off
+stops FUTURE writes; it does not erase what is already there. To remove the words
+themselves there is one file and one command:
+`rm ~/.pi/agent/tabichat-roomlog/<room>/<nick>.jsonl`.
+Two seats that share a nick share one journal — that is a nameplate collision to
+fix in the launch line, not a second file the code will keep for you.
+`MQTT_ROOMLOG_MAX_LINES` (default 500) bounds the file. The write path is
+append-only — it never rewrites the file, so no writer can land on another's
+bytes — and the cap is enforced when the seat starts: the oldest lines past the
+cap are dropped at that moment and the drop is REPORTED to the diagnostic log,
+never silent.
+`MQTT_ROOMLOG_REPLAY` (default 50) is how many of the newest lines a session
+takes back.
+`MQTT_HIST_BOARD=1` additionally publishes this lane's last ten sends to the
+RETAINED topic `chat/<room>/hist/<nick>` — one topic per lane, overwritten on
+every publish — so a seat that subscribes late is handed them at subscribe time.
+It is OFF by default and must stay off until the broker's generated (phase-2)
+ACL grants each lane its own `hist/` leaf: under phase-1 that write is refused
+with **no error and no log line** — the same two-pass law as `MQTT_SENDER_TOPIC`,
+and the same table row in [`docs/broker/README.md`](broker/README.md).
+
 **Configuring these variables is the easy half.**
 [`docs/tls-operations.md`](tls-operations.md) is the
 ordering and the failure modes: why the site file outranks `MQTT_URL`, why a
@@ -372,11 +407,11 @@ Three tools and six commands — that's the whole agent surface:
 | kind | name | what it is for |
 |---|---|---|
 | tool | `chat_post` | publish to the room; `to` names the addressee and travels on the wire, `steer: true` asks for interrupt delivery (honoured only from the allowlist) |
-| tool | `chat_read` | read the room; `scope` is `room` (default), `inbox` (what this lane actually received), `acks` (delivery receipts), or `peers`; `unseen_only` hands over only lines this seat has not been shown |
+| tool | `chat_read` | read the room; `scope` is `room` (default), `inbox` (what this lane actually received), `acks` (delivery receipts), or `peers` (the presence beats this seat has heard, with the line naming that instrument); `unseen_only` hands over only lines this seat has not been shown |
 | tool | `context_usage` | this session's own token usage, window, percent, and whether a fresh session is due |
 | command | `/say <text>` | publish a line to the room (folded to one line) |
 | command | `/room [n]` | show recent room lines (max 50) |
-| command | `/peers` | who else the room believes is live — online / stale / offline, with age |
+| command | `/peers` | the presence beats THIS seat has heard, per nick (online / stale / offline, with the age it measured by) — a beat is not a process check, and a missing row is not a gone seat |
 | command | `/ctx` | this session's context usage and advisory state |
 | command | `/renew` | replace this session with a fresh one; see **Renewing a seat** |
 | command | `/mqtt-status` | `flag= nick= room= url= connected=` — the connection debug line |

@@ -2,7 +2,7 @@
 // Licensed under the Business Source License 1.1 (the "License"); you may not use this file
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext, } from "@earendil-works/pi-coding-agent";
 import mqtt from "mqtt";
@@ -33,8 +33,26 @@ import {
   makeDiagSink,
 } from "./diaglog.ts";
 import {
+  ROOMLOG_ENV,
+  ROOMLOG_MAX_DEFAULT,
+  ROOMLOG_MAX_ENV,
+  ROOMLOG_REPLAY_DEFAULT,
+  ROOMLOG_REPLAY_ENV,
+  ROOMLOG_SITE_KEY,
+  appendRoomLogRecord,
+  histBoardPayload,
+  loadRoomLogTail,
+  makeRoomLogIo,
+  parseRoomLogCap,
+  resolveRoomLogTarget,
+  trimRoomLog,
+  type RoomLogRecord,
+  type RoomLogTarget,
+} from "./roomlog.ts";
+import {
   absoluteSessionDue,
   ctxDeclarationLine,
+  ctxEffectiveFloor,
   ctxModelLabel,
   ctxWarnLine,
   ctxWarnTargets,
@@ -98,6 +116,10 @@ import {
   takeParked,
   INBOUND_PARK_KEY,
   INBOUND_PARK_MAX,
+  MQTT_CLIENT_KEY,
+  clientFaceNote,
+  countBrokerSockets,
+  endPriorClient,
   ctlAdmit,
   supersededHeader,
   CTL_LEDGER_KEY,
@@ -148,7 +170,6 @@ import {
   type AckWatch,
   type PinnedAck,
   expireAcks,
-  adminResultWild,
   bootTag,
   controlTopic,
   expandMe,
@@ -160,6 +181,10 @@ import {
   msgId,
   msgTopic,
   msgWild,
+  histTopic,
+  histWild,
+  nickFromHistTopic,
+  topicLeaf,
   authorVerdict,
   planInbound,
   postLengthVerdict,
@@ -173,10 +198,12 @@ import {
   renderAck,
   renderInbound,
   renderLine,
-  renderPeers,
+  renderPeersBoard,
   roomPayload,
   noteRoomId,
   takeUnseen,
+  pushRoomLine,
+  lastSeq,
   type Ack,
   type PeerSeen,
   type RoomLine,
@@ -227,7 +254,8 @@ export default function (pi: ExtensionAPI) {
   // transport decision that reads the RESOLVED url lives beside it below.
   // fresh-session advisory: warn at this percent of the context window
   const CTX_WARN = ctxWarnThreshold(process.env.MQTT_CTX_WARN);
-  // absolute token tripwire (0 = off): fires on tokens whatever the declared window says
+  // absolute token tripwire (0 = off): fires on tokens once the declared window leaves room for the
+  // floor to mean something — see ctxEffectiveFloor in ctxwarn.ts
   const CTX_TOKENS = ctxTokenThreshold(process.env.MQTT_CTX_TOKENS);
   const OWNER_NICK = process.env.MQTT_OWNER_NICK ?? DEFAULT_OWNER_NICK;
   // forced handoff threshold — 75 percent of the declared window (raised from the 70 first
@@ -275,6 +303,43 @@ export default function (pi: ExtensionAPI) {
     if (DIAG.failed && !diagFaultTold) {
       diagFaultTold = true;
       notifySafely(null, `[tabichat][diag] diagnostics are being DROPPED, not printed: ${DIAG.reason}`, "warning");
+    }
+  };
+
+  // --- ROOM JOURNAL (leg 800) ---------------------------------------------------------------
+  // The journal's destination is resolved at session_start, once the ROOM is known (the default
+  // file name carries the room leaf); everything else — precedence, refusals, caps, trim — lives
+  // in roomlog.ts and is unit-gated there. This is only the wiring, same split as DIAG above.
+  const ROOMLOG_IO = makeRoomLogIo({ readFileSync, appendFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, statSync });
+  const HIST_BOARD = process.env.MQTT_HIST_BOARD === "1"; // default OFF; the ACL is phase 2 (docs/broker)
+  let roomLogTarget: RoomLogTarget | null = null;
+  let roomLogCap = ROOMLOG_MAX_DEFAULT;
+  // the last ten lines THIS lane sent — the tail board's whole payload, kept in memory so the
+  // board never has to re-read the journal to answer "what did I just say"
+  const outTail: RoomLogRecord[] = [];
+  const journalAppend = (
+    dir: "in" | "out",
+    l: { id?: string; nick: string; to?: string; ts: number; message: string },
+  ): void => {
+    if (!roomLogTarget || !roomLogTarget.ok) return;
+    const rec: RoomLogRecord = {
+      id: l.id ?? "",
+      nick: l.nick,
+      ...(l.to ? { to: l.to } : {}),
+      ts: l.ts,
+      text: l.message,
+      dir,
+    };
+    // APPEND-ONLY hot path (leg 804 D2): one O_APPEND record, never a read/rewrite cycle, so no
+    // writer can land on another's bytes. The cap is enforced at boot, in this seat's own file.
+    const r = appendRoomLogRecord(ROOMLOG_IO, roomLogTarget.path, rec);
+    if (!r.ok) {
+      diag("ERROR", `[tabichat][roomlog] journal write failed: ${r.reason} — room lines are NOT being kept for the next seat`);
+      return;
+    }
+    if (dir === "out") {
+      outTail.push(rec);
+      if (outTail.length > 10) outTail.shift();
     }
   };
 
@@ -692,8 +757,11 @@ export default function (pi: ExtensionAPI) {
         + `inbox that does not hold a message means it never arrived at this lane: before you say `
         + `anyone re-sent, ignored or lost anything, quote this scope. scope "acks" shows delivery receipts from `
         + `the control topic — proof a named lane RECEIVED a given message id, which is how you `
-        + `tell "ignored" from "never arrived"; receipts are also retained per message id, so a lane that starts later still sees the ones that flew before it woke up, and id= (optionally <id>|<nick>) plus since_min= ask about one dispatch. scope "peers" lists who is live: online, stale `
-        + `(no presence beat lately) or offline. Read-only: publishes nothing.`,
+        + `tell "ignored" from "never arrived"; receipts are also retained per message id, so a lane that starts later still sees the ones that flew before it woke up, and id= (optionally <id>|<nick>) plus since_min= ask about one dispatch. scope "peers" lists the presence beats ` 
+        + `THIS seat has heard per nick — online, stale (no beat lately, or a beat this clock cannot rank) ` 
+        + `or offline (a beat said so) — with the age it measured by. It is not a process check and it is ` 
+        + `not a census of the room: a seat that has heard no beat prints no row, and an absent row is not ` 
+        + `a gone seat. Read-only: publishes nothing.`,
       parameters: Type.Object({
         scope: Type.Optional(
           Type.String({ description: "'room' (default), 'inbox', 'acks', or 'peers'" }),
@@ -716,11 +784,10 @@ export default function (pi: ExtensionAPI) {
           };
         const scope = String(params.scope ?? "room").toLowerCase();
         if (scope === "peers") {
-          const rows = renderPeers([...peers.entries()], Date.now(), nick);
+          // the board, not the bare rows: this scope is the one a seat acts on, so it travels with
+          // the sentence naming what was measured (R-2717 item 3)
           return {
-            content: [
-              { type: "text", text: rows.length ? rows.join("\n") : `no other peer heard of in ${room}` },
-            ],
+            content: [{ type: "text", text: renderPeersBoard([...peers.entries()], Date.now(), nick, room) }],
           };
         }
         if (scope === "acks") {
@@ -781,12 +848,15 @@ export default function (pi: ExtensionAPI) {
         if (params.unseen_only) {
           const got = takeUnseen(buffer, readCursor);
           readCursor = got.cursor;
+          // hist lines are NEVER news: the replay block sets the cursor past them at boot, and a
+          // board merged mid-run must not surface as unseen either (belt beside the cursor).
+          const fresh = got.lines.filter((l) => !l.hist);
           return {
             content: [
               {
                 type: "text",
-                text: got.lines.length
-                  ? got.lines.map(renderLine).join("\n")
+                text: fresh.length
+                  ? fresh.map(renderLine).join("\n")
                   : `no unseen room lines in ${room} (${readCursor} line(s) seen since start)`,
               },
             ],
@@ -796,8 +866,9 @@ export default function (pi: ExtensionAPI) {
         const n = Math.min(Math.max(want, 1), BUFFER_MAX);
         const lines = buffer.slice(-n);
         // showing them here counts as having seen them, so a later unseen_only
-        // read does not hand the same lines over twice
-        readCursor = buffer.length;
+        // read does not hand the same lines over twice — the boundary is the STAMP, not the position
+        // (leg 804: a saturated window shifts; an index would silently eat later lines forever)
+        readCursor = lastSeq(buffer);
         return {
           content: [
             {
@@ -820,7 +891,7 @@ export default function (pi: ExtensionAPI) {
         `Report THIS session's context-window usage from pi's own estimate: tokens used, ` +
         `window size, percent, which model the window belongs to, and whether a fresh session is ` +
         `due (advisory threshold ${CTX_WARN}%` +
-        (CTX_TOKENS > 0 ? `, or ${CTX_TOKENS} tokens absolute` : ", no absolute tripwire set") +
+        (CTX_TOKENS > 0 ? `, or ${CTX_TOKENS} tokens absolute (lifted to part of a large declared window)` : ", no absolute tripwire set") +
         `). The window is a DECLARATION in pi's model config, not a measurement of the serving ` +
         `host — if the two disagree, the percentage is wrong, so quote the model and window with ` +
         `any usage claim. Publishes nothing — say it in the room with chat_post if the task calls ` +
@@ -930,13 +1001,21 @@ export default function (pi: ExtensionAPI) {
     ts: number;
   }>;
 
-  let client: mqtt.MqttClient | null = null;
+  // iid 20 — the socket handle, process-scoped for the same reason as the four stores above: the
+  // factory body RE-RUNS on a session replacement, so a closure binding is per-RUN and the run that
+  // comes next cannot reach what this run left connected. Measured on one unchanged seat (leg 871):
+  // four established sockets and four live `message` handlers in one pi process, so every room line
+  // was handled four times. `client` below is this run's view of that ONE holder, which is what lets
+  // the incoming run close its predecessor's socket instead of racing a shutdown handler for it.
+  const MQTT_CLIENT = ((globalThis as Record<PropertyKey, unknown>)[MQTT_CLIENT_KEY] ??=
+    { current: null as mqtt.MqttClient | null }) as { current: mqtt.MqttClient | null };
+  let client: mqtt.MqttClient | null = MQTT_CLIENT.current;
   // #585: the socket belongs to the PROCESS, the context belongs to the SESSION. `/renew` and
   // `/reload` replace the session inside this same process, so a callback that kept the ctx it
   // was registered with reads a dead session, the throw has no catch, and pi exits on
   // uncaughtException. The ctx is therefore held in a handle refreshed on EVERY session_start
   // (see the first line of that handler), and the socket's callbacks read it through liveCtx()
-  // — so the `if (client) return;` guard below guards the socket and never the context.
+  // — so the prior-client teardown below closes the socket and never the context.
   //
   // CORRECTED BY MEASUREMENT 2026-10-18 — "EVERY session_start" was the wrong half. A session
   // REPLACED by newSession() does NOT re-fire session_start in this process, so the handle kept the
@@ -949,6 +1028,40 @@ export default function (pi: ExtensionAPI) {
   // are registered inside session_start, always after the handle is set, so there is no path
   // where a socket event arrives with no context. Null here would be a wiring bug, not a race.
   const liveCtx = (): ExtensionContext => currentCtx!;
+  /**
+   * tabichat#19 — the park drain, one function with two callers: socket `connect`, and the renew
+   * re-arm. The socket belongs to the process and a replaced session does not reconnect it, so the
+   * old single caller could leave a full park sitting there for the life of the seat — which is why
+   * iid 4's replay path was never OBSERVED landing in a fresh seat.
+   *
+   * Assigned inside `session_start` (it calls `handleInbound`, which lives in that scope) and read
+   * through this factory-scoped handle, exactly like `liveCtx` reads the context.
+   */
+  let drainPark: ((why: string) => number) | null = null;
+  /**
+   * tabichat#19 — the SEND handle, and why the ctx handle alone was never enough.
+   *
+   * The inbound path hands lines to pi through `pi.sendUserMessage`. In pi 1.4.0 that method is
+   * guarded by an `assertActive()` that reads the staleness flag on the SHARED extension runtime
+   * (loader.js:309-311 -> runtime.assertActive at :115), and that flag is set by
+   * `AgentSession.dispose()` -> `runner.invalidate()` -> `runtime.invalidate()` (loader.js:145-150)
+   * and is never cleared: the replacement session's runner is built over the SAME runtime object
+   * (`new ExtensionRunner(extensions, extensionsResult.runtime, ...)`, agent-session.js:2983). So
+   * from the first replacement onward in a process every hand-off throws, for the life of the
+   * seat. The `liveCtx()` handle covers the CONTEXT (the new runner is fresh); it cannot cover the
+   * `pi` API object, which closes over the shared runtime. Measured: 1255 throws across all 8 lanes
+   * with 0 `withSession did not fire` warnings — the re-arm ran, and the send still threw.
+   *
+   * The fix is the same shape as the ctx handle: a handle re-armed in `withSession`, pointing at
+   * the REPLACEMENT SESSION's own `sendUserMessage` (types.d.ts:334, `ReplacedSessionContext`),
+   * which is bound to the live session and reads nothing stale. Before any replacement the load-time
+   * API is correct, so that stays the initial value.
+   */
+  type SendUser = (
+    content: string,
+    options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+  ) => Promise<void>;
+  let sendUser: SendUser = (content, options) => pi.sendUserMessage(content, options);
   /**
    * Notify WITHOUT ever being a crash vector.
    *
@@ -1071,6 +1184,42 @@ export default function (pi: ExtensionAPI) {
   const ROOM_SEND_KIND = "room line";
   const publishRoom = (payload: Record<string, unknown>) => {
     if (!client || !room) return;
+    // leg 800, ONE tail for both publish branches: journal this send, keep the board tail, and —
+    // only with the flag — publish the retained board. Kept out of the branch shape so the #10
+    // gate's "registers on the topic it ACTUALLY used" structure stays byte-recognisable.
+    const afterRoomSend = () => {
+      journalAppend("out", {
+        id: typeof payload.id === "string" ? payload.id : "",
+        nick: typeof payload.nick === "string" ? payload.nick : nick,
+        to: typeof payload.to === "string" ? payload.to : undefined,
+        ts: typeof payload.ts === "number" ? payload.ts : Date.now(),
+        message: typeof payload.message === "string" ? payload.message : String(payload.message ?? ""),
+      });
+      // A2, flag-gated and DEFAULT OFF: the retained per-lane tail board. On the phase-1 ACL a write
+      // to `hist/<leaf>` is a QoS 0 publish the broker refuses WITHOUT any error, so this stays dark
+      // until the generated ACL grants it (docs/broker/README.md cutover table).
+      if (!HIST_BOARD) return;
+      const ht = histTopic(room, nick);
+      if (!ht) {
+        diag("ERROR",
+          `[tabichat][hist] MQTT_HIST_BOARD=1 but nick "${nick}" has no topic-leaf-safe form; the ` +
+            `tail board was NOT published — an empty leaf aims at a trailing-separator topic nobody reads.`,
+        );
+        return;
+      }
+      client!.publish(
+        ht,
+        JSON.stringify(
+          histBoardPayload({
+            nick,
+            leaf: topicLeaf(nick),
+            journalPath: roomLogTarget && roomLogTarget.ok ? roomLogTarget.path : "",
+            outLines: outTail,
+          }),
+        ),
+        { retain: true },
+      );
+    };
     if (SENDER_TOPIC) {
       const t = msgTopic(room, nick);
       if (!t) {
@@ -1084,6 +1233,7 @@ export default function (pi: ExtensionAPI) {
       } else {
         client.publish(t, JSON.stringify(payload));
         watchSend(t, ROOM_SEND_KIND);
+        afterRoomSend();
         return;
       }
     }
@@ -1093,6 +1243,7 @@ export default function (pi: ExtensionAPI) {
     // no error" — this is that report. Nothing else on the client side can see it: the publish call
     // succeeds, the socket stays open, the broker says nothing.
     watchSend(`chat/${room}`, ROOM_SEND_KIND);
+    afterRoomSend();
   };
   /** Publish to the control topic — machinery, never shown as chat. */
   const publishCtl = (payload: unknown) => {
@@ -1321,7 +1472,6 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(nonDurableNote, "warning");
       }
     }
-    if (client) return;
     // NO BROKER, LOUDLY (site-agnostic by design): the refusal is the ANSWER, not a step
     // before the real one. Both channels, because a "warning" toast that clears is how a
     // misconfiguration reads to the operator as a broken product — the two-channel finding already
@@ -1338,6 +1488,60 @@ export default function (pi: ExtensionAPI) {
     if (!room) {
       ctx.ui.notify("[tabichat] --tabichat given but no room: pass --room <name> or set MQTT_ROOM", "warning");
       return;
+    }
+    // ROOM JOURNAL, resolved and replayed BEFORE the socket can deliver a live line (leg 800).
+    // The rules are in roomlog.ts; this block is the wiring and the one load-bearing act: take the
+    // newest lines back into the buffer as HISTORY — no injection, no re-journal, cursor past them.
+    {
+      roomLogCap = parseRoomLogCap(process.env[ROOMLOG_MAX_ENV], ROOMLOG_MAX_DEFAULT);
+      const replayN = parseRoomLogCap(process.env[ROOMLOG_REPLAY_ENV], ROOMLOG_REPLAY_DEFAULT);
+      roomLogTarget = resolveRoomLogTarget(
+        { env: process.env[ROOMLOG_ENV], site: siteConfig[ROOMLOG_SITE_KEY], home: process.env.HOME, room, nick },
+        (d) => ROOMLOG_IO.isInGitTree(d),
+      );
+      if (!roomLogTarget.ok) {
+        // an explicit `off` is an answer and gets one INFO line; a refusal is a fault and gets ERROR.
+        // Either way NOTHING is written and the reason says which knob answered.
+        diag(roomLogTarget.deliberate ? "INFO" : "ERROR", `[tabichat][roomlog] ${roomLogTarget.reason}`);
+      } else {
+        // boot order is the CONTRACT (leg 804 D2): modes first (`ensure`, dir 0700 / file 0600),
+        // then the cap trim of THIS seat's own file (the single-writer moment), then the replay.
+        try {
+          ROOMLOG_IO.ensure(roomLogTarget.path);
+        } catch (e) {
+          diag("ERROR", `[tabichat][roomlog] could not prepare ${roomLogTarget.path}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        const tr = trimRoomLog(ROOMLOG_IO, roomLogTarget.path, roomLogCap);
+        if (tr.ok && tr.trimmed > 0)
+          diag("INFO", `[tabichat][roomlog] journal at ${roomLogTarget.path} was ${tr.trimmed} line(s) past its ${roomLogCap}-line cap: oldest dropped at boot, newest kept — said, not silent`);
+        if (!tr.ok)
+          diag("ERROR", `[tabichat][roomlog] boot trim failed: ${tr.reason}`);
+        const t = loadRoomLogTail(ROOMLOG_IO, roomLogTarget.path, replayN);
+        if (t.malformed > 0)
+          diag("ERROR", `[tabichat][roomlog] ${t.malformed} unreadable line(s) in ${roomLogTarget.path} — skipped in replay, the rest stands`);
+        let added = 0;
+        for (const rec of t.records) {
+          const seen = noteRoomId(seenRoomIds, rec.id);
+          seenRoomIds = seen.seen;
+          if (seen.dup) continue; // a live copy is already in the buffer; history never doubles it
+          pushRoomLine(buffer, {
+            nick: rec.nick,
+            message: rec.text,
+            ts: rec.ts,
+            id: rec.id || undefined,
+            ...(rec.to ? { to: rec.to } : {}),
+            hist: true,
+          }, BUFFER_MAX);
+          added++;
+        }
+        // history is not news: the first unseen read must start AFTER this block. The boundary is
+        // the newest STAMP, not an array position (leg 804 D1), and it moves only when the block
+        // actually added lines — a same-process re-start where everything deduped must not silently
+        // mark still-unread LIVE lines as seen.
+        if (added > 0) readCursor = lastSeq(buffer);
+        if (added > 0)
+          diag("INFO", `[tabichat][roomlog] replayed ${added} line(s) of room history from ${roomLogTarget.path} (marked hist; not injected; unseen reads start after them)`);
+      }
     }
     // fail loudly, never silently: with no declared contextWindow there is no
     // percent to warn on, and the lane must know its advisory is disabled
@@ -1379,6 +1583,53 @@ export default function (pi: ExtensionAPI) {
         "info",
       );
     }
+    // iid 20 — the guard used to be `if (client) return;`, and that early return was the duplication:
+    // a replaced session got here, saw its predecessor's socket, left, and nothing ever closed it — the
+    // handle was a per-run binding, so no later run could even reach it to end it. Now the handle is
+    // process-scoped and this is the ONE close point: whatever the store holds, whether an earlier run
+    // left it there or this run put it there, is ended and unhooked immediately before the connect.
+    // One client per process is then a property of the code path, not of which shutdown handler runs
+    // last. Behavior change named: a second session_start inside one run now reconnects rather than
+    // returning with the socket it already had.
+    //
+    // PLACEMENT, finding C at 9ba3207d1: this sits BELOW the three early returns that can stop this run
+    // from ever connecting (`brokerRefusal`, `!room`, `TRANSPORT.mode === "refuse"`), and it has to.
+    // Above them, a run that cannot resolve its config force-closed the socket it inherited, returned,
+    // and left nothing to re-arm it — pre-fix, `if (client) return;` sat above all three and kept that
+    // socket alive. A run that does not connect must not be the thing that closes the connection.
+    // `storeShared` is the state AT ENTRY, so it is read before the call below empties the holder.
+    const storeSharedAtEntry = MQTT_CLIENT.current !== null;
+    const prior = endPriorClient(MQTT_CLIENT, "session_start, before connect");
+    client = null;
+    if (prior.unhooked || !prior.ended || prior.destroyed) diag("WARN", `[tabichat][client] ${prior.note}`);
+    // iid 20, leg 889 Cell B — a MEASUREMENT, not a behaviour change: what the holder held when this
+    // run arrived, beside how many sockets THIS PROCESS holds to the broker right now. Zero `[tabichat][client]`
+    // rows means two different things without it — an empty store is what a working shutdown-first renewal
+    // leaves behind AND what a channel the run could never reach looks like — so `storeShared=false count=2`
+    // is the guinea's own face, printed by the code rather than inferred from silence. The tag is
+    // `[tabichat][client-face]`, deliberately NOT `[tabichat][client]`, so leg 888's two greps keep their
+    // meaning; grep `storeShared=` to read this one. `count` comes from node's own handle list rather than
+    // an `ss` shell-out, because `node:child_process` has no stub in this repo's scoped typecheck and the
+    // two ways to make it compile (a new stub, or a new APPROVED entry) are both outside this leg's fence;
+    // `process._getActiveHandles()` is this pid's view, needs no import, and answers "?" when no port is
+    // present rather than inventing one. shortcut: counts connected handles on the broker PORT only, no
+    // host check; upgrade if a seat ever faces two brokers on one port.
+    diag(
+      "INFO",
+      `[tabichat][client-face] ${clientFaceNote(
+        storeSharedAtEntry,
+        countBrokerSockets(
+          typeof process._getActiveHandles === "function" ? process._getActiveHandles() : [],
+          (() => {
+            try {
+              return new URL(brokerUrl).port;
+            } catch {
+              return "";
+            }
+          })(),
+        ),
+      )}`,
+    );
     client = mqtt.connect(brokerUrl, {
       ...(TRANSPORT.tls ?? {}),
       clientId: `pi-${nick}-${Math.random().toString(16).slice(2, 8)}`,
@@ -1391,6 +1642,9 @@ export default function (pi: ExtensionAPI) {
         retain: true,
       },
     });
+    // iid 20 — publish the handle the moment it exists, so the next run of this process can find it.
+    // One construction site, one store write, no second client anywhere.
+    MQTT_CLIENT.current = client;
     client.on("connect", () => {
       // EVERY connect, not once at boot: a reconnect is a different moment and a warning printed
       // only at load is a warning nobody is looking at when the session is actually insecure.
@@ -1403,6 +1657,9 @@ export default function (pi: ExtensionAPI) {
       // that arrives on BOTH is collapsed by the id ledger (roommsg.ts:noteRoomId), so this cannot
       // produce a duplicate line. Unconditional, because it is inert until any lane writes there.
       client!.subscribe(msgWild(room));
+      // A2 tail boards are heard ONLY with the flag on — default OFF, and the phase-1 broker
+      // refuses the write side anyway (docs/broker/README.md, two-pass law).
+      if (HIST_BOARD) client!.subscribe(histWild(room));
       // ONE control filter, not two (tabichat#3). MQTT 3.1.1 §4.7: `sport/#` ALSO matches `sport`,
       // and mosquitto 2.1.2 delivers one copy PER matching subscription — measured on the two-seat
       // fixture (s146): subscribing to BOTH `_ctl` and `_ctl/#` yields 2 copies of every control
@@ -1426,29 +1683,12 @@ export default function (pi: ExtensionAPI) {
         ackSweep = setInterval(sweepAckWatch, Math.max(250, Math.floor(win / 3)));
       }
       liveCtx().ui.notify(`[tabichat] connected as ${nick} (room ${room})`, "info");
-      // tabichat#4 — drain anything an earlier session of THIS process parked for us. The socket is
-      // connected, so a replayed line takes the same path as a live one — id ledger, ack, supersession
-      // and all — rather than being pasted in beside it. Oldest first, and the park is emptied BEFORE
-      // the loop: a replay that throws must not re-park into the list being drained and loop forever.
-      {
-        const backlog = takeParked(INBOUND_PARK);
-        INBOUND_PARK.splice(0, INBOUND_PARK.length);
-        if (backlog.length) {
-          diag("INFO",
-            `[tabichat][ctl] replaying ${backlog.length} inbound line(s) parked by a replaced session`,
-          );
-          for (const b of backlog) {
-            try {
-              handleInbound(b.topic, Buffer.from(b.payload));
-            } catch (e) {
-              diag("ERROR",
-                `[tabichat] parked line replay threw: ${errOneLine(e)} (topic ${b.topic}) — dropped, not re-parked`,
-                e instanceof Error ? e.stack ?? String(e) : String(e),
-              );
-            }
-          }
-        }
-      }
+      // tabichat#4 — drain anything an earlier session of THIS process parked for us.
+      // tabichat#19: the same drain now also runs on the renew re-arm, because a replaced session
+      // does NOT reconnect the socket — `connect` may never fire again in this process, and a park
+      // that is only ever emptied on `connect` is a park that never drains. One function, both
+      // callers, so the two faces cannot drift.
+      drainPark?.("socket connect");
     });
     client.on("error", (err: Error) => {
       // BELTED, and this leg is the reason it matters more now: a TLS misconfiguration reports
@@ -1569,6 +1809,40 @@ export default function (pi: ExtensionAPI) {
         upsertPeer(msg.nick, msg.status, msg.ts);
         return;
       }
+      // A2 TAIL BOARD (leg 800, flag-gated): a peer's retained last-ten, merged as HISTORY — never
+      // injected, never re-journaled, deduped against the live copy by the id ledger. Authorship is
+      // the TOPIC leaf (what the broker's ACL let that certificate write), same rule as msg/<leaf>.
+      if (topic.startsWith(`chat/${room}/hist/`)) {
+        const leaf = nickFromHistTopic(topic, room);
+        if (!leaf) return;
+        if (typeof msg.nick === "string" && msg.nick.trim() !== "" && topicLeaf(msg.nick) !== leaf) {
+          diag("ERROR", `[tabichat][hist] board line dropped, authorship conflict: topic names "${leaf}", payload nick "${msg.nick}". Nothing was merged.`);
+          return;
+        }
+        if (leaf === topicLeaf(nick)) return; // our own board echoing back: those lines are already live here
+        const board = (msg as unknown as { lines?: unknown }).lines;
+        const rows = Array.isArray(board) ? board : [];
+        let merged = 0;
+        for (const raw of rows) {
+          const rec = raw as RoomLogRecord;
+          if (!rec || typeof rec.nick !== "string" || typeof rec.text !== "string" || typeof rec.ts !== "number") continue;
+          const seen = noteRoomId(seenRoomIds, typeof rec.id === "string" ? rec.id : "");
+          seenRoomIds = seen.seen;
+          if (seen.dup) continue;
+          pushRoomLine(buffer, {
+            nick: rec.nick,
+            message: rec.text,
+            ts: rec.ts,
+            id: typeof rec.id === "string" && rec.id ? rec.id : undefined,
+            ...(rec.to ? { to: rec.to } : {}),
+            hist: true,
+          }, BUFFER_MAX);
+          merged++;
+        }
+        if (merged > 0)
+          diag("INFO", `[tabichat][hist] merged ${merged} line(s) from ${leaf}'s tail board into the buffer (history, marked hist, not injected)`);
+        return;
+      }
       // SHAPE (B), BROKER-FIRST AUTHORSHIP — the rule itself lives in roommsg.ts:authorVerdict so it
       // is unit-checked on both halves (tools/test_roommsg.ts); this is the wiring, and a socket
       // callback is the worst place in the file to hold a decision nobody can test headless.
@@ -1601,8 +1875,10 @@ export default function (pi: ExtensionAPI) {
         // to, rather than making a lane infer it from prose (mention.ts)
         ...(inboundTo ? { to: inboundTo } : {}),
       };
-      buffer.push(inboundLine);
-      if (buffer.length > BUFFER_MAX) buffer.shift();
+      pushRoomLine(buffer, inboundLine, BUFFER_MAX);
+      // leg 800: every line the seat TAKES INTO the buffer is journaled — control receipts,
+      // presence and boards returned above and never reach here.
+      journalAppend("in", { id: msg.id ?? "", nick: from, to: inboundTo, ts: inboundLine.ts, message: text });
       upsertPeer(from, "online", Date.now());
       // FIELD-FIRST, TEXT-FALLBACK (owner request 2026-10-16): a payload that carries a recipient
       // field is delivered by that field ALONE, so an address quoted in prose — the all-lanes value
@@ -1710,12 +1986,33 @@ export default function (pi: ExtensionAPI) {
       // answer "hold" at the cap (tools/test_mentionq.ts pins both halves).
       if (cls === "turn") {
         handedOff = true;
-        pi.sendUserMessage(plan.body);
+        sendUser(plan.body);
       } else {
         handedOff = true;
-        pi.sendUserMessage(plan.body, { deliverAs: cls });
+        sendUser(plan.body, { deliverAs: cls });
       }
     }
+    // tabichat#19 — the drain, wired here because `handleInbound` is in this scope. Emptying the park
+    // BEFORE the loop: a replay that throws must not re-park into the list being drained.
+    drainPark = (why: string): number => {
+      const backlog = takeParked(INBOUND_PARK);
+      INBOUND_PARK.splice(0, INBOUND_PARK.length);
+      if (!backlog.length) return 0;
+      diag("INFO",
+        `[tabichat][ctl] replaying ${backlog.length} inbound line(s) parked by a replaced session (${why})`,
+      );
+      for (const b of backlog) {
+        try {
+          handleInbound(b.topic, Buffer.from(b.payload));
+        } catch (e) {
+          diag("ERROR",
+            `[tabichat] parked line replay threw: ${errOneLine(e)} (topic ${b.topic}) — dropped, not re-parked`,
+            e instanceof Error ? e.stack ?? String(e) : String(e),
+          );
+        }
+      }
+      return backlog.length;
+    };
   });
 
   // One-line report shared by the context_usage tool and the /ctx command.
@@ -1728,14 +2025,18 @@ export default function (pi: ExtensionAPI) {
   const ctxReport = (ctx: CtxUsageReader): string => {
     const who = ctxModelLabel(ctx.model);
     const usage = ctx.getContextUsage();
-    const rules = `threshold ${CTX_WARN}%` + (CTX_TOKENS > 0 ? ` or ${CTX_TOKENS} tokens absolute` : ", no absolute tripwire");
+    const rules =
+      `threshold ${CTX_WARN}%` +
+      (CTX_TOKENS > 0
+        ? ` or ${ctxEffectiveFloor(usage?.contextWindow ?? 0, CTX_TOKENS, CTX_WARN)} tokens absolute`
+        : ", no absolute tripwire");
     if (!usage)
       return `context_usage: no context window declared for ${who} — percent advisory OFF; add "contextWindow" to ~/.pi/agent/models.json (${rules})`;
     if (usage.percent === null || usage.tokens === null)
       return `context_usage: unknown until the next model response (window ${usage.contextWindow} declared for ${who}; ${rules})`;
     const s: CtxSample = { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent };
     const pctDue = freshSessionDue(s, CTX_WARN, lastCtxWarn);
-    const absDue = absoluteSessionDue(s, CTX_TOKENS, lastCtxWarnTokens);
+    const absDue = absoluteSessionDue(s, CTX_TOKENS, lastCtxWarnTokens, CTX_WARN);
     return (
       `context_usage: ${Math.floor(s.percent)}% = ${s.tokens}/${s.contextWindow} tokens ` +
       `(window declared for ${who}; ${rules}${lastCtxWarn >= 0 ? `, last advisory ${lastCtxWarn}%` : ""}) — ` +
@@ -1839,14 +2140,15 @@ export default function (pi: ExtensionAPI) {
     // counts the lines IN THIS MESSAGE, not the size of the group it was drained from.
     // expandPromptTemplates is false so a held line that begins with "/" cannot be dispatched as an
     // extension command (pi's own deferred re-call already does this; stated so it stays true).
-    pi.sendUserMessage(`${heldHeader(send.length)}\n\n${heldBatchBody(send)}`, {
+    sendUser(`${heldHeader(send.length)}\n\n${heldBatchBody(send)}`, {
       expandPromptTemplates: false,
     });
   });
 
   // Fresh-session advisory, two independent rules, one post per turn:
   //   percent  — at or over CTX_WARN of the DECLARED window (useless if that declaration lies)
-  //   tokens   — at or over MQTT_CTX_TOKENS in absolute terms, declaration ignored
+  //   tokens   — at or over the absolute floor MQTT_CTX_TOKENS sets, lifted to the part of a large
+  //              declared window where a trip still means something (ctxEffectiveFloor)
   // ROOM ONCE, to lead + owner. THE FOOTER WIDGET IS GONE — owner order 2026-10-24, verbatim: "GET RID OF THE
   // CTX REPORT!" (his specimen bottom line read `ctx 10% (106k/977k) [tabichat] 1 mention(s) held — the lane is
   // busy; chat_read scope=inbox @dove tabichat 🍄 RESUME /tabith/resume`). `ctxStatusText` stays exported and
@@ -1947,13 +2249,13 @@ export default function (pi: ExtensionAPI) {
     if (autoRenewArmed && !AUTO_RENEWED.has(nick) && (s.percent ?? 0) >= CTX_FORCE && !arv.ok)
       ctx.ui.notify(`[tabichat][renew] auto-renew held: ${arv.reason}`, "warning");
     const pctDue = freshSessionDue(s, CTX_WARN, lastCtxWarn);
-    const absDue = absoluteSessionDue(s, CTX_TOKENS, lastCtxWarnTokens);
+    const absDue = absoluteSessionDue(s, CTX_TOKENS, lastCtxWarnTokens, CTX_WARN);
     if (!pctDue && !absDue) return;
     const trigger: CtxTrigger = pctDue ? "percent" : "tokens";
     // advance BOTH counters: a turn that fired one rule must not immediately fire the other
     lastCtxWarn = Math.floor(s.percent ?? 0);
     lastCtxWarnTokens = s.tokens ?? -1;
-    const line = ctxWarnLine(s, ctxWarnTargets(nick, OWNER_NICK), trigger, CTX_TOKENS);
+    const line = ctxWarnLine(s, ctxWarnTargets(nick, OWNER_NICK), trigger, ctxEffectiveFloor(s.contextWindow, CTX_TOKENS, CTX_WARN));
     ctx.ui.notify(
       `[tabichat][ctx] ${line} (window ${s.contextWindow} declared for ${ctxModelLabel(ctx.model)})`,
       "warning",
@@ -2076,7 +2378,7 @@ export default function (pi: ExtensionAPI) {
         "warning",
       );
       labelSuperseded(deliver);
-      for (const h of deliver) pi.sendUserMessage(h.body, { deliverAs: "followUp" });
+      for (const h of deliver) sendUser(h.body, { deliverAs: "followUp" });
     }
   });
 
@@ -2123,19 +2425,13 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("peers", {
-    description: "who else the room believes is live (online / stale / offline, with age)",
+    description: "the presence beats this seat has heard, per nick (online / stale / offline, with age) — not a process check",
     handler: async (_args, ctx) => {
       if (!room) {
         ctx.ui.notify("[tabichat] not in a room — start pi with --tabichat --room <name>", "warning");
         return;
       }
-      const rows = renderPeers([...peers.entries()], Date.now(), nick);
-      ctx.ui.notify(
-        rows.length
-          ? `[tabichat] peers in ${room}:\n${rows.join("\n")}`
-          : `[tabichat] no other peer heard of in ${room}`,
-        "info",
-      );
+      ctx.ui.notify(`[tabichat] peers in ${room}:\n${renderPeersBoard([...peers.entries()], Date.now(), nick, room)}`, "info");
     },
   });
 
@@ -2228,7 +2524,16 @@ export default function (pi: ExtensionAPI) {
           // renew of this seat may run (AC4: the paired negative of the fork guard). Every other
           // terminal path below releases it too; the backstop window covers the paths that cannot.
           RENEW_INFLIGHT.delete(nick);
+          // tabichat#19: the CONTEXT is not the only thing the dead session owned — `pi.sendUserMessage`
+          // throws for the rest of the process (see the `sendUser` handle above), so every hand-off
+          // from here on goes through the replacement session's own send.
+          sendUser = (content, options) => next.sendUserMessage(content, options);
           next.ui.setStatus("nick", `@${nick}`);
+          // tabichat#19 — THIRD ACT, and the reason iid 4's replay was never OBSERVED: the socket is
+          // already connected when a session is replaced, so the `connect` drain never ran for the
+          // fresh seat. Drained AFTER the send handle is re-armed, or a replayed line would throw on
+          // the dead `pi.sendUserMessage` and be re-parked instead of delivered.
+          drainPark?.("renew re-arm");
           next.ui.notify("[tabichat][renew] new session started", "info");
           // SECOND ACT, and this is the wake half (s136 Leg D): a renewed seat is an ERASED seat, and
           // nothing above makes it read its own handoff — worker1 woke at a fresh prompt with
@@ -2324,6 +2629,16 @@ export default function (pi: ExtensionAPI) {
         /* same */
       }
     }
+    // iid 20 — hand the holder to the SAME helper the start path uses, and only while it still points
+    // at this run's client, so a shutdown that lands after a replacement cannot wipe the incoming run's
+    // handle. pi closes the old instance BEFORE the new one starts (docs/extensions.md:512, restated at
+    // :1474), so clearing the holder alone emptied it on the one path that matters: the incoming run's
+    // endPriorClient then read `no prior client`, unhooked nothing, and the retained socket kept its
+    // connect/error/message listeners. The graceful close above already ran, so the helper's end(true)
+    // is mqtt.js's idempotent branch (client.js:818 returns `this` when already disconnecting); what is
+    // being asked of it here is removeAllListeners over CLIENT_EVENTS plus the store drop, and the
+    // helper does both even when the close throws.
+    if (MQTT_CLIENT.current === client) endPriorClient(MQTT_CLIENT, "session_shutdown");
     client = null;
   });
 }

@@ -49,14 +49,18 @@ case "$EXT" in
     # reason the deploy is safe — a file that is not listed here never moves, so an omitted sibling
     # lands an index.ts importing a module that is not in the live directory, and every lane starting
     # after it dies at import. ORDER STILL MATTERS: leaf modules first, index.ts last.
-    FILES=(mention.ts ctxwarn.ts errnote.ts exitlog.ts roommsg.ts mentionq.ts laneadmin.ts broker.ts tlsopts.ts diaglog.ts steer.ts index.ts)
+    FILES=(mention.ts ctxwarn.ts errnote.ts exitlog.ts roommsg.ts mentionq.ts laneadmin.ts broker.ts tlsopts.ts diaglog.ts roomlog.ts steer.ts index.ts)
     # diaglog.ts joins FILES at leg 517 for the reason recorded above: index.ts IMPORTS it, and a file
     # not listed here never moves — so the deploy would ship an index.ts whose first act is
     # `Cannot find module "./diaglog.ts"` on every lane. test_diaglog_routing.ts ASSERTS both halves
     # of that (this gate is in GATES, and diaglog.ts is in FILES before index.ts), because a gate
     # nobody runs is decoration — audit `iid 13`.
+    # roomlog.ts joins FILES at leg 802 for the same recorded reason: index.ts IMPORTS it (leg 800
+    # added the module and missed this array — the miss is why tools/test_deploy_closure.ts now
+    # derives the transitive closure instead of asserting one filename). Dependencies first:
+    # roomlog.ts imports roommsg.ts only, so it sits right after diaglog.ts and before index.ts.
     LOADCHECK=(index.ts)
-    GATES=(test_mention.ts test_ctxwarn.ts test_errnote.ts test_exitlog.ts test_roommsg.ts test_notice_prefix.ts test_mentionq.ts test_laneadmin.ts test_broker.ts test_steer.ts test_ctx_scope.ts test_ctx_handle.ts test_tlsopts.ts test_diaglog_routing.ts)
+    GATES=(test_mention.ts test_ctxwarn.ts test_errnote.ts test_exitlog.ts test_roommsg.ts test_notice_prefix.ts test_mentionq.ts test_laneadmin.ts test_broker.ts test_steer.ts test_ctx_scope.ts test_ctx_handle.ts test_tlsopts.ts test_diaglog_routing.ts test_roomlog.ts test_deploy_closure.ts typecheck_ext.ts)
     # NOT deploy gates, on purpose: these need docker and an image, and a deploy gate that depends on
     # host tooling is a gate that fails for reasons unrelated to the code (the same lesson that put
     # `env -u MQTT_LEAD_NICK` below). They are PHYSICAL checks, and this array is now READ, not just
@@ -64,6 +68,14 @@ case "$EXT" in
     # that quietly stops meaning anything, and that is how a mandatory check becomes a rumour.
     #   bash src/tools/deploy-tabichat.sh --physical
     PHYSICAL=(test_broker_auth.ts test_fixture_isolation.py)
+    # tabichat#13: two more cells join that stage. `test_ack_watch_broker.ts` is the only physical proof
+    # that the ACL carries a granted control-child publish and drops a refused one, and
+    # `test_tlsenv_paho.py` is the real-paho handshake against a real broker — the reading of the config
+    # cannot show either, which is why they were never satisfied by the pure truth tables beside them.
+    # Both start their own owner-scoped fixture, both tear it down, and both exit non-zero when the
+    # fixture is not there, so a run that could not happen never reads as a pass. Still not GATES: a
+    # deploy gate that depends on docker fails for reasons unrelated to the code.
+    PHYSICAL+=(test_ack_watch_broker.ts test_tlsenv_paho.py)
     ;;
   fs-gate)
     FILES=(fsrules.ts index.ts)
@@ -72,6 +84,25 @@ case "$EXT" in
     ;;
   *) printf 'unknown EXT: %s (expected tabichat or fs-gate)\n' "$EXT" >&2; exit 2 ;;
 esac
+# tabichat#13: three repo-level checks join the gate stage, appended here rather than folded into the
+# two array literals above. Both arms get them — each one reads the repository (the provider-error
+# instrument's truth table, the rule that no gate file may end its own run early, the lead model's
+# register contract) and none of them touches an extension directory, so gating them per-EXT would
+# describe a dependency that is not there. It is also the shape that keeps a count honest:
+# `test_deploy_closure.ts` reads the tabichat arm's own `GATES=(…)` line and prints how many names it
+# finds there, and folding new names into that literal moves the number it prints.
+#   test_400_meta_capture.ts — the meta-only provider-failure instrument, mocked events, no live call
+#   test_exit_class.ts       — the rule that a gate reports through its exit code, not process.exit
+#   test_lead_model.ts       — the lead-model extension's register contract
+GATES+=(test_400_meta_capture.ts test_exit_class.ts test_lead_model.ts)
+# leg 889: the realm gate joins the same stage, appended rather than folded into the literal above —
+# test_deploy_closure.ts reads that line by exact text and prints how many names it finds there, and a
+# registration that re-aims a pinned line is the mistake leg 825 booked once already. This one is the
+# only gate in the repo that LOADS index.ts in-process (the three package externals are stubbed at load
+# time, the store is not), because the question it answers — does a second factory pass in one process
+# see the same realm holder — has never been measurable from a source-shape cell, and leg 888 read 0
+# teardown rows against a seat that had retained a socket.
+GATES+=(test_renewal_realm.ts)
 TARGET="${TARGET:-$HOME/.pi/agent/extensions/$EXT}"
 SRC="$BASE/extensions/$EXT"
 
@@ -168,6 +199,92 @@ if [ "$gates" = 1 ]; then
   # `env -u MQTT_LEAD_NICK` above, and why the docker suites are PHYSICAL and not GATES). It is
   # probed for and refused BY NAME, so a skip is a sentence in the deploy log, never an absence.
   PYGATES=(test_broker.py test_wrap_rows.py)
+  # tabichat#13: the five python truth tables that need no broker, no fixture and no device join this
+  # array by the rule written a few lines above — "every python harness this file can run without a
+  # broker or a fixture is listed here and dies the deploy". Appended, not folded into the line above.
+  # Each one is the mirror of something the shipped clients do: the transport decision (tlsenv), the
+  # recipient-field addressing rule, the paste/fold rules, presence-record precedence, and the scrollback
+  # client a human reads their missed messages with. All five were green standing alone before they were
+  # named here, which is the only reason naming them is safe.
+  PYGATES+=(test_tlsenv.py test_addressing.py test_paste.py test_presence.py test_tabichat_cli.py)
+  # THE SHELL GATES, and why they are not in GATES above: that array is executed through bun, and bun
+  # 1.4.3 does not run a shell script — it parses the file as a module and stops at the first `case`
+  # arm. Measured at this leg's gate run: `bun tools/check_guard_armed.sh` -> "Failed to run
+  # ... Unexpected ')'" (rc 1), while `sh tools/check_guard_armed.sh` -> rc 0. Putting a shell check in
+  # GATES would therefore red EVERY deploy with a parse error instead of gating anything — the same
+  # reason PYGATES is its own array: a gate has to be run by an interpreter that can run it.
+  SHGATES=(check_guard_armed.sh)
+  # leg 842: the enabler's truth table joins the same stage. Appended with +=, the shape leg 825
+  # established in this same spot, because test_secret_guard.sh pins the line above by exact text and
+  # a gate wiring must not re-aim a check that is already running.
+  SHGATES+=(test_hook_chain.sh)
+  # leg 845: the two attribution checks join the same stage. Appended with +=, the shape leg 825
+  # established at this exact spot for the same reason: test_secret_guard.sh pins the line above by its
+  # full text, and folding new names into it re-aims a pin that is already doing its job.
+  SHGATES+=(check_attributions.sh test_attribution_pins.sh)
+  # leg 851: the truth table for THIS loop, run in a scratch clone of the tree being deployed.
+  SHGATES+=(test_gate_words.sh)
+  # leg 825: the subject-nickname guard joins the same stage, one appended registration and not two —
+  # test_secret_guard.sh counts the array across BOTH shapes, so a second line naming this file would
+  # register the same check twice while the deploy still looks green.
+  SHGATES+=(check_subject_armed.sh)
+  # leg 862: the subject guard's BEHAVIOUR test joins the same stage. C registered the armed check that
+  # asks whether the guard EXISTS; nothing asked whether it still DOES what it claims, and a check that
+  # cannot tell a working guard from one that quietly stopped existing is the class this array exists for.
+  # Appended at the END rather than inserted: the loop dies at the first refusal, so a registration's
+  # position decides which cells go red when something fails (leg 860's own finding), and the literal line
+  # above is pinned by exact text in test_secret_guard.sh.
+  #
+  # Why its sibling file is NOT on this line: test_secret_guard.sh was measured here too, and it cannot be
+  # a member of the array it counts while test_gate_words.sh — also registered — runs the deploy against a
+  # scratch clone whose array it rewrites on purpose. The census then asserts one number about a tree that
+  # holds another, and two further cells read pinned objects out of published history that a git-init clone
+  # cannot have. That registration was backed out on the lead's ruling and the durable shape is booked as
+  # the secret guard's own design leg; the measurement of both faces is in
+  # wave44-specs-20261101/flash1-gate-registration-862-report.md.
+  SHGATES+=(test_subject_guard.sh)
+  # WHAT THE LOOP NOW SAYS, and why it said something false before (leg 851). The old shape sent the
+  # check's ordinary output to /dev/null and then printed one fixed sentence about the hook path — so a
+  # gate whose file was sitting in the clone and whose own words said something else was described by a
+  # cause the loop had never observed, and the words that named the real reason were thrown away. Two
+  # faces are knowable from here, and they are now the two faces that get said:
+  #   * the registered name has no file -> the check never ran, and that is the whole true statement;
+  #   * the file ran and left non-zero -> its output is shown first, then its exit code, and the wrapper
+  #     adds no reason of its own. A check is a pass at rc 0 and a refusal at anything else.
+  # Requirement 4 is the one that matters most: the FIRST refusal still stops the deploy, with rc 1. That
+  # is also what makes the capture awkward here, and both traps are recorded rather than rediscovered:
+  #   * `out=$(...failing gate...) ; rc=$?` DOES NOT WORK under `set -e` — the assignment is a simple
+  #     command whose status is the substituted command's non-zero status, so the script exits with the
+  #     GATE's code and the refusal never prints (traced at this leg's scratch run: the deploy came back
+  #     rc 3, rc 5 and rc 7, never rc 1). The capture therefore sits in an `if`, the same shape the
+  #     destination load-check below uses for the same reason.
+  #   * `if ! out=$(...)`, the obvious way to write that, is ALSO wrong: `!` makes the tested status 0, so
+  #     the `$?` read in the body is 0 whatever the gate exited, and the refusal would print "it ran and
+  #     exited 0" — a false number in the one sentence that exists to carry it (measured at this leg's
+  #     first scratch run, all three planted codes). So the success case comes FIRST and the code is read
+  #     in the `else`, where the tested command's real status is still what `$?` holds.
+  for t in "${SHGATES[@]}"; do
+    say "gate: sh tools/$t"
+    # Absence is decided BEFORE the run, because `sh` on a missing file also exits non-zero (127 there):
+    # running first would report "it ran and exited 127" about a check that never ran at all.
+    if [ ! -f "$BASE/tools/$t" ]; then
+      # file absent: say the file is absent and that the check therefore never ran
+      die "$t is not green: the file src/tools/$t is not in this clone, so the check never ran."
+    fi
+    if out=$( (cd "$BASE" && env -u MQTT_LEAD_NICK sh "tools/$t" 2>&1) ); then
+      continue
+    else
+      rc=$?
+      # Two branches, never one `${out:-...}` after a bare print: the nothing-line must not appear next to
+      # a check that DID print, and a `[ -n ... ] && print` list would end the iteration on a false test.
+      if [ -n "$out" ]; then
+        printf '%s\n' "$out" >&2
+      else
+        printf '%s\n' "(the check printed nothing)" >&2
+      fi
+      die "$t is not green: it ran and exited $rc. Its words are above; to see them again: sh src/tools/$t"
+    fi
+  done
   if command -v python3 >/dev/null 2>&1; then
     python3 -c "import paho.mqtt.client" >/dev/null 2>&1 || PY_HAVE_PAHO=0
     for t in "${PYGATES[@]}"; do

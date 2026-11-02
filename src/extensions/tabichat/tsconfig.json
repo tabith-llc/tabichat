@@ -1,0 +1,16 @@
+{
+  "//": "SCOPED typecheck (leg 806) for src/extensions/tabichat only — the repo has no whole-tree types story yet and that boundary is DISCLOSED, not hidden: tools/, preview-ext/ and docs are not checked here. The shipped modules under test ARE all included (`*.ts` matches every file in this directory, including index.ts, the file that broke). strict:false because a first instrument must be able to land; the checks that caught tonight's defect — fresh-object-literal members (TS2741) and arity (TS2554) — are enforced regardless. Pre-existing debt is named, line-number-free, in tools/typecheck_ext.ts; the gate goes RED on anything unlisted.",
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "lib": ["esnext", "dom"],
+    "types": [],
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmit": true
+  },
+  "include": ["*.ts", "*.d.ts"]
+}

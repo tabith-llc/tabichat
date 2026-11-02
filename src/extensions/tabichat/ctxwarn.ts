@@ -409,18 +409,69 @@ export const ctxWarnThreshold = (raw: string | undefined): number => {
   return Math.min(Math.max(n, 0), 99);
 };
 
-/** Absolute tripwire from MQTT_CTX_TOKENS; unset, blank, junk or negative all mean off. */
+/**
+ * Absolute tripwire from MQTT_CTX_TOKENS; unset, blank, junk or negative all mean off.
+ *
+ * The number a lane sets is a FLOOR, not the whole rule — see `ctxEffectiveFloor` for what it is
+ * compared against.
+ */
 export const ctxTokenThreshold = (raw: string | undefined): number => {
   const n = Number.parseInt(raw ?? "", 10);
   if (!Number.isFinite(n) || n < 0) return DEFAULT_CTX_TOKENS;
   return n;
 };
 
+/**
+ * The floor the absolute rule actually compares against: the configured token count, lifted to part
+ * of the DECLARED window when the window is big enough to make the configured count premature.
+ *
+ * Why this exists: an absolute tripwire exported to every seat at a small-window value fires at a
+ * quarter of a large declared window, and a seat that is nowhere near full is told to reload. A trip
+ * that early is a guess about a lie, not evidence of one.
+ *
+ * Why `max` and not a skip: skipping silences the guard on the lanes it was written for. An operator
+ * who sets 200,000 under a 262,144 declaration is naming a ceiling he believes in, and
+ * `max(200000, 144179)` keeps it firing. A lane that declares 1,000,000 and is told 256,000 is being
+ * told to reload a quarter full, and `max(256000, 550000)` stops that. A window of 0 or less (no
+ * declaration, so the percentage rules are OFF and this is the only guard left) keeps the configured
+ * value unchanged.
+ *
+ * The band: half a re-warn step (`REWARN_STEP_PCT`) ahead of the advisory, so the guard still speaks
+ * before the percentage rule does — a seat at 55% of a 1,000,000 window is renewal-due and fires,
+ * while 29%, 41% and 51% of that same window are not and do not. If a host really is served short of
+ * the window it declares, the repair is that declaration (`contextWindow` in the model config), which
+ * is the same number pi's own compaction divides by: fixing it repairs both rules at once, where
+ * moving this floor repairs neither.
+ */
+export const ctxEffectiveFloor = (
+  contextWindow: number,
+  thresholdTokens: number,
+  warnPct: number = DEFAULT_CTX_WARN,
+): number => {
+  if (thresholdTokens <= 0) return 0;
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) return thresholdTokens;
+  const floorPct = Math.max(0, warnPct - REWARN_STEP_PCT / 2);
+  return Math.max(thresholdTokens, Math.round((contextWindow * floorPct) / 100));
+};
+
+/**
+ * The re-warn cadence for the absolute rule: `REWARN_STEP_TOKENS`, lifted to `REWARN_STEP_PCT` percent
+ * of the declared window — the same anti-noise step the percentage rule already uses, in tokens. A
+ * fixed 20,000 is 2% of a 1,000,000 window, so a crossed lane re-nags every two points. The cost is
+ * honest: a crossed lane can re-nag up to 100,000 tokens later on that window instead of 20,000, and
+ * the percentage advisory and the forced handoff behind it are unchanged.
+ */
+export const ctxRewarnStep = (contextWindow: number): number => {
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) return REWARN_STEP_TOKENS;
+  return Math.max(REWARN_STEP_TOKENS, Math.round((contextWindow * REWARN_STEP_PCT) / 100));
+};
+
 /** Which rule raised the advisory — the room line and the notice must not blur them. */
 export type CtxTrigger = "percent" | "tokens";
 
 /**
- * Absolute tripwire: fires on tokens alone, whatever the declared window says.
+ * Absolute tripwire: fires on tokens, at the floor `ctxEffectiveFloor` derives from the configured
+ * count and the declared window.
  *
  * Why this exists next to the percent rule: the percentage divides by a number somebody wrote
  * in a config file (`model.contextWindow`), and that same number is what pi's own compaction and
@@ -433,11 +484,13 @@ export const absoluteSessionDue = (
   s: CtxSample,
   thresholdTokens: number,
   lastWarnTokens: number,
+  warnPct: number = DEFAULT_CTX_WARN,
 ): boolean => {
-  if (thresholdTokens <= 0) return false;
+  const floor = ctxEffectiveFloor(s.contextWindow, thresholdTokens, warnPct);
+  if (floor <= 0) return false;
   if (s.tokens === null) return false; // pi has not had a response yet: unknown is not "due"
-  if (s.tokens < thresholdTokens) return false;
-  return lastWarnTokens < 0 || s.tokens >= lastWarnTokens + REWARN_STEP_TOKENS;
+  if (s.tokens < floor) return false;
+  return lastWarnTokens < 0 || s.tokens >= lastWarnTokens + ctxRewarnStep(s.contextWindow);
 };
 
 /** `provider/id` for the model pi handed us, or an honest placeholder. */
@@ -455,7 +508,10 @@ export const ctxDeclarationLine = (
   thresholdTokens: number,
 ): string => {
   const rules =
-    `advisory at ${thresholdPct}%` + (thresholdTokens > 0 ? ` or ${k(thresholdTokens)} tokens` : " (no absolute tripwire)");
+    `advisory at ${thresholdPct}%` +
+    (thresholdTokens > 0
+      ? ` or ${k(ctxEffectiveFloor(s?.contextWindow ?? 0, thresholdTokens, thresholdPct))} tokens`
+      : " (no absolute tripwire)");
   if (!s || s.contextWindow <= 0)
     return `context: no declared window for ${modelLabel} — percent-based advisory OFF; ${rules}`;
   if (s.percent === null || s.tokens === null)

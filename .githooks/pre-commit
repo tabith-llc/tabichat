@@ -2,7 +2,23 @@
 # Guard: block ADDED lines containing known secrets (deletions of them must stay committable) from
 # entering any commit in this repo.
 #
-# Enable once per clone:  git config core.hooksPath .githooks
+# Enable once per clone — run the shipped enabler, not the bare config line:
+#
+#     sh src/tools/enable_hook_chain.sh
+#
+# WHY this is the line and not the one it replaced (iid 15). `core.hooksPath` is SINGLE-VALUED: one
+# local write replaces the global and system values for EVERY hook name at once. So the instruction
+# this header used to ship —
+#
+#     git config core.hooksPath .githooks        # do NOT run this where a global hooksPath exists
+#
+# — silently stopped every hook the host directory provided on any machine that keeps a guard there
+# (this fleet runs its commit-identity check that way): no error, no changed exit code, commits kept
+# landing. Nine clones on one box were in that state and only a deliberate census found them.
+# The enabler above reads what is installed and FORWARDS to it — a wrapper per hook name inside this
+# clone's own git dir, the host hook first, this guard after, the first refusal wins — so following
+# the shipped instruction cannot remove a guard. On a host with nothing installed it writes the plain
+# local value and says so. `--check` answers the same question without touching anything.
 #
 # The list is one hex-encoded literal per line — hex uses only [0-9a-f], so the guard can never
 # contain a plaintext it guards (base64 could not, and a decoder would still be needed either way).
@@ -48,6 +64,123 @@ die() {
     exit 1
 }
 
+# ---- WHERE THE GUARD ACTUALLY IS -------------------------------------------
+# `git config core.hooksPath <path>` replaces the ENTIRE hook set git consults, and it says nothing
+# while doing it: a clone that already had a pre-commit (husky, lint-staged, the project's own check,
+# a personal guard) stops running it from that moment, the commit still lands, and the only evidence
+# is an absence. This guard is the documented way to enable the check in this repo, so it is also the
+# thing that displaced those checks — and a control that quietly replaces another control is not a
+# control anyone can rely on. So the hook names the current value before it compares anything.
+#
+# Three states, one line each, decided from the CONFIG and not from a remembered path:
+#   value names this repo's `.githooks`  → this is the documented posture; git consults this file.
+#                                          That same value stops git consulting the LEGACY
+#                                          $(git-dir)/hooks/pre-commit, so from leg 782 the guard
+#                                          chains any executable prior hook found there AFTER its own
+#                                          checks and propagates its exit status (iid 16 req 2/4).
+#   value names another directory whose `pre-commit` invokes this one → a deliberate chain (the
+#                                          two-stage wrapper shape). Reported, then it runs.
+#   any other value → the consulted hook does not name this guard, so whether the guard sits
+#                                          on the path at all is not knowable from here — the fact that this line prints is itself
+#                                          proof that something reached it. Refused — and the refusal now NAMES what it
+#                                          displaces (the consulted directory, its executable hooks,
+#                                          and the legacy hook the same value hides), gives the command
+#                                          that arms it, and gives the one prefix that proceeds
+#                                          deliberately: `TABICHAT_GUARD_PROCEED=1`, honoured for this
+#                                          refusal alone. The shipped answer refused unconditionally,
+#                                          which left an informed user no route except --no-verify
+#                                          (iid 16 req 1, R-2717 item 2). The secret comparison runs
+#                                          under the prefix exactly as it does without it.
+#                                          Narrow by construction: this branch can only fire when something
+#                                          reached this hook anyway (a direct `sh .githooks/pre-commit`, or a
+#                                          wrapper that chains it from a third directory). When nothing
+#                                          chains it, git never runs this file and a hook cannot report its
+#                                          own absence — that state belongs to src/tools/check_guard_armed.sh.
+#
+# PROCEED — the escape, and its exact limit (iid 16 req 1, R-2717 item 2).
+# The refusal above was unconditional, so a customer who had been told what he was approving still had
+# exactly one move: re-point `core.hooksPath` by hand. That is not "refuse unless told to proceed"; that
+# is refuse, period. So `TABICHAT_GUARD_PROCEED=1` is now heard — for THIS refusal and nothing else:
+#   honoured: the displacement refusal only, i.e. the disagreement about where the guard sits.
+#   NOT honoured: a secret match, a missing or unreadable pattern list, an undecodable pattern row,
+#                 an empty pattern list, or a refusal to chain the prior hook's own exit status.
+# The comparison still runs under the flag, so the flag buys no concealment — only the right to commit
+# while telling everyone that the armed path is elsewhere. The refusal prints the exact one-word
+# command that takes it, so being informed and being able to act on it are the same line.
+# No value at all is the fourth state — the guard was never enabled — and that one is answered by
+# src/tools/check_guard_armed.sh, which is the tool that can say it OUT LOUD before a commit exists
+# rather than only while one is being refused.
+hp=$(git config --get core.hooksPath 2>/dev/null || true)
+top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+guard_dir=$(cd "$(dirname "$0")" && pwd -P)
+enabled_here=""
+if [ -n "$hp" ] && [ -n "$top" ]; then
+    case "$hp" in
+        /*) hp_dir=$(cd "$hp" 2>/dev/null && pwd -P || true) ;;
+        *)  hp_dir=$(cd "$top/$hp" 2>/dev/null && pwd -P || true) ;;
+    esac
+    if [ "$hp_dir" != "$guard_dir" ]; then
+        chained=""
+        # a prior hook that only MENTIONS this guard in a comment has not chained it. Look at the code
+        # lines only, the same way the guard harness does, so a mention cannot silence the refusal.
+        if [ -f "$hp_dir/pre-commit" ] && grep -v '^[[:space:]]*#' "$hp_dir/pre-commit" 2>/dev/null | grep -qs '\.githooks/pre-commit'; then
+            chained="$hp_dir/pre-commit"
+        fi
+        if [ -n "$chained" ]; then
+            printf 'pre-commit: core.hooksPath=%s chains this guard from %s — running it.\n' "$hp" "$chained" >&2
+        else
+            # what is displaced, named rather than implied: the incumbent value, the executable hooks
+            # git consults for this clone (none of which is this guard, as far as a one-hop check can
+            # tell), and the legacy hook the same value really does hide.
+            # The leading word is decided BEFORE the notice is printed, not after: telling an operator
+            # "BLOCKED" and then committing anyway is a message that contradicts its own outcome, and a
+            # reader who skimmed the first line would act on the wrong one.
+            if [ "${TABICHAT_GUARD_PROCEED:-}" = "1" ]; then lead="PROCEEDING"; else lead="BLOCKED"; fi
+            printf 'pre-commit: %s — core.hooksPath is "%s", which is not the .githooks path in this repo.\n' "$lead" "$hp" >&2
+            if [ -d "$hp_dir" ]; then
+                printf 'pre-commit: DISPLACED — for this clone git consults %s, and its own pre-commit does not invoke this guard:\n' "$hp_dir" >&2
+                found=""
+                for h in "$hp_dir"/*; do
+                    [ -f "$h" ] && [ -x "$h" ] || continue
+                    # ${h##*/} rather than `basename`: the hook must not depend on an external tool
+                    # being on PATH, which is the very failure that made the old guard fail open.
+                    found="$found ${h##*/}"
+                done
+                printf 'pre-commit:   consulted hooks:%s\n' "${found:- (no executable hooks in that directory)}" >&2
+                printf 'pre-commit:   this guard is running now, so something did reach it; whether anything further along the chain does is invisible to a one-hop check like this one, so the path above is named, not explained.\n' >&2
+            else
+                printf 'pre-commit: DISPLACED — "%s" does not resolve to a directory, so git consults no hook set at all here, and this guard is not the one it would run.\n' "$hp" >&2
+            fi
+            # `--git-path hooks` would ANSWER WITH core.hooksPath — the very value under test — so the
+            # legacy directory is taken from the absolute git dir and never from the configured path.
+            absgit=$( git rev-parse --absolute-git-dir 2>/dev/null || true )
+            legacy_dir=""
+            [ -n "$absgit" ] && legacy_dir="$absgit/hooks"
+            if [ -n "$legacy_dir" ] && [ -x "$legacy_dir/pre-commit" ]; then
+                printf 'pre-commit:   also hidden behind it: %s/pre-commit — one hooksPath value replaces the WHOLE set, so that hook is silent here too, and nothing above this line can say whether it wanted to refuse this commit.\n' "$legacy_dir" >&2
+            fi
+            printf 'pre-commit: a hooksPath value replaces the whole hook set git consults, and it says nothing while doing so. When the set it consults does not chain this guard, commits land with the check not running and the only evidence is an absence — that is the state this refusal is for, and it is why the value and the consulted hooks are named before anything else.\n' >&2
+            printf 'pre-commit: to arm this clone WITHOUT displacing the set it shadows:  sh src/tools/enable_hook_chain.sh\n' >&2
+            printf 'pre-commit:   (the bare `git config --local core.hooksPath .githooks` is right ONLY where no global or system hooksPath is set; it replaces every hook the host directory provided, silently — iid 15)\n' >&2
+            printf 'pre-commit: to keep another hook set and this guard, the pre-commit in that hook set must invoke .githooks/pre-commit and return its exit status (see src/tools/test_secret_guard.sh).\n' >&2
+            if [ "$lead" = "PROCEEDING" ]; then
+                printf 'pre-commit: this commit was told to proceed by TABICHAT_GUARD_PROCEED=1, with the displacement above read first.\n' >&2
+                printf 'pre-commit: the flag covers THIS refusal only. The secret comparison below still runs, an unreadable or empty pattern list still refuses, and a chained prior hook still gets its exit status propagated. It buys no exception to any of them.\n' >&2
+            else
+                printf 'pre-commit: to proceed deliberately:  TABICHAT_GUARD_PROCEED=1 git commit   (nothing was staged away — your index is as you left it, so this re-attempts the SAME commit and opens the message prompt once)\n' >&2
+                printf 'pre-commit: nothing was committed, and nothing in your configuration was written — the guard refuses rather than re-aiming your hooksPath for you. Do NOT use --no-verify — it skips the check that is telling you the check is not running.\n' >&2
+                exit 1
+            fi
+        fi
+    else
+        # The documented enable state: core.hooksPath points AT this directory. That value also
+        # stops git consulting $(git-dir)/hooks/pre-commit — hooksPath replaces the whole set — and
+        # until leg 782 nothing here named the prior hook that replacement displaced (iid 16 req 2).
+        # Mark the state; the chain runs at the success paths, AFTER this guard's own checks.
+        enabled_here=1
+    fi
+fi
+
 FORBIDDEN="$(dirname "$0")/forbidden-strings.hex"
 [ -f "$FORBIDDEN" ] || die "the pattern list $FORBIDDEN is missing (a guard with no patterns checks nothing)"
 [ -r "$FORBIDDEN" ] || die "the pattern list $FORBIDDEN is not readable"
@@ -58,6 +191,25 @@ FORBIDDEN="$(dirname "$0")/forbidden-strings.hex"
 # literals themselves, so: 0600, removed on every exit path by the trap, and NEVER printed.
 GDIR="${GIT_DIR:-$(git rev-parse --git-dir 2>/dev/null)}"
 [ -n "$GDIR" ] || die "cannot determine the git directory to hold a scratch pattern file"
+
+# Chain the displaced prior hook (iid 16 req 2/4, leg 782). Only in the documented enable state,
+# only when an EXECUTABLE hook actually exists at the legacy path (a non-executable sample is not a
+# hook git would have run), and only ONCE per commit: the env marker means that if the prior hook
+# itself invokes this guard, the re-entry runs its checks but does not chain again.
+run_prior_hook() {
+    [ -n "$enabled_here" ] || return 0
+    [ -z "${TABICHAT_PRIOR_HOOK_CHAINED:-}" ] || return 0
+    prior=$( cd "$GDIR" 2>/dev/null && printf '%s/hooks/pre-commit' "$(pwd -P)" ) || return 0
+    [ -x "$prior" ] || return 0
+    printf 'pre-commit: core.hooksPath replaces the legacy hook path — chaining the prior hook at %s after this guard.\n' "$prior" >&2
+    TABICHAT_PRIOR_HOOK_CHAINED=1 "$prior" "$@"
+    prc=$?
+    if [ "$prc" -ne 0 ]; then
+        printf 'pre-commit: the chained prior hook refused this commit (rc=%s). The secret guard itself passed.\n' "$prc" >&2
+        exit "$prc"
+    fi
+    return 0
+}
 PATTERNS=$(mktemp "$GDIR/.forbidden-strings.XXXXXX") || die "cannot create a temp pattern file in $GDIR"
 chmod 600 "$PATTERNS" 2>/dev/null
 cleanup() { [ -n "$PATTERNS" ] && rm -f "$PATTERNS"; }
@@ -106,6 +258,7 @@ staged=$(git diff --cached -U0) || die "git diff --cached failed"
 added=$(printf '%s\n' "$staged" | grep -s '^+' | grep -v '^+++' | sed '/^+$/d')
 if [ -z "$added" ]; then
     printf 'pre-commit: secret guard ran — %s pattern(s), and the diff has no added lines to check.\n' "$count" >&2
+    run_prior_hook "$@"
     exit 0
 fi
 
@@ -124,4 +277,5 @@ if printf '%s\n' "$added" | grep -s -F -f "$PATTERNS" >/dev/null; then
 fi
 
 printf 'pre-commit: secret guard ran clean — %s pattern(s) against the staged added lines.\n' "$count" >&2
+run_prior_hook "$@"
 exit 0

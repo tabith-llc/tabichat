@@ -15,7 +15,9 @@ import type { CtxSample } from "../extensions/tabichat/ctxwarn.ts";
 const {
   absoluteSessionDue,
   ctxDeclarationLine,
+  ctxEffectiveFloor,
   ctxModelLabel,
+  ctxRewarnStep,
   ctxStatusText,
   ctxTokenThreshold,
   ctxWarnLine,
@@ -106,7 +108,8 @@ check("status unknown when percent null", ctxStatusText(sample(null)), "ctx: unk
 check("status floors the percent and shows the fraction", ctxStatusText(sample(68.7)), "ctx 68% (182k/256k)");
 check("status omits nothing when tokens are unknown", ctxStatusText({ tokens: null, contextWindow: 262_144, percent: 12 }), "ctx 12% (0k/256k)");
 
-// --- absolute token tripwire (MQTT_CTX_TOKENS): fires on tokens, declaration ignored -----------
+// --- absolute token tripwire (MQTT_CTX_TOKENS): fires on tokens, at a floor the declaration can
+// still be trusted to leave room beneath ------------------------------------------------------
 check("token threshold off by default", ctxTokenThreshold(undefined), 0);
 check("token threshold parsed", ctxTokenThreshold("200000"), 200000);
 check("token threshold blank is off", ctxTokenThreshold(""), 0);
@@ -115,19 +118,73 @@ check("token threshold negative is off", ctxTokenThreshold("-5"), 0);
 check("absolute OFF means never due (negative half)", absoluteSessionDue(lying(500_000), 0, -1), false);
 check("absolute below the floor not due (negative half)", absoluteSessionDue(lying(199_999), 200_000, -1), false);
 check("absolute at the floor due (positive half)", absoluteSessionDue(lying(200_000), 200_000, -1), true);
+// THIS CELL WAS REVERSED, not deleted, at leg 652, and the owner's order is the reason: the same
+// reading (a floor crossed at a fifth of the declared window) is the false alarm that was halting
+// staffed lanes, and the guard it was meant to provide is kept by the two cells under it — the lie
+// that is caught is one whose declaration puts it in the band, not one read at 20%.
 check(
-  "THE LIE: 22% of a wrong window still trips the absolute rule",
+  "THE LIE, 20% of a 1M declaration: no longer due — this was the false-alarm class",
   absoluteSessionDue(lying(200_000, 1_000_000), 200_000, -1),
-  true,
+  false,
 );
 check(
-  "and the percent rule alone would NOT have fired there (why the second rule exists)",
+  "and the percent rule agrees nothing was due there (why the floor moved, not vanished)",
   freshSessionDue(lying(200_000, 1_000_000), 65, -1),
   false,
 );
 check("absolute unknown tokens not due", absoluteSessionDue({ tokens: null, contextWindow: 262_144, percent: null }, 200_000, -1), false);
 check("absolute anti-noise: same count twice not due", absoluteSessionDue(lying(201_000), 200_000, 201_000), false);
-check("absolute anti-noise: +20k due again", absoluteSessionDue(lying(221_000), 200_000, 201_000), true);
+check(
+  "absolute anti-noise: under one tenth of the window, not due again",
+  absoluteSessionDue(lying(221_000), 200_000, 201_000),
+  false,
+);
+check(
+  "absolute anti-noise: one scaled step on (26,214 = 10% of a 262,144 declaration) is due again",
+  absoluteSessionDue(lying(227_214), 200_000, 201_000),
+  true,
+);
+
+// --- LEG 652: the tripwire respects a window it cannot possibly be guarding --------------------
+// The field faces are the acceptance instrument (wren-652-note-false-positive-face-20261028.md):
+// three published lines between 29% and 51% of a 1,000,000-token declaration that commanded a
+// restart which was NOT due, and two true faces — a seat renewal-due at 55% of that same window,
+// and a seat at 76% of a 262,144 declaration. Silencing all five would be a weakened check, so the
+// cells below take each observed line by its own number.
+const big = (tokens: number, declared = 1_000_000): CtxSample => ({
+  tokens,
+  contextWindow: declared,
+  percent: (tokens / declared) * 100,
+});
+// the configured floor of the box is MQTT_CTX_TOKENS=256000; every row below uses it
+const FLOOR_SET = 256_000;
+check("652 FALSE face: 29% (288k/977k) is silent", absoluteSessionDue(big(288_000), FLOOR_SET, -1), false);
+check("652 FALSE face: 41% (410k/977k) is silent", absoluteSessionDue(big(410_000), FLOOR_SET, -1), false);
+check("652 FALSE face: 51% (510k/977k) is silent", absoluteSessionDue(big(510_000), FLOOR_SET, -1), false);
+check("652 FALSE face: the measured 25.6% (256k/977k) is silent", absoluteSessionDue(big(256_000), FLOOR_SET, -1), false);
+check("652 ...and the percent rule agrees none of those were due", [410_000, 510_000].map((t) => freshSessionDue(big(t), 60, -1)), [false, false]);
+check("652 TRUE face: 55% (554k/977k) still trips", absoluteSessionDue(big(554_000), FLOOR_SET, -1), true);
+check("652 ...and the percent rule alone would NOT have caught it there", freshSessionDue(big(554_000), 60, -1), false);
+check("652 TRUE face: 76% of a real 262,144 declaration still trips", absoluteSessionDue(lying(199_000), FLOOR_SET, -1) || freshSessionDue(lying(199_000), 60, -1), true);
+check("652 ...that face is carried by the percentage rule, not the tripwire", freshSessionDue(lying(199_000), 60, -1), true);
+check("652 THE LIE, small window: a 200k floor under a 262,144 declaration still trips at 200k", absoluteSessionDue(lying(200_000), 200_000, -1), true);
+check("652 THE LIE, 3x over: a seat declaring 786k that dies at 500k still trips at its floor", absoluteSessionDue(big(500_000, 786_432), FLOOR_SET, -1), true);
+check("652: a floor that already sits over the band is left alone, so it never trips early", absoluteSessionDue(big(500_000), 900_000, -1), false);
+check("652: =0 keeps the off-switch, near the ceiling and everywhere else", absoluteSessionDue(big(900_000), 0, -1), false);
+check("652: junk and negative thresholds are off on a big window too", absoluteSessionDue(big(900_000), ctxTokenThreshold("banana"), -1), false);
+check("652: unknown tokens stay silent on a big window", absoluteSessionDue({ tokens: null, contextWindow: 1_000_000, percent: null }, FLOOR_SET, -1), false);
+check("652: no declaration at all keeps the configured floor exactly", ctxEffectiveFloor(0, FLOOR_SET), 256_000);
+// the re-warn step is the other half of the noise: a fixed 20,000 is 2% of a 1,000,000 window, so a
+// crossed lane re-nagged every two points. It now scales with the declaration; 20,000 is its floor.
+check("652: re-warn step is 10% of a 262,144 declaration", ctxRewarnStep(262_144), 26_214);
+check("652: re-warn step is 10% of a 1,000,000 declaration", ctxRewarnStep(1_000_000), 100_000);
+check("652: the 20,000 floor still applies where the window is tiny", ctxRewarnStep(100_000), 20_000);
+check("652: an honest 1M seat does not re-nag inside one tenth of its window", absoluteSessionDue(big(600_000), FLOOR_SET, 554_000), false);
+check("652: ...and it does re-nag a tenth of the window later", absoluteSessionDue(big(654_000), FLOOR_SET, 554_000), true);
+// the line must name the number that actually fired, not the raw config value
+check("652: the room line names the EFFECTIVE floor, in the same k() form as every other number here", ctxWarnLine(big(554_000), ["lead", "owner"], "tokens", ctxEffectiveFloor(1_000_000, FLOOR_SET)).includes("over the 537k absolute limit"), true);
+check("652: ...and it is NOT the raw configured number the false alarm used to print", ctxWarnLine(big(554_000), ["lead", "owner"], "tokens", ctxEffectiveFloor(1_000_000, FLOOR_SET)).includes("over the 250k absolute limit"), false);
+check("652: ...and the effective floor is 550k on a 1M window, 256k on a 262k one", [ctxEffectiveFloor(1_000_000, FLOOR_SET), ctxEffectiveFloor(262_144, FLOOR_SET)], [550_000, 256_000]);
 
 // the room line names which rule fired, so a lead never has to guess
 const absLine = ctxWarnLine(lying(200_000, 1_000_000), ["lead-agent", "owner"], "tokens", 200_000);

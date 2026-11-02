@@ -461,7 +461,9 @@ for (const bad of ["0", "-1", "abc", "12.5x", "1e999", "99999999999999999999999"
   check("the drain handler was found for the fan-out check", drainStart > -1, true);
   check(
     "the settle drain has exactly ONE sendUserMessage call SITE",
-    (drainSrc.match(/pi\.sendUserMessage/g) ?? []).length,
+    // tabichat#19: the send moved to the re-armed `sendUser` handle (pi's load-time API throws for
+    // the rest of the process after a replacement). The count is the cell, not the identifier.
+    (drainSrc.match(/pi\.sendUserMessage|\bsendUser\(/g) ?? []).length,
     1,
   );
   check(
@@ -497,7 +499,7 @@ for (const bad of ["0", "-1", "abc", "12.5x", "1e999", "99999999999999999999999"
   says(
     "the pre-cap arm is still the class-decided path",
     index,
-    "pi.sendUserMessage(plan.body, { deliverAs: cls })",
+    "sendUser(plan.body, { deliverAs: cls })",
   );
   // SAFETY OF THE SAFETY NET: mentionq.noteHeld also refuses at the cap and reports `full`. The
   // wiring above does NOT consume it (the decision gate is the primary), which is only safe as long
@@ -520,7 +522,7 @@ for (const bad of ["0", "-1", "abc", "12.5x", "1e999", "99999999999999999999999"
   check("the drain is not wired to turn_end", /pi\.on\("turn_end"[^)]*takeHeld/s.test(index), false);
   // and the safety valve must still be the per-line followUp path it has always been — it is
   // explicitly out of scope for the coalescing change (§3.7), so pin that it did not silently change
-  says("the shutdown valve still hands each line back as a followUp", index, 'pi.sendUserMessage(h.body, { deliverAs: "followUp" })');
+  says("the shutdown valve still hands each line back as a followUp", index, 'sendUser(h.body, { deliverAs: "followUp" })');
 }
 
 if (failed) {

@@ -431,6 +431,135 @@ export const parkInbound = <T>(
 /** Drain the park in arrival order. The caller replaces the store with the returned empty list. */
 export const takeParked = <T>(park: readonly T[]): T[] => [...park];
 
+/**
+ * iid 20 — ONE broker client per process. The handle has to live where the NEXT run can find it, for
+ * the same reason `INBOUND_PARK_KEY` does: the factory body re-runs on a session replacement, so a
+ * closure binding dies with the run that set it and the incoming run cannot reach the socket its
+ * predecessor left connected. Measured on one unchanged seat (leg 871): four established sockets in
+ * one pi process with four live `message` handlers, so a single room line was handled four times and
+ * every dead handler parked its own copy of it.
+ */
+export const MQTT_CLIENT_KEY = Symbol.for("tabichat.mqttClient");
+
+/** What `endPriorClient` calls on a client another run left behind. `mqtt.MqttClient` satisfies it. */
+export interface ClosableClient {
+  end(force?: boolean): unknown;
+  removeAllListeners(event?: string | symbol): unknown;
+  /**
+   * mqtt.js sets this the moment a close is under way and clears it only when that close finishes
+   * (`client.js:821`, reset at `:185`, `:321`, `:808`). A client found with it still set is a close
+   * that stalled, and `end(true)` cannot restart it — the same function returns early on it
+   * (`client.js:818-820`). Optional so a fake that never starts a close still satisfies the shape.
+   */
+  disconnecting?: boolean;
+  /**
+   * The transport the client wraps. `destroy()` on it is exactly what mqtt.js's own forced cleanup
+   * does (`client.js:990`, reached from `_cleanUp(forced=true)`), and it is the only way down a
+   * stream whose `end()` was short-circuited by the flag above. Optional for the same reason.
+   */
+  stream?: { destroy?: () => unknown } | null;
+}
+
+/** The events index.ts registers on the socket — the ones a zombie client would still be hearing. */
+export const CLIENT_EVENTS = ["connect", "error", "message"] as const;
+
+/**
+ * End and unhook the client a previous run of this process left, if there is one. `store` is the
+ * process-scoped holder, which makes this the ONLY place a replaced session's handle is reachable:
+ * no shutdown handler races it, so "which shutdown ran last" stops deciding whether the socket closes.
+ *
+ * `end(true)` FIRST, the unhooks after: `end()` runs mqtt.js's own close bookkeeping, and that lives
+ * in listeners `removeAllListeners` would take away if it ran first. Force is right because the run
+ * that owned this socket is already gone — anything still queued belongs to a replaced session, and
+ * an unhurried close is exactly what let a leaked client keep its subscription.
+ *
+ * A client that THROWS on close is still unhooked and still dropped from the store, and the caller is
+ * handed `ended: false` plus the reason so it can say so out loud. This module holds no retry queue for
+ * a socket mqtt.js would not close — unhooking is the half that stops the duplication, and naming it is
+ * the half that stops the silence.
+ *
+ * THE STALLED-CLOSE HOLE, measured at leg 890's renewal: the socket survived even though this helper ran
+ * and unhooked everything. The reason is above — `end()` returns `this` immediately when
+ * `disconnecting` is already set, which is what a graceful close at shutdown leaves behind — so the force
+ * never reaches `_cleanUp` and the stream is never destroyed. The listeners are gone, so a stalled client
+ * hears nothing and duplicates nothing; what it still holds is a descriptor and a broker session. Destroying
+ * the wrapped stream here closes that remainder by the same route mqtt.js itself uses, and a client that
+ * never started a close (`disconnecting` falsy) is left entirely alone, because its `end(true)` already
+ * destroyed it.
+ */
+export const endPriorClient = <T extends ClosableClient>(
+  store: { current: T | null },
+  why: string,
+): { ended: boolean; unhooked: number; destroyed: boolean; note: string } => {
+  const prior = store.current;
+  if (!prior) return { ended: true, unhooked: 0, destroyed: false, note: `no prior client (${why})` };
+  store.current = null;
+  const unhook = () => {
+    let n = 0;
+    for (const ev of CLIENT_EVENTS) {
+      try {
+        prior.removeAllListeners(ev);
+        n++;
+      } catch {
+        /* an emitter already torn down has nothing left to unhook */
+      }
+    }
+    return n;
+  };
+  try {
+    prior.end(true);
+  } catch (e) {
+    const unhooked = unhook();
+    return { ended: false, unhooked, destroyed: false, note: `prior client NOT closed (${why}): ${errOneLine(e)}` };
+  }
+  const unhooked = unhook();
+  // The stalled-close branch, and the ONLY way a socket left by a replaced run comes down: `end(true)`
+  // above returned early because a graceful close was still in flight, so no `_cleanUp(forced)` ever ran
+  // and the transport is still open. `stream.destroy()` is what mqtt.js's own forced cleanup calls
+  // (`client.js:990`), so this closes it by the library's route rather than a private back door.
+  if (prior.disconnecting === true) {
+    try {
+      prior.stream?.destroy?.();
+      return { ended: true, unhooked, destroyed: true, note: `stalled prior client destroyed (${why})` };
+    } catch (e) {
+      return { ended: false, unhooked, destroyed: false, note: `prior client NOT destroyed (${why}): ${errOneLine(e)}` };
+    }
+  }
+  return { ended: true, unhooked, destroyed: false, note: `closed the prior client before connecting (${why})` };
+};
+
+/**
+ * iid 20, leg 889 Cell B — ONE measurement line, no behaviour in it.
+ *
+ * The renewal read came back 1 → 2 sockets with zero `[tabichat][client]` rows, which cannot be
+ * told apart from the console: an empty store at teardown is BOTH what a working shutdown-first
+ * renewal produces and what a channel that never connected produces. So the start path prints the
+ * two things that distinguish them — what the holder held when this run arrived, and what this
+ * process can see on the wire at that instant — and the negative pair (`storeShared=false count=2`,
+ * the guinea's face) is printable from the helper with no broker in sight.
+ */
+export const clientFaceNote = (storeShared: boolean, count: number | string): string =>
+  `storeShared=${storeShared} count=${count}`;
+
+/**
+ * Count the connected sockets in `handles` that face `port`. `handles` is whatever the caller's
+ * runtime lists (node's `process._getActiveHandles()` at the call site), so this stays pure and a
+ * cell can hand it the guinea's shape. A handle with no `remotePort` is not a connected socket and
+ * is not counted; an absent port answers `"?"` rather than inventing a default.
+ */
+export const countBrokerSockets = (
+  handles: readonly unknown[],
+  port: string,
+): number | string => {
+  if (!port) return "?";
+  let n = 0;
+  for (const h of handles) {
+    const p = (h as { remotePort?: unknown } | null)?.remotePort;
+    if (p !== undefined && p !== null && String(p) === port) n++;
+  }
+  return n;
+};
+
 /** What the lane's terminal says when a request lands. Names the requester and the route. */
 export const adminNotice = (action: AdminAction, by: string): string =>
   action === "compact"

@@ -99,5 +99,13 @@ export const appendExitLine = (
   }
 };
 
-const defaultMkdir = (p: string, o: { recursive: boolean }): void => fsMkdir(p, o);
-const defaultAppend = (p: string, data: string): void => appendFileSync(p, data);
+// Both defaults promise `void` and the node:fs calls they forward to do not all keep it:
+// `appendFileSync` returns the byte count. A value-producing body under an explicit `void`
+// annotation is the type error, so the bodies are blocks and the count is discarded here,
+// which is what `appendExitLine` already does with it at the call site above.
+const defaultMkdir = (p: string, o: { recursive: boolean }): void => {
+  fsMkdir(p, o);
+};
+const defaultAppend = (p: string, data: string): void => {
+  appendFileSync(p, data);
+};

@@ -7,17 +7,25 @@
 //
 // Why this shape. The MQTT client is created ONCE per process and kept in `client`; the
 // pi context belongs to a SESSION. `/renew` and `/reload` replace the session without
-// rebuilding the socket, and `if (client) return;` makes the second session_start leave
-// before it could hand the new ctx to anything. Every callback registered by the FIRST
-// session_start therefore kept dereferencing a dead ctx — the throw has no catch, pi exits
-// on uncaughtException, and the seat dies. Three seats on 2026-10-13, one of them a lead.
+// rebuilding the socket, and the guard that used to sit here — `if (client) return;` — made the
+// second session_start leave before it could hand the new ctx to anything. Every callback
+// registered by the FIRST session_start therefore kept dereferencing a dead ctx — the throw has
+// no catch, pi exits on uncaughtException, and the seat dies. Three seats on 2026-10-13, one of
+// them a lead.
 //
-// The fix (shape A) is a HANDLE: `currentCtx` is refreshed on every session_start BEFORE
-// the client guard, and the socket's callbacks read it through `liveCtx()`. So this gate
-// checks three properties of the source, in the order that matters:
-//   1. the handle is refreshed before the guard (ordering, not mere presence),
+// The fix (shape A) is a HANDLE: `currentCtx` is refreshed on every session_start BEFORE the
+// client is touched, and the socket's callbacks read it through `liveCtx()`. So this gate checks
+// three properties of the source, in the order that matters:
+//   1. the handle is refreshed before the socket is built (ordering, not mere presence),
 //   2. no `client.on(...)` callback body mentions a captured `ctx`,
 //   3. the callbacks really do go through `liveCtx()` — the handle is not dead code.
+//
+// MOVED BY IID 20, AND THE ORDER GETS STRICTER. `if (client) return;` is gone: that early return
+// was the broker-client leak (tabichat iid 20 — four live clients in one process), and the
+// session_start path now ends the previous client and connects a fresh one every time. Property 1
+// is therefore pinned against `client = mqtt.connect(` rather than against the guard, which is a
+// STRONGER demand: the handle must be live before the socket exists, not merely before a return.
+// No assertion was dropped and no exclusion widened; the pre-#585 fixture below still reddens it.
 //
 // SCOPE AND HONEST LIMITS: this is a SOURCE-SHAPE gate, not a runtime test, and it says so
 // (same standing as test_ctx_scope.ts and the labelled source-shape half of
@@ -48,8 +56,9 @@ const lineOf = (src: string, at: number): number => src.slice(0, at).split("\n")
 // code). A prose mention of the guard — in a comment, which is how this file explains itself —
 // must not be mistaken for the thing itself. The first draft of this gate made exactly that
 // mistake, so the rule is pinned below as its own case.
-const GUARD_STMT = /\n[ \t]*if \(client\) return;/;
+const CONNECT_STMT = /\n[ \t]*client = mqtt\.connect\(/;
 const HANDLE_STMT = /\n[ \t]*currentCtx = ctx;/;
+const NO_CONNECT = "no `client = mqtt.connect(` statement found — the shape this gate checks has moved, re-read it";
 const posOf = (src: string, re: RegExp): number => {
   const m = re.exec(src);
   return m ? m.index + 1 : -1;
@@ -97,23 +106,23 @@ const clientCallbackBodies = (src: string): { name: string; body: string }[] => 
 export const staleCtxRisks = (src: string): string[] => {
   const hits: string[] = [];
 
-  const guardAt = posOf(src, GUARD_STMT);
-  if (guardAt < 0) {
-    return ["no `if (client) return;` client guard statement found — the shape this gate checks has moved, re-read it"];
+  const connectAt = posOf(src, CONNECT_STMT);
+  if (connectAt < 0) {
+    return [NO_CONNECT];
   }
-  const handlerAt = src.lastIndexOf('pi.on("session_start"', guardAt);
+  const handlerAt = src.lastIndexOf('pi.on("session_start"', connectAt);
   if (handlerAt < 0) {
-    return ["the client guard is not inside a session_start handler — this gate cannot judge it"];
+    return ["the connect statement is not inside a session_start handler — this gate cannot judge it"];
   }
 
   const handleOff = posOf(src.slice(handlerAt), HANDLE_STMT);
   const handleAt = handleOff < 0 ? -1 : handlerAt + handleOff;
   if (handleAt < 0) {
     hits.push("session_start never refreshes the ctx handle, so a replaced session leaves the socket on a dead ctx");
-  } else if (handleAt > guardAt) {
+  } else if (handleAt > connectAt) {
     hits.push(
-      `ctx handle refreshed at line ${lineOf(src, handleAt)}, AFTER the client guard at line ${lineOf(src, guardAt)} — ` +
-        "a second session_start returns at the guard and the refresh never runs",
+      `ctx handle refreshed at line ${lineOf(src, handleAt)}, AFTER the socket is built at line ${lineOf(src, connectAt)} — ` +
+        "a socket callback can fire before the handle exists",
     );
   }
 
@@ -181,12 +190,12 @@ check(
 );
 check("...while a clean handler is not flagged at all", staleCtxRisks(BASE_SHAPE.replace(`if (client) return;`, `currentCtx = ctx;\n    if (client) return;`)).length > 0, true);
 
-// The fix landed in the WRONG ORDER — refresh after the guard. Same bug, different line.
+// The fix landed in the WRONG ORDER — the handle refreshed after the socket was built. Same class,
+// and under iid 20 there is no early return left to hide behind, so the bar is the connect itself.
 const LATE_HANDLE = `
   pi.on("session_start", async (_event, ctx) => {
-    if (client) return;
-    currentCtx = ctx;
     client = mqtt.connect(url, {});
+    currentCtx = ctx;
     client.on("connect", () => {
       liveCtx().ui.notify("connected", "info");
     });
@@ -194,8 +203,8 @@ const LATE_HANDLE = `
   pi.on("agent_end", async (_event, ctx) => { ctx.ui.notify("end", "info"); });
 `;
 check(
-  "a handle refreshed AFTER the guard is caught",
-  staleCtxRisks(LATE_HANDLE).some((r) => r.includes("AFTER the client guard")),
+  "a handle refreshed AFTER the connect is caught",
+  staleCtxRisks(LATE_HANDLE).some((r) => r.includes("AFTER the socket is built")),
   true,
 );
 
@@ -218,21 +227,21 @@ const FIXED_SHAPE = `
 `;
 check("NO FALSE POSITIVE — the fixed shape is clean, and per-event ctx is not the bug", staleCtxRisks(FIXED_SHAPE), []);
 
-// A guard-less tree (the wiring moved) must be reported, not silently passed.
+// A connect-less tree (the wiring moved) must be reported, not silently passed.
 check(
-  "a tree with no client guard is reported, not skipped",
+  "a tree with no connect statement is reported, not skipped",
   staleCtxRisks(`pi.on("session_start", async (_event, ctx) => { currentCtx = ctx; });`).length,
   1,
 );
 
-// A prose mention of the guard is not the guard. Caught live: the fix's own comment
-// quotes `if (client) return;`, and an unanchored lookup judged THAT as the wiring.
+// A prose mention of the connect is not the connect. Caught live during the iid 20 edit: the fix's
+// own comment quotes the statement it replaces, and an unanchored lookup would judge THAT comment.
 check(
-  "a guard named only in a COMMENT is not mistaken for the statement",
+  "a connect named only in a COMMENT is not mistaken for the statement",
   staleCtxRisks(
-    `// the \`if (client) return;\` guard guards the socket\npi.on("session_start", async (_event, ctx) => {\n  client = mqtt.connect(url, {});\n});`,
+    `// the \`client = mqtt.connect(url, {})\` call is where the leak began\npi.on("session_start", async (_event, ctx) => {\n  currentCtx = ctx;\n});`,
   ),
-  ["no `if (client) return;` client guard statement found — the shape this gate checks has moved, re-read it"],
+  [NO_CONNECT],
 );
 
 // Prose about ctx is not a reference to it, and a real one is still caught beside the prose.
