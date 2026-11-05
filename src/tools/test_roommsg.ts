@@ -6,6 +6,8 @@
 //   bun tools/test_roommsg.ts      (exit 1 on any failure)
 // Positive and negative halves both required: each rule gets the case that must
 // pass AND the case that must be rejected.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   ackKey,
   ackPayload,
@@ -25,12 +27,17 @@ import {
   ACK_WATCH_ENV,
   ACK_WATCH_MAX,
   ACK_ALARM_MAX,
+  ackWatchKey,
   AckWatch,
   controlTopic,
   expireAcks,
   queryAcks,
   settleAck,
   watchAck,
+  deliveryClause,
+  deliveryVerdict,
+  outboxView,
+  msgId,
   recordAck,
   renderAck,
   renderInbound,
@@ -42,6 +49,8 @@ import {
   isAck,
   inboxTally,
   legacyPresenceTopic,
+  idNamespace,
+  idNamespaceNote,
   lineTag,
   msgId,
   msgTopic,
@@ -652,7 +661,48 @@ const leadLine: RoomLine = {
 };
 check("the tag carries the message id", lineTag("lead-agent-2-0eff46", stamp).includes("id=lead-agent-2-0eff46"), true);
 check("...and the same stamp chat_read shows for that line", lineTag("lead-agent-2-0eff46", stamp), ` id=lead-agent-2-0eff46 @${tsLabel(stamp)}`);
-check("an id-less line says id=none instead of hiding the gap", lineTag(undefined, stamp), ` id=none @${tsLabel(stamp)}`);
+// --- iid 22, the namespace half (leg 954). An id is the only handle a lane has for delivery, so a
+// string in a shape no shipped minter builds must not read as a lost publish: it has to say which
+// namespace it is in. AC3's paired negative is the FIRST cell here — the ordinary three-field id the
+// product really mints prints exactly what it printed before, with no note beside it.
+check("iid 22 the minter's own output parses as the minter's namespace (the guard cannot widen it)",
+  idNamespace("wren-2-0eff46"), "msgid");
+check("...and so does one whose nick contains a dash (the shape is read from the right) (negative-control risk the naive split would fail)",
+  idNamespace("lead-agent-12-0eff46"), "msgid");
+check("...and an id-less line still says id=none and gains NO note (an absence is not a foreign id)",
+  lineTag(undefined, stamp), ` id=none @${tsLabel(stamp)}`);
+check("...and a blank one too", lineTag("   ", stamp), ` id=none @${tsLabel(stamp)}`);
+check("iid 22 the admin channel's id parses as the ADMIN namespace, never as a room publish",
+  idNamespace("wren-admin-m3k1zq-1a2b3c"), "admin");
+check("...and a lane is TOLD which namespace it is looking at",
+  idNamespaceNote("wren-admin-m3k1zq-1a2b3c").includes("admin-channel namespace"), true);
+check("iid 22 the reported shape — two fields, the second an epoch-ms — is UNMINTED, said out loud",
+  idNamespace("ultra-1762147481813"), "unminted");
+check("...and the note names the consequence, not just the shape",
+  idNamespaceNote("ultra-1762147481813").includes("no shipped minter builds this id"), true);
+check("...and it lands in the inbound tag, where a lane actually reads it",
+  lineTag("ultra-1762147481813", stamp),
+  ` id=ultra-1762147481813 [no shipped minter builds this id; a lookup here answers nothing about a publish] @${tsLabel(stamp)}`);
+check("NEGATIVE: a six-hex boot tag of the WRONG width is unminted, not coerced",
+  idNamespace("wren-2-0eff4"), "unminted");
+check("NEGATIVE: a non-numeric middle field is unminted (so `wren-admin-…` cannot also read as msgid)",
+  idNamespace("wren-xx-0eff46"), "unminted");
+// where the attribution actually lands: derived from the shipped files, not remembered — the count is
+// PRINTED in the cell name and never hardcoded as a target, because a hand-carried site count rots.
+const shippedIndex = readFileSync(join(import.meta.dir, "..", "extensions", "tabichat", "index.ts"), "utf8");
+const shippedRoommsg = readFileSync(join(import.meta.dir, "..", "extensions", "tabichat", "roommsg.ts"), "utf8");
+const attributed = [
+  ...(shippedIndex.match(/idNamespaceNote\(/g) ?? []),
+  ...(shippedRoommsg.match(/\$\{idNamespaceNote\(/g) ?? []),
+];
+check(`the namespace note is applied at the lane-facing prints (derived: ${attributed.length} call site(s))`, attributed.length >= 2, true);
+check("...and the receipt query is one of them (the query is where a foreign id read as a loss)",
+  shippedIndex.includes("` for ${askedId}${idNamespaceNote(askedId)}`"), true);
+check("NEGATIVE: the query still SEARCHES the id it was given — attribution is not a refusal to look",
+  /queryAcks\(acks, \{\s*id: params\.id \? String\(params\.id\) : undefined,/.test(shippedIndex), true);
+check("NEGATIVE: the msgid of one lane is not made valid-looking by the guard — msgId output and the parse agree on every seq",
+  [0, 1, 47, 9999].every((n) => idNamespace(msgId("wren", n, "0eff46")) === "msgid"), true);
+
 check("a blank id says id=none too", lineTag("   ", stamp), ` id=none @${tsLabel(stamp)}`);
 check(
   "an inbound line reads [chat:<nick> id=<id> @HH:MM:SS] text",
@@ -929,6 +979,242 @@ check("the knob is the documented one and the default is an hour, not a day or a
 // Nothing above this line may exit. See the note where the old block used to sit: 58 checks were
 // running after the verdict and their failures could not reach the exit code.
 console.log();
+console.log("\n== iid 21: the delivery answer rides into the result the publishing lane reads ==");
+// The row's frame: a publish that never reached the broker returned a success-shaped result, so a lane
+// could not tell a loss from a silence. The ack watchdog already LEARNED the answer (tabichat#10) and
+// already said it out loud — through the notify channel, after the tool had returned. So the fix is not
+// a new mechanism and not a new verdict: it is handing the existing answer to the one caller that was
+// written without it. These cells test the RENDERED result text, because that text is the artifact the
+// customer reads, and both directions of AC3, because a clause that only ever shouts is untested.
+
+// --- AC1: the four states are four different sentences, and only one of them is a pass ---
+const dConf = deliveryClause({ state: "confirmed", waitedMs: 12 }, ACK_WATCH_DEFAULT_MS);
+check("confirmed: names the echo and the wait, not the call",
+  [dConf.startsWith("delivery: confirmed"), dConf.includes("in 12ms"), dConf.includes("own subscription")],
+  [true, true, true]);
+const dLost = deliveryClause({ state: "unconfirmed", waitedMs: ACK_WATCH_DEFAULT_MS }, ACK_WATCH_DEFAULT_MS);
+check("unconfirmed: says NOT CONFIRMED, the QoS 0 cause, and the age it waited",
+  [dLost.includes("delivery: NOT CONFIRMED"), dLost.includes("3000ms passed"), dLost.includes("ACL-refused QoS 0")],
+  [true, true, true]);
+check("NEGATIVE: a lost publish can never read as a confirmed one", dLost.includes("delivery: confirmed"), false);
+check("the lost face tells the lane to re-post AND to compare the id (AC4 in the sentence a lane acts on)",
+  [dLost.includes("re-post"), dLost.includes("compare the id")], [true, true]);
+check("…and it refuses the verdict the client cannot reach: unconfirmed, never proven lost",
+  [dLost.includes("never a proven loss"), dLost.includes("A slow broker can look identical")], [true, true]);
+const dOff = deliveryClause({ state: "watch-off", waitedMs: 0 }, 0);
+check("watch-off is said as the hole it is, never as a pass",
+  [dOff.includes("delivery: UNMONITORED"), dOff.includes("confirmed")], [true, false]);
+const dNone = deliveryClause({ state: "not-sent", waitedMs: 0 }, ACK_WATCH_DEFAULT_MS);
+check("not-sent: no client or no room is not a delivery", dNone.includes("delivery: NOT SENT"), true);
+// The window is what a lane needs to know when a wait came back short: the same clause with the sweep's
+// own window, never a number the caller cannot have.
+check("the clause quotes the window it was given, not a remembered default",
+  deliveryClause({ state: "unconfirmed", waitedMs: 900 }, 250).includes("250ms passed"), true);
+
+// --- AC3, the direction that must still work: one landed publish, one record, settled once ---
+const i21s1 = settleAck(w1.pending, ctlT);
+check("AC3 landed: the echo settles the one watch", [i21s1.settled, i21s1.pending.length], [true, 0]);
+const i21s2 = settleAck(i21s1.pending, ctlT);
+check("AC3 landed, second echo of the same topic: no second delivery is recorded",
+  [i21s2.settled, i21s2.pending.length], [false, 0]);
+const reWatch = watchAck(watchAck(P0, ctlT, "room line", T0).pending, ctlT, "room line", T0 + 500).pending;
+check("AC3 a re-post replaces its own watch instead of stacking a second alarm", reWatch.length, 1);
+check("AC3 …and the newest stamp is the one kept", reWatch[0].ts, T0 + 500);
+
+// --- AC4: the field that tells a retransmit from a duplicate delivery, shown not asserted ---
+check("AC4 the compared field is the id, and the minter increments it per publish",
+  [msgId("flash3", 1, "ab12cd34") !== msgId("flash3", 2, "ab12cd34"), msgId("flash3", 2, "ab12cd34").endsWith("-ab12cd34")],
+  [true, true]);
+const i21ack: Ack = { id: "flash3-1-ab12cd34", by: "wren", ts: T0 } as Ack;
+const i21dup = recordAck(recordAck([] as Ack[], i21ack), { ...i21ack, ts: T0 + 70 });
+check("AC4 the SAME id from the SAME lane is ONE delivery (this is what a duplicate copy looks like)",
+  i21dup.length, 1);
+const i21two = recordAck(i21dup, { ...i21ack, id: "flash3-2-ab12cd34", ts: T0 + 90 });
+check("AC4 …and a retransmit carries a different id, so it is TWO deliveries, not one doubled",
+  i21two.length, 2);
+check("AC4 the key being compared, printed: id|by", `${i21ack.id}|${i21ack.by}`, "flash3-1-ab12cd34|wren");
+
+// --- AC2: the ids this session published, in one read ---
+const i21rows = [
+  { id: "flash3-1-ab12cd34", ts: T0, to: "wren", text: "first line" },
+  { id: "flash3-2-ab12cd34", ts: T0 + 10, text: "second line, nobody addressed" },
+  { id: "", ts: T0 + 20, text: "a publish that lost its id" },
+];
+const i21ob = outboxView(i21rows, i21rows.length);
+check("AC2 one read lists each publish with its own id, oldest first so the newest is the last line", i21ob.length, 3);
+check("AC2 the id is printed as printed on the result, so a lane can grep for it",
+  i21ob[1].includes("id flash3-2-ab12cd34"), true);
+check("AC2 an addressed line names the FIELD, not a rendered prefix", i21ob[0].includes('to "wren"'), true);
+check("AC2 a publish with no id is shown as (no id), never dropped — dropping it hides the case the read exists for",
+  i21ob[2].includes("(no id)"), true);
+const i21cut = outboxView(i21rows.slice(-2), i21rows.length);
+check("AC2 a sliced list says how much it left out", i21cut[i21cut.length - 1].includes("1 older publish(es) not shown"), true);
+check("AC2 …and says it only when something was left out", outboxView(i21rows, 3).length, 3);
+check("AC2 an empty outbox answers zero lines rather than a confident sentence", outboxView([], 0).length, 0);
+
+// --- leg 926, finding 1: the watch answers for ONE publish, and only for that one ---
+// The face flash1 measured on the repo's own loopback broker was 18 of 20 room posts answered
+// `confirmed` by a payload id that was NOT the publish being answered for, because the watch was
+// keyed on `chat/<room>` — the topic every lane in the room writes to and reads from. These cells
+// drive the same distinction with no broker: one shared topic, two publishes, two ids.
+console.log("\n== iid 21 leg 926: the watch is keyed on the publish's own id ==");
+const K21_FLAT = "chat/tabith";
+const K21_A = "flash3-1-ab12cd";
+const K21_B = "flash3-2-ab12cd";
+const K21_PEER = "flash6-1-ab12cd";
+check("finding 1 the key is the id when the publish has one — the same field the receipt ledger dedupes on",
+  ackWatchKey({ topic: K21_FLAT, id: K21_A }), K21_A);
+check("…and it falls back to the topic ONLY for a write with no id, which is a topic unique to that write",
+  ackWatchKey({ topic: "chat/tabith/_ctl/wren/msg-1", id: "" }), "chat/tabith/_ctl/wren/msg-1");
+check("NEGATIVE: a blank id and a blank topic key NOTHING (an unkeyed publish cannot be proven)",
+  ackWatchKey({ topic: "   ", id: "  " }), "");
+check("…and a blank key registers NOTHING in the watch list either",
+  watchAck([], "   ", "room line", T0, "   ").pending.length, 0);
+
+// The same text posted twice: one topic, one author, two publishes — the shape that must produce TWO
+// answers, not one shared one.
+const k21p1 = watchAck([], K21_FLAT, "room line", T0, K21_A);
+const k21p2 = watchAck(k21p1.pending, K21_FLAT, "room line", T0 + 5, K21_B);
+check("AC3 the same text posted twice is TWO watched publishes on ONE shared topic",
+  [k21p1.pending.length, k21p2.pending.length, k21p2.pending.map(ackWatchKey)],
+  [1, 2, [K21_A, K21_B]]);
+const k21PeerTopic = settleAck(k21p2.pending, K21_FLAT);
+check("finding 1 NEGATIVE, THE ROOT: a bare TOPIC match settles NOTHING that carries an id — this is the form a peer's inbound used to answer for",
+  [k21PeerTopic.settled, k21PeerTopic.pending.length], [false, 2]);
+const k21PeerId = settleAck(k21PeerTopic.pending, K21_PEER);
+check("finding 1 NEGATIVE: a peer's OWN id, arriving on the same topic, settles nobody else's watch either",
+  [k21PeerId.settled, k21PeerId.pending.map(ackWatchKey)], [false, [K21_A, K21_B]]);
+const k21Mine = settleAck(k21PeerId.pending, K21_B);
+check("an echo for id B settles the watch for B ALONE — A is still owed its own answer",
+  [k21Mine.settled, k21Mine.pending.map(ackWatchKey)], [true, [K21_A]]);
+const k21Both = settleAck(k21Mine.pending, K21_A);
+check("…and the echo for A settles A: two ids, two settles, in whatever order they arrive",
+  [k21Both.settled, k21Both.pending.length], [true, 0]);
+const k21Dup = settleAck(k21p1.pending, K21_A);
+check("a SECOND copy of one echo settles nothing (a duplicate delivery is not a second delivery)",
+  [k21Dup.settled, k21Dup.pending.length], [true, 0]);
+check("NEGATIVE: against the empty list, that same duplicate id still settles nothing",
+  settleAck(k21Dup.pending, K21_A).settled, false);
+
+// The three faces the waiter can answer from, decided in one pure function so a cell can drive all
+// three without a socket: still watched, echoed-and-gone, recorded-as-a-miss.
+const k21Watched = deliveryVerdict(K21_A, k21p1.pending, new Set<string>());
+check("verdict: still watched = no answer yet, and the waiter keeps waiting rather than guessing",
+  k21Watched, "watching");
+check("verdict NEGATIVE: a foreign id cannot remove MY entry, so my key is still watched when it arrives",
+  deliveryVerdict(K21_A, settleAck(k21p1.pending, K21_PEER).pending, new Set<string>()), "watching");
+const k21Gone = settleAck(k21p1.pending, K21_A).pending;
+check("verdict: gone with no miss recorded = confirmed, and after the id key that is ONLY reachable by my own echo",
+  deliveryVerdict(K21_A, k21Gone, new Set<string>()), "confirmed");
+check("verdict: a publish the sweep aged out, or the cap evicted, is recorded and answers UNCONFIRMED",
+  deliveryVerdict(K21_A, k21Gone, new Set([K21_A])), "unconfirmed");
+check("verdict NEGATIVE: a blank key is never confirmed — the one answer an unprovable publish may get",
+  deliveryVerdict("", k21Gone, new Set<string>()), "unconfirmed");
+
+// Finding 2: the cap used to drop the oldest watches and report only a COUNT. A counted-away entry is
+// absent from the list, and absence was the face that read `confirmed` — one commit, two opposite
+// answers for one face. The list now says WHICH entries it dropped, and index.ts records each one.
+const k21Full: AckWatch[] = Array.from({ length: ACK_WATCH_MAX }, (_, i) => ({
+  topic: K21_FLAT, id: `flash3-${i}-ab12cd`, kind: "room line", ts: T0 + i,
+}));
+const k21Over = watchAck(k21Full, K21_FLAT, "room line", T0 + ACK_WATCH_MAX, "flash3-new-ab12cd", ACK_WATCH_MAX);
+check("the cap still bites at the cap (unchanged), and the newest entry is kept",
+  [k21Over.pending.length, k21Over.dropped, ackWatchKey(k21Over.pending[k21Over.pending.length - 1])],
+  [ACK_WATCH_MAX, 1, "flash3-new-ab12cd"]);
+check("finding 2: and it NAMES the entries it dropped, not merely how many, so the waiter can be told",
+  [k21Over.evicted.length, k21Over.evicted.map(ackWatchKey)], [1, [`flash3-0-ab12cd`]]);
+const k21LostEvicted = new Set(k21Over.evicted.map(ackWatchKey));
+check("finding 2: an evicted publish, recorded by the registrar, answers UNCONFIRMED — the truth the overflow notice already says",
+  deliveryVerdict(ackWatchKey(k21Over.evicted[0]), k21Over.pending, k21LostEvicted), "unconfirmed");
+check("finding 2 NEGATIVE: the publish that SURVIVED the eviction is still watched, not answered either way",
+  deliveryVerdict("flash3-new-ab12cd", k21Over.pending, k21LostEvicted), "watching");
+check("…and once its own echo arrives it is confirmed on its own id, with the eviction still on the record beside it",
+  deliveryVerdict("flash3-new-ab12cd", settleAck(k21Over.pending, "flash3-new-ab12cd").pending, k21LostEvicted),
+  "confirmed");
+check("finding 2 NEGATIVE: a list under the cap reports an EMPTY evicted set — the report is not always nonzero",
+  watchAck([{ topic: K21_FLAT, id: K21_A, kind: "room line", ts: T0 }], K21_FLAT, "room line", T0 + 1, K21_B, ACK_WATCH_MAX).evicted.length,
+  0);
+
+// Finding 3: three host shapes reach `watch-off` and only one of them is the operator's knob.
+const k21OffKnob = deliveryClause({ state: "watch-off", waitedMs: 0, off: "knob" }, ACK_WATCH_DEFAULT_MS);
+const k21OffNoClient = deliveryClause({ state: "watch-off", waitedMs: 0, off: "no-client" }, ACK_WATCH_DEFAULT_MS);
+const k21OffSock = deliveryClause({ state: "watch-off", waitedMs: 0, off: "reconnecting" }, ACK_WATCH_DEFAULT_MS);
+check("finding 3: the knob face still names the knob, because on that face the knob is the proven cause",
+  [k21OffKnob.includes("MQTT_ACK_WATCH_MS=0"), k21OffKnob.includes("UNMONITORED")], [true, true]);
+check("finding 3: the no-client face does NOT blame the knob — on that face the knob reads 3000, and the sentence was false",
+  [k21OffNoClient.includes("MQTT_ACK_WATCH_MS=0"), k21OffNoClient.includes("no broker client")], [false, true]);
+check("…and the reconnecting face says the write was QUEUED, which is not a refusal and not a delivery",
+  [k21OffSock.includes("MQTT_ACK_WATCH_MS=0"), k21OffSock.includes("QUEUED")], [false, true]);
+check("NEGATIVE: no unmonitored face can read as a pass, whatever its cause",
+  [k21OffNoClient.includes("confirmed"), k21OffSock.includes("confirmed"), k21OffKnob.includes("confirmed")],
+  [false, false, false]);
+check("…and with no cause passed the clause claims NO cause, so a caller that cannot prove one cannot guess one",
+  [deliveryClause({ state: "watch-off", waitedMs: 0 }, ACK_WATCH_DEFAULT_MS).includes("MQTT_ACK_WATCH_MS=0"),
+   deliveryClause({ state: "watch-off", waitedMs: 0 }, ACK_WATCH_DEFAULT_MS).includes("no ack watch answered")],
+  [false, true]);
+
+// --- the wiring, pinned as source shape: a clause nobody calls is decoration ---
+// These cells read index.ts as TEXT. That is the house shape for a wiring pin (test_laneadmin.ts:429 does
+// the same read), and the alternative — a new gate file — would have meant editing the gate arrays, which
+// this leg's spec puts out of bounds. The read is scoped to a local name so nothing else in this file can
+// collide with it.
+const { readFileSync: i21read } = await import("node:fs");
+const { join: i21join } = await import("node:path");
+const i21index = i21read(i21join(import.meta.dir, "..", "extensions", "tabichat", "index.ts"), "utf8");
+check("#10/#21 the room publish registers on the topic it ACTUALLY used, WITH the publish's own id, both sites",
+  [/watchSend\(t, ROOM_SEND_KIND, sendId\);[\s\S]{0,200}?return t;/.test(i21index),
+   /watchSend\(`chat\/\$\{room\}`, ROOM_SEND_KIND, sendId\);\s*\n\s*afterRoomSend\(\);\s*\n\s*return `chat\/\$\{room\}`;/.test(i21index)],
+  [true, true]);
+check("#21 NEGATIVE: no room publish is registered on the topic alone — that is the form a peer's echo could answer for",
+  [i21index.includes("watchSend(t, ROOM_SEND_KIND);"), i21index.includes("watchSend(`chat/${room}`, ROOM_SEND_KIND);")],
+  [false, false]);
+check("#21 the id it registers is read from the payload the publish is about to send, not from a second id-space",
+  i21index.includes("const sendId = typeof payload.id === \"string\" ? payload.id : \"\";"), true);
+check("#21 the three unechoed faces each name their own cause, and the waiter decides on `deliveryVerdict`",
+  [i21index.includes('if (!ACK_WATCH_MS) return { state: "watch-off", waitedMs: 0, off: "knob" };'),
+   i21index.includes('if (!client) return { state: "watch-off", waitedMs: 0, off: "no-client" };'),
+   i21index.includes('if (!client.connected) return { state: "watch-off", waitedMs: 0, off: "reconnecting" };'),
+   i21index.includes("const v = deliveryVerdict(key, ackWatch, lostKeys);")],
+  [true, true, true, true]);
+check("#21 NEGATIVE: the topic-absence-means-delivered inference is GONE from the waiter (that inference was finding 1)",
+  [i21index.includes("ackWatch.some((x) => x.topic === topic)"),
+   i21index.includes("state: lostTopics.has(topic)")],
+  [false, false]);
+check("wiring: chat_post awaits its OWN publish by id and puts the clause IN the result text",
+  [i21index.includes("const topicUsed = publishRoom("), i21index.includes("await awaitDelivery(topicUsed, id)"),
+   i21index.includes("deliveryClause(delivery, ACK_WATCH_MS)")], [true, true, true]);
+check("NEGATIVE: the old success-only return shape is gone from the post path",
+  /\)\$\{steerNote\(\{ requested: asked, honoured, allow: STEER_NICKS \}\)\}`,/.test(i21index), false);
+check("wiring: an inbound settles the id-keyed watch FIRST, on the frame's own id, before the #10 topic settle",
+  [i21index.includes("if (ackWatch.length && msg.id) ackWatch = settleAck(ackWatch, msg.id).pending;"),
+   i21index.indexOf("settleAck(ackWatch, msg.id)") < i21index.indexOf("const st = settleAck(ackWatch, topic)")],
+  [true, true]);
+check("wiring: the wait never touches the inbound hot path — the settle block is still the four lines #10 pinned",
+  (() => {
+    const at = i21index.indexOf("if (ackWatch.length) {");
+    if (at < 0) return 99;
+    let depth = 0;
+    for (let i = at + 3; i < i21index.length; i++) {
+      if (i21index[i] === "{") depth++;
+      else if (i21index[i] === "}") { depth--; if (depth === 0) return i21index.slice(at, i + 1).split("\n").length; }
+    }
+    return 99;
+  })() <= 6, true);
+check("wiring: the pinned topic block still settles only what has no id, so it cannot answer for a room line",
+  i21index.includes("const st = settleAck(ackWatch, topic);"), true);
+check("wiring: a publish the sweeper aged out is recorded UNDER ITS OWN KEY, and a fresh attempt clears that record",
+  [i21index.includes("for (const x of lost) noteLost(ackWatchKey(x));"), i21index.includes("lostKeys.delete(key);"),
+   i21index.includes("for (const x of w.evicted) noteLost(ackWatchKey(x));")],
+  [true, true, true]);
+check("#21 finding 2 wiring: the cap's evicted entries are recorded as misses, so the overflow notice and the tool result agree",
+  i21index.includes("for (const x of w.evicted) noteLost(ackWatchKey(x));"), true);
+check("wiring: chat_read gained the outbox scope and the tool's own description says so",
+  [i21index.includes('if (scope === "outbox")'), i21index.includes("'peers', or 'outbox'")], [true, true]);
+const i21block = /if \(scope === "outbox"\) \{/.exec(i21index);
+const i21win = i21block ? i21index.slice(i21block.index, i21block.index + 2400) : "";
+check("NEGATIVE CONTROL: the outbox read takes the session tail, so no second reader sits on the replay path",
+  i21win.includes("loadRoomLogTail("), false);
+
 if (failed) {
   console.log(`${failed} check(s) FAILED`);
   process.exitCode = 1;

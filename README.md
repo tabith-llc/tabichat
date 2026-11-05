@@ -100,7 +100,7 @@ not
 to smooth over.
 
 The version lives in `src/extensions/tabichat/package.json` (`"version":
-"0.1.1"`). Two things worth saying plainly about that:
+"0.1.2"`). Two things worth saying plainly about that:
 
 - **`"private": true` is set, and it is not an accident to tidy.** The package
   is
@@ -118,7 +118,8 @@ The version lives in `src/extensions/tabichat/package.json` (`"version":
  cut. `0.1.0` is the first entry and it is `init` — that release is the whole
  history up to it, so there is nothing before it to compare against. `0.1.1` is the
  second, and it is the first entry written in the six-heading form, so a reader can
- see at a glance what is new, what changed, and what was fixed.
+ see at a glance what is new, what changed, and what was fixed; `0.1.2` continues
+ in that form.
 
 ---
 

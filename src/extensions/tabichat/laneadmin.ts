@@ -64,8 +64,23 @@
 import { addressedTo, hasAddress } from "./mention.ts";
 // ACT A loud place (c). One direction only: ctxwarn.ts imports NOTHING (tools/test_ctxwarn.ts runs it
 // standalone), and laneadmin.ts is imported by ctxwarn's own callers, so this edge cannot cycle.
-import { pickResumeHandoff, resumeBarRefusal, type ResumeFileStat } from "./ctxwarn.ts";
+import {
+  currentLeg,
+  handoffContentVerdict,
+  legInHead,
+  legInName,
+  LEG_ENV,
+  pickResumeHandoff,
+  resumeBarRefusal,
+  resumeFileRe,
+  resolveResumeDir,
+  type ResumeFileStat,
+} from "./ctxwarn.ts";
 import { controlTopic, sanitizeAckId } from "./roommsg.ts";
+// The handoff audit is the one place this module has to look at the disk: the bar decides whether a
+// REAL sheet describes the leg about to be lost, and a sheet is bytes on a filesystem. Every call is
+// guarded and no path here may refuse on an instrument fault — see `auditHandoff`.
+import { readdirSync, readFileSync, statSync } from "node:fs";
 
 export const ADMIN_KIND = "lane-admin";
 
@@ -139,6 +154,135 @@ export type AdminVerdict =
   | { ok: false; speak: boolean; reason: string };
 
 /**
+ * THE HANDOFF AUDIT (iid 17) — the bar asks the sheet a question bytes cannot ask.
+ *
+ * How much of a handoff is read to decide admission. A head is where a lane states what it is, and
+ * reading a whole multi-KB sheet to answer "which leg" is not this bar's business.
+ */
+export const HANDOFF_HEAD_BYTES = 8192;
+
+/**
+ * The dirs THIS gate can look in, constructed here rather than inherited (a control guarantees its
+ * own inputs). It mirrors index.ts's `resumeSearchDirs()` — env `MQTT_CTX_RESUME_DIR`, then the
+ * site-config `resumeDir`, then the scratch fallback — and dedupes, so a seat whose dirs come from
+ * one place cannot be audited against another. The site-config path arithmetic is repeated here on
+ * purpose: `broker.ts:siteConfigPath` owns it, and importing broker.ts from laneadmin.ts would close
+ * a cycle (broker.ts already imports laneadmin.ts).
+ */
+export const handoffDirs = (env: Record<string, string | undefined> = process.env): string[] => {
+  let site: Record<string, unknown> | null = null;
+  try {
+    const p = ((env[SITE_CONFIG_ENV] ?? "").trim() || SITE_CONFIG_DEFAULT).replace(
+      /^~(?=\/|$)/,
+      env.HOME ?? "~",
+    );
+    const parsed = parseSiteConfig(readFileSync(p, "utf8"));
+    if (parsed.ok) site = parsed.config;
+  } catch {
+    // No site file is the normal case on a box that never set one. A file that EXISTS and will not
+    // parse is already loud at session_start in index.ts; here it only means no site layer.
+  }
+  const r = resolveResumeDir(env, site) as { ok: boolean; dir?: string; scratch?: string };
+  // The cast is here, and not an entry on the approved-error list, on purpose: the scoped tsconfig runs
+  // `strict:false`, so a discriminated union does NOT narrow and `r.ok ? r.dir : r.scratch` reports
+  // TS2339 (index.ts reads the same field and its entry is already on that list). This leg adds nothing
+  // to the list, so the read is written the way the checker can see it.
+  const out = [r.dir ?? r.scratch ?? ""].filter((d) => d !== "");
+  return [...new Set(out)];
+};
+
+export type HandoffAudit =
+  | { audited: true; ok: boolean; picked: string | null; reason: string }
+  | { audited: false; picked: string | null; reason: string };
+
+/**
+ * Read the handoff the bar is about to admit and check it is a handoff FOR THIS LEG: it must name the
+ * leg the seat is running, and it must ANSWER the blocks its own notice lists.
+ *
+ * IT MAY NOT REFUSE ON AN INSTRUMENT FAULT, and that is the load-bearing clause. No dirs, an
+ * unreadable dir, no sheet for this nick, or a head that will not read, all return `audited: false`:
+ * the caller keeps the verdict it already had and says the new bar did not run. Refusing a good sheet
+ * because this function could not see it is the false-negative class ACT A and ACT B exist to keep
+ * clear, and it is the expensive direction — a lane that renews with a weak sheet is recoverable, a
+ * lane stranded because a gate had a blind spot loses its state outright.
+ *
+ * It never throws, and the identity half is `pickResumeHandoff` — the same pure predicate the gate and
+ * the wake pointer already share. This ADDS a bar; it moves no existing one, and it does not touch
+ * `RESUME_MIN_BYTES`.
+ */
+export const auditHandoff = (opts: {
+  nick: string;
+  dirs?: readonly string[];
+  env?: Record<string, string | undefined>;
+  /** the freshness floor in the caller's clock; 0 = do not re-check it here (see adminVerdict) */
+  startedAtMs?: number;
+  /** the leg this seat is on; defaults to what the seat declares in its own env */
+  leg?: string;
+  minBytes?: number;
+}): HandoffAudit => {
+  const env = opts.env ?? process.env;
+  const dirs = [...new Set((opts.dirs ?? handoffDirs(env)).filter((d) => (d ?? "") !== ""))];
+  if (!opts.nick || dirs.length === 0)
+    return { audited: false, picked: null, reason: `no handoff dir this gate could read` };
+  const re = resumeFileRe(opts.nick);
+  const files: ResumeFileStat[] = [];
+  const pathOf = new Map<string, string>();
+  for (const d of dirs) {
+    let names: string[] = [];
+    try {
+      names = readdirSync(d);
+    } catch {
+      continue; // a dir that is not there contributes no candidates, and says so at the refusal
+    }
+    for (const n of names) {
+      if (!re.test(n)) continue;
+      const full = `${d.replace(/\/+$/, "")}/${n}`;
+      try {
+        // externals.d.ts stubs `node:fs` for the scoped typecheck and that stub declares a partial
+        // Stats (`size`, `isDirectory`). The real one carries `mtimeMs` and `isFile`, which the pick
+        // needs. So: one narrow cast, and a candidate with no clock on it is DROPPED rather than
+        // admitted or refused — an instrument fault must never read as a verdict.
+        const st = statSync(full) as { size: number; mtimeMs?: number; isFile?: () => boolean };
+        if (!st.isFile?.()) continue;
+        const m = st.mtimeMs;
+        if (typeof m !== "number" || !Number.isFinite(m)) continue;
+        files.push({ name: n, bytes: st.size, mtimeMs: m });
+        if (!pathOf.has(n)) pathOf.set(n, full); // durable-then-scratch: the first dir owning a name wins
+      } catch {
+        /* raced away or unreadable: not a candidate */
+      }
+    }
+  }
+  if (files.length === 0)
+    return {
+      audited: false,
+      picked: null,
+      reason: `no RESUME-<nick>-*.md for ${opts.nick} in ${dirs.join(" then ")} — nothing to audit`,
+    };
+  const r = pickResumeHandoff(files, opts.nick, opts.startedAtMs ?? 0, opts.minBytes);
+  if (!r.ok) return { audited: true, ok: false, picked: r.picked, reason: r.reason };
+  const full = pathOf.get(r.picked ?? "");
+  if (!full)
+    return {
+      audited: false,
+      picked: r.picked,
+      reason: `${r.picked} was picked but this gate could not resolve its path — content unverified`,
+    };
+  let head = "";
+  try {
+    head = readFileSync(full, "utf8").slice(0, HANDOFF_HEAD_BYTES);
+  } catch {
+    return {
+      audited: false,
+      picked: r.picked,
+      reason: `${r.picked} is not readable by this seat, so its content is unverified`,
+    };
+  }
+  const v = handoffContentVerdict(r.picked, head, opts.leg ?? currentLeg(env));
+  return { audited: true, ok: v.ok, picked: r.picked, reason: v.reason };
+};
+
+/**
  * Should this lane honour `msg`? Every refusal states its reason, because a lane that
  * silently drops an admin request is indistinguishable from one that never received it -
  * the exact confusion the ack work was built to end.
@@ -148,7 +292,10 @@ export type AdminVerdict =
  *
  * Shutdown and renew carry an extra bar: no RESUME file for this seat, no session loss. The
  * owner's renewal rule is that a lane must never wake with no context, and a dead lane with no
- * handoff is the worst case of that. Compact is exempt — it keeps the session.
+ * handoff is the worst case of that. Compact is exempt — it keeps the session. Since iid 17 the bar is
+ * two questions, not one: does a sheet exist (`resumeWritten`, the caller's byte and freshness verdict),
+ * and is it a handoff for THE LEG about to be lost and does it answer its own blocks (`auditHandoff`).
+ * Both must pass, the second only ever adds a refusal, and it does not run at all on an instrument fault.
  */
 export const adminVerdict = (opts: {
   action?: string;
@@ -240,13 +387,13 @@ export const adminVerdict = (opts: {
   if (!adminEnabled(opts.env, act)) {
     return { ok: false, speak: true, reason: `${ADMIN_FLAGS[act]} is off — this route is not armed on this lane` };
   }
+  const searched = (opts.resumeSearched ?? []).filter((d) => d !== "");
   if ((act === "shutdown" || act === "renew") && !opts.resumeWritten) {
     // "no RESUME file" used to be ONE sentence for two very different states — never wrote one, and
     // wrote one where this seat does not look. The owner's ordering for this leg is that both
     // false-negative generators clear before a force envelope exists, so the refusal now names the dirs
     // searched and the knob that moves them. Without `resumeSearched` the text is byte-identical to the
     // shipped one, which is what keeps the existing refusal cells honest instead of re-paired.
-    const searched = (opts.resumeSearched ?? []).filter((d) => d !== "");
     return {
       ok: false,
       speak: true,
@@ -254,6 +401,26 @@ export const adminVerdict = (opts: {
         ? resumeBarRefusal(searched)
         : "no RESUME file for this seat yet; losing this session would leave it with no context",
     };
+  }
+  // iid 17 — the bar is now current BY LEG and by PAYLOAD as well, and it runs only for the two
+  // session-ending acts. `resumeWritten` (the caller's byte + freshness verdict) is still required
+  // FIRST: this only ever ADDS a refusal, it never removes one, and `compact` stays outside both
+  // because it keeps the session.
+  //
+  // IT RUNS WHERE THE CALLER SAYS WHERE IT LOOKED, and `tools/test_laneadmin.ts` pins that index.ts
+  // does pass `resumeSearched` for these acts. A caller with no dirs gets the shipped verdict, for two
+  // reasons that are both load-bearing: (1) the refusal wording above already keys on the same field,
+  // so cells that never had dirs keep their exact text instead of being re-paired; and (2) inventing
+  // dirs from the ambient environment would make a gate count depend on WHICH LANE IS RUNNING IT — a
+  // check that reads /tmp/tabichat because a developer's shell happened to have one is not a check.
+  // `handoffDirs()` is exported for the caller that wants the audit without having dirs of its own.
+  //
+  // `startedAtMs` is deliberately NOT passed: freshness is the caller's floor (BOOT_AT_MS) and this
+  // gate cannot see it, so re-checking it against this run's clock would invent refusals for exactly
+  // the pre-renew sheets ACT B says must be admitted.
+  if ((act === "shutdown" || act === "renew") && searched.length) {
+    const audited = auditHandoff({ nick: opts.self, env: opts.env, dirs: searched });
+    if (audited.audited && !audited.ok) return { ok: false, speak: true, reason: audited.reason };
   }
   return { ok: true, action: act, by, arm: !opts.idle };
 };
@@ -627,7 +794,39 @@ export const renewDispatchFailed = (err: string): string =>
  */
 export const WAKE_DELIVER_AS = "followUp";
 
-export const wakeDirective = (path: string | null, leadNick = ""): string => {
+/**
+ * The one sentence the wake line adds about the sheet it is pointing at: WHICH LEG it names. The
+ * pointer has always said "a handoff says where you were", and iid 17 is the case where that is not
+ * enough — a sheet from an earlier leg of the same boot reads as brand new and a cold seat obeys it.
+ * A gate cannot always know the leg the next seat will be given (the lead assigns that after the
+ * renew), so the pointer states the fact and lets the seat judge it: the leg the sheet names, and
+ * whether it agrees with the leg this seat declares.
+ *
+ * "" is a real answer: no path, or a sheet this seat cannot read. It never invents a leg.
+ */
+export const wakeLegNote = (
+  path: string | null,
+  env: Record<string, string | undefined> = process.env,
+): string => {
+  if (!path) return "";
+  let head = "";
+  try {
+    head = readFileSync(path, "utf8").slice(0, HANDOFF_HEAD_BYTES);
+  } catch {
+    return "";
+  }
+  const leg = legInName(path.slice(path.lastIndexOf("/") + 1)) ?? legInHead(head);
+  const declared = currentLeg(env);
+  if (leg === null)
+    return ` It names no leg${declared ? ` while this seat declares ${LEG_ENV}=${declared}` : ""}: read the ` +
+      `first lines and satisfy yourself it describes the task you are ACTUALLY on before you obey any of it.`;
+  if (declared && declared !== leg)
+    return ` It names leg ${leg} while this seat declares ${LEG_ENV}=${declared} — the sheet is from another ` +
+      `task. Do NOT obey it: post one line saying your handoff is for leg ${leg}, and hold.`;
+  return ` It names leg ${leg}${declared ? "" : `, which is READ, not checked — set ${LEG_ENV}=<n> in this seat's launcher and the bar compares it before a renew.`}`;
+};
+
+export const wakeDirective = (path: string | null, leadNick = "", legNote = ""): string => {
   // Two roles, one line, because the FIRST act of a renewed seat differs by what is waiting on it.
   // A worker reads its notes and holds. A LEAD announces itself again FIRST — lanes may be holding
   // finished verdicts addressed to a nick that was gone a moment ago, and a verdict filed by nobody
@@ -645,7 +844,7 @@ export const wakeDirective = (path: string | null, leadNick = ""): string => {
       : restore +
         `THEN read your handoff at ${path}, read the report directory, and re-ship every dispatch that has an ` +
         `ack and no report. A handoff says where you were; a lane's report says what it finished — neither ` +
-        `says what to do next.`;
+        `says what to do next.` + legNote;
   }
   return path === null
     ? `[tabichat][renew] this seat was renewed and NO RESUME file was found for it, so there is no ` +
@@ -653,7 +852,7 @@ export const wakeDirective = (path: string | null, leadNick = ""): string => {
       `do not pick a venue, do not resume anything from memory — a renewed session has none.`
     : `[tabichat][renew] this seat was renewed. Your handoff is ${path}. Read it, then post one line ` +
       `("renewed, holding") and WAIT for a dispatch. A handoff says where you were; it does not say ` +
-      `what you are authorised to do next.`;
+      `what you are authorised to do next.` + legNote;
 };
 
 /**
@@ -842,6 +1041,10 @@ export const autoRenewVerdict = (opts: {
   floorPct: number;
   renewedThisBoot: boolean;
   resumeWritten: boolean;
+  /** the seat's nick; defaults to `MQTT_NICK`, which is what a live seat already has */
+  nick?: string;
+  env?: Record<string, string | undefined>;
+  dirs?: readonly string[];
 }): AutoRenewVerdict => {
   if (!opts.armed) return { ok: false, reason: `${AUTO_RENEW_ENV} is off at every layer` };
   if (opts.renewedThisBoot)
@@ -855,6 +1058,17 @@ export const autoRenewVerdict = (opts: {
     };
   if (!opts.resumeWritten)
     return { ok: false, reason: "no RESUME file for this seat; renewing now would erase the only copy of its state" };
+  // iid 17, same bar as the remote gate and the same rule about instrument faults — and the per-boot
+  // loop brake above is untouched: it is the thing that stops a renew loop and it still runs FIRST.
+  // It audits when the caller names the seat (a nick) and stays at the shipped verdict when it does
+  // not, because a decision that reads the developer's /tmp is not a decision. index.ts does not pass
+  // a nick here yet, so this door is wired and waiting for one line at its call site — said plainly in
+  // the leg report rather than left as a green function nobody calls.
+  if (opts.nick) {
+    const env = opts.env ?? process.env;
+    const audited = auditHandoff({ nick: opts.nick, env, dirs: opts.dirs });
+    if (audited.audited && !audited.ok) return { ok: false, reason: audited.reason };
+  }
   return { ok: true };
 };
 /**
@@ -917,7 +1131,7 @@ export const wakeRenewedSeat = async (
         path = null;
       }
     }
-    await next.sendUserMessage(wakeDirective(path, deps.leadNick ?? ""), { deliverAs: WAKE_DELIVER_AS });
+    await next.sendUserMessage(wakeDirective(path, deps.leadNick ?? "", wakeLegNote(path)), { deliverAs: WAKE_DELIVER_AS });
     next.ui?.notify?.(
       path === null
         ? "[tabichat][renew] woke with NO handoff — told the seat to say so and hold"
@@ -943,10 +1157,14 @@ export const wakeRenewedSeat = async (
  * index.ts handoffOnDisk walks, so the gate and the pointer cannot disagree about which dir is
  * "mine"). No candidate clears the bar -> null -> the no-handoff half of wakeDirective.
  *
- * THE KNOWN HOLE, left open on purpose and stated here so a green test is misread: this measures
- * BYTES. worker1's 359-byte file cleared a 200-byte bar with a sentence whose own last line
- * confessed it was padding, and the lane woke with nothing useful in hand. The pointer half (this
- * leg) is deterministic now; the PAYLOAD bar is a separate leg, and this call does not weaken it.
+ * THE KNOWN HOLE, and what closed it. This function measures BYTES, and worker1's 359-byte sheet once
+ * cleared a 200-byte bar with a sentence whose own last line confessed it was padding. That hole is no
+ * longer open on purpose: leg 959 (tabichat#17) put the payload and leg bar in `auditHandoff`, and the
+ * renew/shutdown door runs it. What is DELIBERATE is the split — `wakePathFor` stays a byte-and-name
+ * matcher, because this is the POINTER: telling a seat where its own sheet lives is information, not
+ * permission, and a pointer that refuses to look at a real file is the false-negative class ACT A and
+ * ACT B exist to clear. The gate asks whether the sheet is fit to lose a session on; the pointer only
+ * says where it is, and now also which leg it claims (`wakeLegNote`) so the seat can judge the match.
  */
 export const wakePathFor = (
   candidates: ReadonlyArray<{ path: string; bytes: number | null }>,

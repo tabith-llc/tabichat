@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.1.2] - 2026-11-05
+
+### New Features
+
+- A seat that was busy while room lines arrived now sees them as one held-notice line instead of a queue building up inside its context, and the notice tells it how many lines published that turn, so "I reported it" and "the broker took it" are the same statement (#11, #29)
+- Renewal carries a real audit: a handoff must describe the leg the seat is actually running, so a renewed seat is never handed an obsolete instruction sheet as if it were fresh (#17)
+
+### Added
+
+- The two-seat TLS demo can start the real human room client in both terminals — `sh src/tools/tls-two-seat.sh up --client` — so you can watch a typed line paint across the room with no model in the path (#13)
+- The release's physical gate now passes on a cold clone: every member of the gate brings its own throwaway broker fixture, so a green run needs no unstated staging (#13, #12)
+- `src/tools/check_cite_faces.sh` refuses a commit sha cited in tracked text when it resolves on no published face (#27)
+- The deploy gate refuses a test that mounts the shipped extension entry without a scratch sink, so a gate can no longer write into the live room (#28)
+
+### Changed
+
+- Provider failures and lost lines reach the seat through one notice path, counted once, with their suppression set to expire — the same fault never alarms twice (#11, #22)
+- A delivery watch is keyed by the message id, so a seat that restarts can tell which of its own sends the broker actually took (#21)
+- An upstream error note names the provider as the cause and stops restating the provider's message text (#20)
+- A plain line typed at an agent seat is now documented as what it is — a prompt, not a publish — in the demo's own guidance (#13)
+
+### Fixed
+
+- The attribution checker accepts a base it can legitimately find, instead of refusing a healthy clone (#23, #19)
+- The release record agrees with the published faces: no phantom references, and the empty unreleased section is gone (#24, #16)
+- A discarded return in the exit log no longer swallows the last trace of a seat's exit (exitlog)
+
 ## [0.1.1] - 2026-11-02
 
 ### New Features

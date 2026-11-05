@@ -25,7 +25,8 @@
 #      physically cannot authenticate as a real lane.
 #
 # Usage:
-#   bash src/tools/tls-two-seat.sh up      # fixture + both seat dirs; prints the two run lines
+#   bash src/tools/tls-two-seat.sh up      # fixture + both seat dirs, LOAD-CHECKED, then the two run lines
+#   bash src/tools/tls-two-seat.sh up --client   # the same, plus two HUMAN-CLIENT run lines (typed line = publish)
 #   bash src/tools/tls-two-seat.sh loop    # headless TLS proof: round trip + refusals + ACL halves
 #   bash src/tools/tls-two-seat.sh down    # destroy everything this script made
 set -uo pipefail
@@ -35,7 +36,13 @@ REPO=$(cd "$TOOLS/../.." && pwd)
 ROOT="${TMPDIR:-/tmp}/tls-two-seat"
 ROOM=tlstest
 NICKS="tlstest-a tlstest-b"
-OWNER=tls-two-seat
+OWNER="${TWO_SEAT_OWNER:-tls-two-seat}"
+# The owner is a namespace for the fixture record, and `up` clears its own predecessor by design. Measured
+# at this face: a `tls-two-seat` fixture was already live (container tabichat-fixture-45523, state written
+# at 09:59, room tlstest) while this leg was being built — that is the lead's staging for the owner's
+# witnessed run, and a second seat running the documented `up` line would have stopped its broker through
+# `broker-fixture.sh down`. Override per run; the default is unchanged so every recorded command still
+# reads the same:  TWO_SEAT_OWNER=my-run TMPDIR=/tmp/my-scratch bash src/tools/tls-two-seat.sh up
 # THE ACL PHASE IS THE WHOLE DIFFERENCE between "the seats can chat" and "both publish into a void".
 # The shipped client writes the FLAT topic `chat/<room>` by default (`MQTT_SENDER_TOPIC` is off and
 # must stay off until every reader has migrated), and the phase-2 ACL grants a nick ONLY its own leaf —
@@ -72,6 +79,22 @@ link_modules() {
     || die "cannot link the npm tree at $ROOT/node_modules"
 }
 
+# THE SHIPPED SET IS READ, NOT CARRIED. This loop used to hold twelve names by hand while
+# deploy-tabichat.sh declared thirteen: `roomlog.ts` joined the shipped set on 10-30 in bd45bff, this
+# script was last touched 10-24, and every seat it built since has failed to load with
+# `Cannot find module './roomlog.ts'` — pi then reports `Unknown options: --tabichat, --room`, which is a
+# downstream symptom of a seat that never started. The transport harness (`loop`) stayed green the whole
+# time, because the transport never reads the seat dir. Two lists of one set is the defect; this parse is
+# the same one test_diaglog_routing.ts uses against the same array, arm-scoped to tabichat, so a future
+# shipped file lands in a seat dir with no second edit anywhere.
+shipped_set() { # one name per line, in the deploy's own order
+  local line
+  line=$(awk '/^  tabichat\)/ {f=1} f && /^    FILES=\(/ {sub(/^    FILES=\(/,"");sub(/\)$/,"");print;exit}' \
+    "$TOOLS/deploy-tabichat.sh")
+  [ -n "$line" ] || return 1
+  printf '%s\n' "$line" | tr ' ' '\n' | sed '/^$/d'
+}
+
 build_seat() { # $1 = nick
   # TWO `local` statements on purpose. As one line — `local nick="$1" dir="$ROOT/$nick"` — bash expands
   # `$nick` BEFORE the first assignment lands, so `dir` silently became "$ROOT/" and the `rm -rf` below
@@ -89,9 +112,13 @@ build_seat() { # $1 = nick
   # it group-readable, which is a needless widening for a directory that points at `auth.json`.
   mkdir -p "$dir/extensions/tabichat"
   chmod 700 "$dir"
-  local f
-  for f in broker.ts ctxwarn.ts diaglog.ts errnote.ts exitlog.ts index.ts laneadmin.ts mention.ts \
-           mentionq.ts roommsg.ts steer.ts tlsopts.ts package.json; do
+  local f names
+  names=$(shipped_set) || die "no FILES array could be read out of $TOOLS/deploy-tabichat.sh — refusing to build a seat from an empty shipped set"
+  [ -n "$names" ] || die "the shipped set parsed empty — refusing to build a seat from nothing"
+  for f in $names package.json; do
+    # package.json is the one name that is NOT in the deploy's FILES array: a seat dir needs the
+    # extension's package metadata to be offered by pi, and the deploy does not move it. It is named
+    # here as this harness's own extra rather than smuggled into a list that is supposed to be derived.
     [ -f "$EXT_SRC/$f" ] || die "$f missing from $EXT_SRC — cannot build a faithful seat"
     cp "$EXT_SRC/$f" "$dir/extensions/tabichat/"
   done
@@ -112,6 +139,14 @@ build_seat() { # $1 = nick
 }
 
 up() {
+  # `up --client` also writes the two HUMAN-CLIENT launch lines. The flag is matched, never ignored:
+  # an unrecognised second argument used to fall through silently, and a flag that does nothing is how a
+  # harness reads as run when it was not.
+  local client_flag="${1:-}"
+  case "$client_flag" in
+    "" | --client) ;;
+    *) die "up: unknown argument '$client_flag' — expected --client or nothing" ;;
+  esac
   command -v docker >/dev/null || die "docker absent"
   mkdir -p "$ROOT"
   link_modules
@@ -131,8 +166,26 @@ up() {
   local n DIR
   for n in $NICKS; do
     chmod 644 "$FIX/pki/clients/$n/cert.pem" 2>/dev/null || true
-    DIR=$(build_seat "$n")
+    # A `die` inside a command substitution only exits the SUBSHELL — this script runs without `set -e`,
+    # so the old shape logged an empty seat dir and went on to write a launcher for a seat that was never
+    # built, which the operator then ran. Measured at this leg's plant: with a declared name absent from
+    # the tree, `up` printed the seat's real refusal AND then refused the load of a path called
+    # `/extensions/tabichat`. The status is now read where it is produced.
+    DIR=$(build_seat "$n") || die "seat $n was not built — the refusal above names what went wrong"
+    [ -n "$DIR" ] || die "build_seat printed no directory for seat $n"
+    [ -d "$DIR/extensions/tabichat" ] || die "seat $n has no extension tree at $DIR/extensions/tabichat"
     log "seat dir: $DIR"
+    # PROVE IT LOADS. `loop` proves the TLS transport and says nothing about the seat dir, which is
+    # exactly how a five-day-old failure stayed invisible; this line asks the deploy's own probe — the
+    # same `load_check_tree` that gates a publication — whether THIS directory can load the shipped set.
+    # TARGET is pinned to scratch even though --loadcheck writes nothing anywhere, because every command
+    # in this harness names its target out loud.
+    if TARGET="${TARGET_DIR:-${TMPDIR:-/tmp}/tabichat}/tls-two-seat-loadcheck" \
+       bash "$TOOLS/deploy-tabichat.sh" --loadcheck "$DIR/extensions/tabichat" >/dev/null; then
+      log "seat load proof: $n — the shipped set loads from $DIR/extensions/tabichat"
+    else
+      die "seat $n cannot LOAD its extension — the deploy's own probe refused $DIR/extensions/tabichat; re-run with the command printed above to see which name is short"
+    fi
   done
   printf '%s %s %s %s\n' "$PORT" "$FIX" "$ROOM" "$ACL_PHASE" > "$STATE"
 
@@ -172,11 +225,62 @@ up() {
   done
   log "launchers written: $ROOT/tlstest-a.sh  $ROOT/tlstest-b.sh"
 
+  if [ "$client_flag" = "--client" ]; then
+    # THE HUMAN CLIENT, IN ITS OWN TWO TERMINALS. The fixture has always started two model-driven `pi`
+    # seats, and a plain line typed at a `pi` seat is a PROMPT, not a publish — whether it becomes a room
+    # line depends on a model choosing to call a tool. So the harness could never produce the instrument
+    # the owner's precondition asks for: a human line at one terminal painting at the other. These two
+    # launchers run the shipped human client (`src/src/tabichat_cli.py`) against THIS fixture, as the
+    # fixture's own two nicks, in the fixture's own room.
+    #
+    # The broker address is set by a per-client SITE FILE, not by $MQTT_URL. Layer order in
+    # `src/src/broker.py` is cli arg → site config `mqttUrl` → env, and this box's operator site file
+    # names the ESTATE broker in that key. A launcher that relied on the env layer alone would have been
+    # outranked by that file and pointed a test client at the live broker address — which is the one thing
+    # this harness must never do. Same rule the seat dirs already follow (`TABICHAT_CONFIG` at
+    # $ROOT/$n/tabichat.json). The address itself is not repeated here: `test_broker.ts` refuses a venue
+    # address in tracked text, and it caught my first draft of this comment.
+    local py n2
+    py="$REPO/src/.venv/bin/python"
+    [ -x "$py" ] || py="$(command -v python3)"
+    [ -n "$py" ] || die "no python to run the human client with — python3 absent"
+    log "client python: $py"
+    for n2 in $NICKS; do
+      printf '{ "mqttUrl": "mqtts://127.0.0.1:%s", "autoRenew": false }\n' "$PORT" > "$ROOT/$n2-client.json"
+      {
+        printf '#!/usr/bin/env bash\n'
+        printf '# human client %s — generated by tls-two-seat.sh up --client. Absolute paths only; do not hand-edit.\n' "$n2"
+        printf '# Runs the SHIPPED human client, so a typed line publishes on its own — no model in the path.\n'
+        printf 'export TABICHAT_CONFIG=%q\n' "$ROOT/$n2-client.json"
+        printf 'export MQTT_TLS_CAFILE=%q\n' "$FIX/pki/ca/ca.crt"
+        printf 'export MQTT_TLS_CERTFILE=%q\n' "$FIX/pki/clients/$n2/cert.pem"
+        printf 'export MQTT_TLS_KEYFILE=%q\n' "$FIX/pki/clients/$n2/key.pem"
+        printf 'export MQTT_TLS_SERVERNAME=%q\n' "127.0.0.1"
+        printf 'export MQTT_TLS_REQUIRED=%q\n' "1"
+        printf 'unset MQTT_URL MQTT_HOST MQTT_PORT MQTT_SENDER_TOPIC\n'
+        printf 'unset MQTT_LEAD_NICK MQTT_STEER_NICKS MQTT_NICK MQTT_ROOM\n'
+        printf 'cd %q && exec %q src/tabichat_cli.py %q --nick %q\n' "$REPO/src" "$py" "$ROOM" "$n2"
+      } > "$ROOT/$n2-client.sh"
+      chmod 700 "$ROOT/$n2-client.sh"
+    done
+    log "client launchers written: $ROOT/tlstest-a-client.sh  $ROOT/tlstest-b-client.sh"
+    printf '%s\n' "$client_flag" > "$ROOT/client.flag"
+  fi
+
   echo
   echo "START EACH SEAT IN ITS OWN TERMINAL, ON IDAHO — one line each:"
   echo
   echo "  sh $ROOT/tlstest-a.sh"
   echo "  sh $ROOT/tlstest-b.sh"
+  if [ -f "$ROOT/client.flag" ]; then
+    echo
+    echo "HUMAN CLIENT — one line each, in the OTHER two terminals (no model, no tool call in the path):"
+    echo
+    echo "  sh $ROOT/tlstest-a-client.sh"
+    echo "  sh $ROOT/tlstest-b-client.sh"
+    echo
+    echo "Type a plain line at one and it publishes; the other paints it. /live, /back, /grep, /join are the client's own commands."
+  fi
   echo
   echo "You should see a '[tabichat][transport] TLS: pinned CA …' line as each one starts."
   echo "Then tell seat A to chat_post to tlstest-b, and seat B to chat_read and report."
@@ -400,8 +504,8 @@ down() {
 }
 
 case "${1:-}" in
-  up) up ;;
+  up) up "${2:-}" ;;
   loop) loop ;;
   down) down ;;
-  *) echo "usage: $0 up | loop | down" >&2; exit 2 ;;
+  *) echo "usage: $0 up [--client] | loop | down" >&2; exit 2 ;;
 esac

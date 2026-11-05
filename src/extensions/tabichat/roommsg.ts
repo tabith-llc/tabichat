@@ -39,6 +39,45 @@ export const msgId = (nick: string, seq: number, boot: string): string =>
   `${nick}-${seq}-${boot}`;
 
 /**
+ * THE TWO ID NAMESPACES, and the parse that tells them apart (`iid 22`). A lane is shown ids in two
+ * places and asks for receipts by id in a third, and until now nothing told it WHICH namespace a
+ * string came from — so an id in a shape no shipped minter builds (`ultra-1762147481813`) read as a
+ * publish whose receipt was missing, when the truth is that no publish was ever in that namespace.
+ * Silence in one namespace must not look like failure in another.
+ *
+ * These are READ from the two minters, not invented beside them: `msgId` just above builds
+ * `<nick>-<seq>-<boot>` with `bootTag`'s six hex chars, and the admin channel builds
+ * `<by>-admin-<base36 time>-<six hex>` (`tools/lane_admin.mjs`, and its literal `admin` segment is
+ * exactly why a request can never be confused with a room post's receipt). The minter is NOT widened
+ * to accept the admin form — that shape is legitimately a different namespace; what lands here is the
+ * obligation to SAY which one a lane is looking at.
+ */
+export const MSGID_SHAPE = /^(.+)-([0-9]+)-([0-9a-f]{6})$/;
+export const ADMIN_ID_SHAPE = /^(.+)-admin-([0-9a-z]+)-([0-9a-f]{6})$/;
+export type IdNamespace = "msgid" | "admin" | "unminted";
+
+/** Which shipped minter could have built this id. `unminted` is an ANSWER, never a shrug. */
+export const idNamespace = (id: string): IdNamespace => {
+  const v = (id ?? "").trim();
+  if (v === "") return "unminted";
+  // admin FIRST: its literal segment is the discriminator, and a nick may itself contain dashes, so
+  // the two shapes overlap on strings like `wren-admin-1-0eff46` and only the specific one is right.
+  if (ADMIN_ID_SHAPE.test(v)) return "admin";
+  return MSGID_SHAPE.test(v) ? "msgid" : "unminted";
+};
+
+/** What a lane is told, beside the id itself, when the id is NOT one this product minted. */
+export const idNamespaceNote = (id: string): string => {
+  const ns = idNamespace(id);
+  // Two silences, and they mean different things: an id that is msgid-shaped needs no word, and an id
+  // that is ABSENT is not a foreign id either — the `id=none` the tag already prints is the whole
+  // answer. Only a string that is present AND unminted by either minter gains a note.
+  if (ns === "msgid" || (id ?? "").trim() === "") return "";
+  if (ns === "admin") return " [admin-channel namespace, not a room publish]";
+  return " [no shipped minter builds this id; a lookup here answers nothing about a publish]";
+};
+
+/**
  * One lane's boot tag: six hex chars, fixed width so ids read evenly, drawn from an
  * injectable source so the width and the mapping are testable without a random draw.
  */
@@ -363,8 +402,12 @@ export const renderLine = (l: RoomLine): string =>
  * same id and the same stamp `chat_read` shows for that line, so `scope=inbox` can confirm or
  * deny it in one call. An id-less line (an older client) says `id=none` rather than hiding it.
  */
-export const lineTag = (id: string | undefined, ts: number): string =>
-  ` id=${(id ?? "").trim() || "none"} @${tsLabel(ts)}`;
+export const lineTag = (id: string | undefined, ts: number): string => {
+  const v = (id ?? "").trim();
+  // A msgid-shaped id prints EXACTLY as it did before — the namespace note is empty for it, which is
+  // the paired negative `iid 22` AC3 asks for. Only a foreign shape gains a word.
+  return ` id=${v || "none"}${idNamespaceNote(v)} @${tsLabel(ts)}`;
+};
 
 /** How a lane sees one inbound line: [chat:<nick> id=<id> @HH:MM:SS to=<field>] text */
 export const renderInbound = (l: RoomLine): string =>
@@ -699,44 +742,75 @@ export const ACK_WATCH_ENV = "MQTT_ACK_WATCH_MS";
 export const ACK_WATCH_DEFAULT_MS = 3000;
 export const ACK_WATCH_MAX = 64;
 
-/** One retained control-child publish this lane has handed the broker and not yet seen come back. */
+/**
+ * One publish this lane has handed the broker and not yet seen come back.
+ *
+ * iid 21 finding 1 — `id` is the publish's own message id (`msgId` seq, the field the receipt ledger
+ * already dedupes `id|by` on), and it is the field that separates one publish from another. A watch
+ * keyed on the TOPIC alone cannot answer for a single publish: on the shipped flat room path every
+ * lane's inbound arrives on `chat/<room>`, so the first inbound — anybody's — settled the watch and
+ * the publishing lane was told its own line was carried. Entries whose write went to a topic that is
+ * ALREADY unique to that one publish — the retained control children `_ctl/<id>`, `_ctl/admin/<leaf>/<id>`
+ * — may leave `id` empty and keep settling on the topic, because there the topic and the id name the
+ * same thing. The room topics do NOT: `chat/<room>` is shared by every lane and `chat/<room>/msg/<nick>`
+ * by every post of one lane, so both room sites carry the id.
+ */
 export interface AckWatch {
   topic: string;
+  /** the publish's own id; empty means "this write's topic is already unique to it" */
+  id?: string;
   /** what it was, so the alarm can name the act rather than a bare topic */
   kind: string;
   ts: number;
 }
 
-/** Register one watched publish. A blank topic is not watchable and changes nothing. */
+/**
+ * What identifies one watched publish: its own id when the publish has one, otherwise its topic.
+ * ONE function, because the registration, the settle, the sweep's miss record and the waiting
+ * publish must all agree on the same key — four spellings of a key is four chances to disagree.
+ */
+export const ackWatchKey = (x: Pick<AckWatch, "topic" | "id">): string =>
+  ((x.id ?? "").trim() || (x.topic ?? "").trim());
+
+/** Register one watched publish. A blank key is not watchable and changes nothing. */
 export const watchAck = (
   pending: readonly AckWatch[],
   topic: string,
   kind: string,
   ts: number,
+  id = "",
   cap = ACK_WATCH_MAX,
-): { pending: AckWatch[]; dropped: number } => {
-  const t = (topic ?? "").trim();
-  if (!t) return { pending: [...pending], dropped: 0 };
-  // one entry per topic: a re-publish of the same retained child (a retry, a reconnect flush)
-  // replaces its own watch rather than stacking a second alarm for one delivery.
-  const kept = pending.filter((x) => x.topic !== t);
-  kept.push({ topic: t, kind, ts });
+): { pending: AckWatch[]; dropped: number; evicted: AckWatch[] } => {
+  const entry: AckWatch = { topic: (topic ?? "").trim(), id: (id ?? "").trim(), kind, ts };
+  const k = ackWatchKey(entry);
+  if (!k) return { pending: [...pending], dropped: 0, evicted: [] };
+  // one entry per key: a re-publish of the same write (a retry, a reconnect flush) replaces its own
+  // watch rather than stacking a second alarm for one delivery — and a re-posted room line carries a
+  // NEW id, so it is a new publish and gets its own watch and its own answer (iid 21 AC3).
+  const kept = pending.filter((x) => ackWatchKey(x) !== k);
+  kept.push(entry);
   const dropped = kept.length > cap ? kept.length - cap : 0;
-  return { pending: dropped ? kept.slice(dropped) : kept, dropped };
+  // `evicted` names WHICH entries the cap removed, not just how many. A dropped entry leaves the list
+  // without ever having been echoed, and an absent watch was read as delivery (finding 2) — the
+  // overflow notice already calls those publishes UNCONFIRMED, so the list has to say so too.
+  return { pending: dropped ? kept.slice(dropped) : kept, dropped, evicted: kept.slice(0, dropped) };
 };
 
 /**
- * The broker carried it: our own publish came back on the subscription. Returns the list WITHOUT
- * that topic, and whether anything actually settled — `settled: false` on a topic nobody was
- * watching is normal (every other lane's receipt echoes to us too) and must never look like a miss.
+ * The broker carried it: our own publish came back on the subscription. `match` is the inbound
+ * frame's key — the payload's own id when it has one, else the topic it arrived on — and the entry
+ * is removed only when THAT is the key the entry was registered under. Returns the list WITHOUT that
+ * entry, and whether anything actually settled — `settled: false` on a key nobody was watching is
+ * normal (every other lane's line reaches us too) and must never look like a miss.
  */
 export const settleAck = (
   pending: readonly AckWatch[],
-  topic: string,
+  match: string,
 ): { pending: AckWatch[]; settled: boolean } => {
-  const t = (topic ?? "").trim();
-  const hit = pending.some((x) => x.topic === t);
-  return { pending: hit ? pending.filter((x) => x.topic !== t) : [...pending], settled: hit };
+  const k = (match ?? "").trim();
+  if (!k) return { pending: [...pending], settled: false };
+  const hit = pending.some((x) => ackWatchKey(x) === k);
+  return { pending: hit ? pending.filter((x) => ackWatchKey(x) !== k) : [...pending], settled: hit };
 };
 
 /** Split the watch list into what is still in flight and what has aged past the window. */
@@ -784,6 +858,125 @@ export const ackLostLine = (lost: readonly AckWatch[], now: number): string => {
     `"ACL order can go silently wrong" section of docs/tls-operations.md — cited by heading, ` +
     `because a line number in a string outlives the edit that moved it). A slow broker can look ` +
     `identical from here, so treat this as "unconfirmed", never as proof.`;
+};
+
+/**
+ * iid 21 — the three answers a publish can honestly get, and the sentence that carries one of them
+ * INTO THE TOOL RESULT the publishing lane reads.
+ *
+ * The defect was not that the client cannot learn whether the broker took a room line — the ack
+ * watchdog above already learns it, and already says it loudly. The defect was WHERE it says it:
+ * `ackLostLine` travels through the notify channel, while `chat_post` returned "posted as …" the
+ * moment `client.publish()` returned. A QoS 0 write the ACL refuses produces no error event, no
+ * socket close and no broker-log line (measured in `docs/broker/acl.conf` phases 1 and 2, recorded
+ * above), so the result a lane reads asserted delivery the call had not earned. A lane therefore
+ * could not tell a loss from a silence, and the one loss that came to light did so because the
+ * publishing seat chose to disclose it.
+ *
+ * These are decisions only: no timer, no socket, no fs, so the gate drives every face without a
+ * broker and the broker cell stays the place the echo premise is proved.
+ */
+export type DeliveryState = "confirmed" | "unconfirmed" | "watch-off" | "not-sent";
+
+/** One delivery answer with the time it took to get it, for the clause below. */
+export interface Delivery {
+  state: DeliveryState;
+  waitedMs: number;
+  /**
+   * `watch-off` is THREE causes, not one, and naming the wrong one is a false statement about the
+   * host: on a reconnecting seat the knob is 3000, not 0 (finding 3). The caller states which it
+   * proved; the clause below prints that one, and when no cause was given it prints no cause.
+   */
+  off?: WatchOffCause;
+}
+
+/** Why no watch could answer this publish: the knob, no client at all, or a socket not connected. */
+export type WatchOffCause = "knob" | "no-client" | "reconnecting";
+
+const watchOffWhy = (off?: WatchOffCause): string =>
+  off === "knob"
+    ? `the ack watch is off (${ACK_WATCH_ENV}=0)`
+    : off === "no-client"
+      ? "this seat has no broker client, so nothing was handed to a socket for the watch to see"
+      : off === "reconnecting"
+        ? "this seat's socket is not connected, so mqtt.js QUEUED the write and ageing is paused until it returns"
+        : "no ack watch answered this publish";
+
+/**
+ * The answer the waiting publish may give, from the two lists the watchdog keeps. Three faces, and
+ * the direction each one fails is the whole design:
+ *  * STILL WATCHED — the key is in `pending`, so nothing has come back for it and no verdict is owed
+ *    yet; the caller keeps polling until its own deadline answers UNCONFIRMED;
+ *  * CONFIRMED — the key left the list and no miss was recorded for it, which after `settleAck`
+ *    matches on `ackWatchKey` can only mean ONE frame took it: the echo of this publish itself;
+ *  * UNCONFIRMED — a miss was recorded, by the sweep ageing it out OR by the cap evicting it
+ *    (finding 2), and both now answer the same way the overflow notice already words it.
+ * A blank key answers UNCONFIRMED rather than spinning: an unkeyed publish cannot be proven.
+ */
+export const deliveryVerdict = (
+  key: string,
+  pending: readonly AckWatch[],
+  lostKeys: ReadonlySet<string>,
+): DeliveryState | "watching" => {
+  const k = (key ?? "").trim();
+  if (!k) return "unconfirmed";
+  if (pending.some((x) => ackWatchKey(x) === k)) return "watching";
+  return lostKeys.has(k) ? "unconfirmed" : "confirmed";
+};
+
+/**
+ * The clause appended to the `chat_post` result. Four rules shape it:
+ *  * a success word is only allowed on the face that earned it — "confirmed" means THIS lane saw
+ *    THIS publish's own id come back on its own subscription, and names the wait so the claim is
+ *    checkable (iid 21 finding 1: the answer used to be keyed on the topic, which every lane shares);
+ *  * the lost face says what is NOT known, the same limit `ackLostLine` carries — a slow broker and
+ *    a refused write look identical from here, so the line must not claim a verdict the client
+ *    cannot reach, and it must tell the lane the line was not shown to the room;
+ *  * "watch-off" is said as the hole it is, never as a pass. A lane that opted out of the watch
+ *    (MQTT_ACK_WATCH_MS=0) must not read an unmonitored publish as a delivered one;
+ *  * and it names ONLY the cause the caller proved, because three different host shapes reach this
+ *    face and blaming the knob on a seat whose socket is down is a sentence about the operator that
+ *    is simply not true.
+ */
+export const deliveryClause = (d: Delivery, windowMs: number): string => {
+  const waited = Math.max(0, Math.round(d.waitedMs));
+  if (d.state === "confirmed") {
+    return `delivery: confirmed — this lane's own subscription received the publish back in ${waited}ms (the broker carried it)`;
+  }
+  if (d.state === "not-sent") {
+    return "delivery: NOT SENT — no client or no room at the moment of the call, so nothing was handed to the broker";
+  }
+  if (d.state === "watch-off") {
+    return `delivery: UNMONITORED — ${watchOffWhy(d.off)}, so NOTHING here can tell a lost publish from a delivered one; the id below is all you have`;
+  }
+  const w = Math.max(0, Math.round(windowMs));
+  return `delivery: NOT CONFIRMED — ${w}ms passed and this publish never came back to this lane's own subscription, which is what an ACL-refused QoS 0 write looks like (no error, no socket close, no broker-log line). Assume the room did NOT get this line; re-post it and compare the id — a retransmit carries a new one, so it is not a duplicate delivery. A slow broker can look identical from here, so this is "unconfirmed", never a proven loss`;
+};
+
+/**
+ * iid 21 AC2 — what THIS session published, newest last, in one read.
+ *
+ * A lane must not have to notice a loss by accident, so the ids it minted are enumerable without
+ * grepping a journal by hand. `total` is how many out-rows the source holds and `rows` is the slice
+ * being shown, so the note at the end names the bound instead of implying the read saw everything:
+ * a list of ten that does not say "ten of 214" is how a seat concludes it published nothing earlier.
+ * Pure: no fs, no path, no clock — the caller hands rows it already read.
+ */
+export const outboxView = (
+  rows: readonly { id?: string; ts?: number; to?: string; text?: string }[],
+  total: number,
+): string[] => {
+  const lines = rows.map((r, i) => {
+    const id = typeof r.id === "string" && r.id ? r.id : "(no id)";
+    const ts = typeof r.ts === "number" ? new Date(r.ts).toISOString() : "(no ts)";
+    const to = r.to ? ` to "${r.to}"` : "";
+    const body = String(r.text ?? "").replace(/\s+/g, " ").slice(0, 72);
+    return `${i + 1}. ${ts}  id ${id}${to}  ${body}`;
+  });
+  if (total > rows.length) {
+    lines.push(`(${total - rows.length} older publish(es) not shown — this read lists the last ${rows.length} of ${total})`);
+  }
+  return lines;
 };
 
 /** What makes two receipts the same event: one lane acknowledging one message. */

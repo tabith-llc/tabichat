@@ -171,18 +171,253 @@ export const pickResumeHandoff = (
 };
 
 /**
- * THE CONTENT BAR, and the choice the spec asked me to state instead of quietly making. I kept the
- * byte floor AND added the freshness rule; I did NOT check for section headings.
+ * THE CONTENT BAR — iid 17, and the payload half that leg 420 assigned to a separate leg.
  *
- * Why not headings: a heading check is brittle in the direction that matters. It passes a padded file
- * that repeats `## next steps` three times with nothing under it (exactly the 359-byte-padding case —
- * volume-shaped, useless), and it refuses a genuinely good handoff written in prose or in the lane's
- * own words, which resurrects the false negative this act exists to clear. So the credibility rule is
- * "fresh AND big enough", and the honest limit is stated plainly: **this lets through a fresh file
- * full of filler.** The floor is a volume bar, not a meaning bar, and meaning is what the next seat
- * discovers when it reads the file — which is why `wakeDirective` still points at a PATH and never
- * certifies content. Making it mean something is a separate ruling, not a hunk in this one.
+ * What 420 left true, and what closes it: `pickResumeHandoff` admits a handoff by nick, freshness and
+ * BYTES, so a sheet written early in a boot for an EARLIER leg was admitted for the leg about to be
+ * lost, and a fresh file full of filler cleared the byte floor. Two rules, and neither is a byte count:
+ *
+ *  - LEG CURRENCY. The sheet names the leg it describes (`leg 959` on one of its opening lines, or
+ *    `-leg959` in its filename), and when the seat declares the leg it is running — `MQTT_LEG`, read
+ *    by `currentLeg` — the two must agree. A mismatch refuses, and the refusal prints both numbers and
+ *    the knob, because a lane cannot fix what it cannot see.
+ *  - SECTION PRESENCE, WITH A VALUE. The blocks a handoff must carry are `RESUME_TEMPLATE`'s own lines,
+ *    so the list and the check cannot drift apart. A section counts when some line names it AND says
+ *    something besides its own name: `next steps:` is not an answer, and a line copied out of the
+ *    template verbatim is an unfilled slot, not an answer either. It is n-of-m, not all-or-nothing.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO, the trade named rather than discovered later:
+ *  - `RESUME_MIN_BYTES` stays **200** and is not raised. A bigger stub is still a stub, and the byte
+ *    measure is the check this row says is the wrong check.
+ *  - a bar that demands every block would refuse a genuinely good handoff written in prose or in the
+ *    lane's own words — the false-negative class ACT B exists to keep clear — hence `RESUME_MIN_SECTIONS`.
+ *  - with no `MQTT_LEG` set the leg is read and printed but NOT compared: it is a launcher value, the
+ *    launcher is not this repo's to set, and inventing one here would strand every lane on the box.
+ *  - it still cannot tell a lie from a well-formed truth. It checks that the blocks are ANSWERED, not
+ *    that the answers are correct; a cold seat reads the file and the wake line tells it which leg the
+ *    sheet claims, so a mismatch is visible to the party who can judge it.
  */
+
+/** The env a launcher sets to say which leg THIS seat is running. Unset = the leg is unknown. */
+export const LEG_ENV = "MQTT_LEG";
+
+/**
+ * The leg the seat declares, digits only, "" when it declares none. Tolerant of `MQTT_LEG=959`,
+ * `leg-959` and `Leg: 959` alike because a launcher is hand-written; garbage yields "" (no declared
+ * leg) rather than a wrong number, which is the direction that cannot mis-refuse a good sheet.
+ */
+export const currentLeg = (env: Record<string, string | undefined> = process.env): string => {
+  const m = /(\d{1,7})/.exec((env[LEG_ENV] ?? "").trim());
+  return m ? m[1] : "";
+};
+
+/** How many opening lines of a sheet are searched for its leg line. */
+export const RESUME_LEG_SCAN_LINES = 40;
+
+/**
+ * A leg named in the FILENAME. `resumePath` mints `RESUME-<nick>-<boot>.md` and a lane names its own
+ * sheet too, and both shapes are already on this box: `RESUME-clerk-01a1a325-940.md` (a trailing
+ * all-digit component) and a `-leg959` slug. A hex boot tag (`0554ee`) is not a number, so it does not
+ * match — which is why the digit rule is anchored to a whole filename component and not a loose search.
+ */
+export const legInName = (name: string): string | null => {
+  const slug = /(?:^|[-_])leg[-_]?(\d{1,7})/i.exec(name ?? "");
+  if (slug) return slug[1];
+  const tail = /^RESUME-.+-(\d{1,7})\.md$/i.exec(name ?? "");
+  return tail ? tail[1] : null;
+};
+
+/**
+ * A leg named on one LINE, first match wins. The `leg` word must not be preceded by a hyphen, which
+ * is what keeps a branch slug like `feature/handoff-bar-by-leg-17` from answering for `leg 959` —
+ * measured on this box's own branch names, and pinned by a cell.
+ */
+export const legInLine = (line: string): string | null =>
+  /(?:^|[^-\w])leg[\s:=#]*(\d{1,7})\b/i.exec(line ?? "")?.[1] ?? null;
+
+/** The first leg named anywhere in the head of the sheet, in reading order. */
+export const legInHead = (head: string, maxLines = RESUME_LEG_SCAN_LINES): string | null => {
+  for (const line of (head ?? "").split("\n").slice(0, maxLines)) {
+    const n = legInLine(line);
+    if (n !== null) return n;
+  }
+  return null;
+};
+
+/**
+ * The blocks, in the voice the refusal prints them in. Each carries the fragment of its OWN
+ * `RESUME_TEMPLATE` line that identifies it, so the terms come out of the list a lane is told to fill
+ * in and the two cannot drift. `tools/test_ctxwarn.ts` pins that every fragment matches EXACTLY ONE
+ * template line: a template edit that renames a block, or that lets one fragment answer for two of
+ * them, goes RED at the gate instead of quietly un-checking a block.
+ */
+export const RESUME_SECTIONS: readonly { label: string; line: string; aliases?: readonly string[] }[] = [
+  { label: "venue", line: "venue" },
+  { label: "task", line: "task and the spec" },
+  { label: "branch", line: "tip commit" },
+  { label: "mid-flight", line: "mid-flight", aliases: ["not reached", "nothing in flight", "in flight"] },
+  { label: "next steps", line: "next steps", aliases: ["cold seat", "resume"] },
+  { label: "report", line: "report path" },
+  { label: "HOLD", line: "HOLD flags" },
+];
+
+/**
+ * How many blocks a handoff must answer. DERIVED, not chosen: 287 real `RESUME-*.md` sheets in the two
+ * dirs this box actually uses, counted through the same function over the same head the audit reads —
+ *   7 blocks: 122 files · 6: 136 · 5: 22 · 4: 4 · 3: none · 2: 3
+ * and those three are `RESUME-flash5-09349c.md` (the 359-byte padding sheet this row is named after)
+ * and two rig fixtures. So 4 is the HIGHEST floor that refuses every filler sheet found and still
+ * admits all 284 real ones. 5 would have refused four genuine handoffs, one of them 18 KB and written
+ * in its own vocabulary — and a bar that strands a lane holding a good handoff is the failure class
+ * leg 420 ACT A and ACT B exist to prevent. Command, output and the date are in the leg report.
+ */
+export const RESUME_MIN_SECTIONS = 4;
+
+/** Words too common to identify a block on their own. */
+const RESUME_STOP = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "which", "any", "anything", "it", "is", "in",
+  "on", "or", "of", "to", "at", "would", "have", "has", "had", "your", "you", "all", "not", "are",
+  "was", "were", "anything", "right", "now", "came", "come", "else", "about", "into", "them", "they",
+]);
+
+/** The one template line a block's `line` fragment identifies. First match wins; the gate cell above
+ * the use proves the fragment is unique, so a rename or an overlap is RED rather than a silent drop. */
+const templateLineFor = (frag: string): string | undefined =>
+  RESUME_TEMPLATE.split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.toLowerCase().includes(frag.toLowerCase()));
+
+/**
+ * The terms that recognise each block: the words of its own template line, its label, and the small
+ * alias set for the synonyms this box's real sheets actually use ("NOT REACHED", "what a cold seat does
+ * next"). One source for the list and the check, so they cannot drift. Words too common to identify
+ * anything are out.
+ */
+export const resumeSectionTerms = (): { label: string; terms: string[] }[] =>
+  RESUME_SECTIONS.map((s) => {
+    const line = templateLineFor(s.line) ?? "";
+    const words = line
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 2 && !RESUME_STOP.has(w));
+    const aliases = (s.aliases ?? []).map((a) => a.toLowerCase());
+    return { label: s.label, terms: [...new Set([s.label.toLowerCase(), ...words, ...aliases])] };
+  });
+
+/**
+ * Does this line ANSWER the block, rather than name it? The matched words and the punctuation are
+ * stripped and something with real content must remain, so `## next steps` and `next steps:` say
+ * nothing and do not count.
+ */
+const lineAnswers = (line: string, terms: string[]): boolean => {
+  const rest = line
+    .toLowerCase()
+    .replace(new RegExp(`(?:${terms.slice().sort((a, b) => b.length - a.length).join("|")})`, "g"), " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  return rest.length >= 2;
+};
+
+/**
+ * Which blocks this sheet answers. Two rules make this decide the right thing rather than the obvious
+ * thing, and both come out of cells on real text:
+ *
+ *  - **a line counts for at most ONE block, the one it names most specifically** (most distinct terms).
+ *    Picking the first match in list order instead credited `next steps:` to the mid-flight block, because
+ *    that block's own template line happens to contain the word "next". Cross-talk between neighbouring
+ *    blocks is what a keyword list cannot avoid; a specificity ranking is one line and it decides.
+ *  - **the line must ANSWER, not name.** The matched terms and the punctuation come out, and something
+ *    with real content has to remain — so `## venue` is not an answer, and neither is a line copied out
+ *    of `RESUME_TEMPLATE` verbatim, which is an unfilled slot with the placeholder still in it.
+ *
+ * Only the head is read, because that is where a lane states what it is.
+ */
+export const resumeSectionsPresent = (head: string): string[] => {
+  const defs = resumeSectionTerms();
+  const echoes = new Set(RESUME_TEMPLATE.split("\n").map((l) => l.trim()));
+  const present = new Set<string>();
+  for (const raw of (head ?? "").split("\n")) {
+    const line = raw.trim();
+    if (!line || echoes.has(line)) continue;
+    const words = new Set(line.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+    const whole = ` ${line.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+    let best: { label: string; hits: number; terms: string[] } | null = null;
+    for (const d of defs) {
+      if (present.has(d.label)) continue;
+      let hits = 0;
+      for (const t of d.terms) if (t.includes(" ") ? whole.includes(` ${t} `) : words.has(t)) hits++;
+      if (hits > 0 && (!best || hits > best.hits)) best = { label: d.label, hits, terms: d.terms };
+    }
+    if (best && lineAnswers(line, best.terms.filter((t) => !t.includes(" ")))) present.add(best.label);
+  }
+  return [...present];
+};
+
+export interface HandoffContentVerdict {
+  ok: boolean;
+  /** the leg the sheet names, read from its filename or its head; null when it names none */
+  legFile: string | null;
+  /** the leg this seat declares (`""` = none declared) */
+  legDeclared: string;
+  present: string[];
+  missing: string[];
+  reason: string;
+}
+
+/**
+ * The payload bar, PURE: it takes the picked sheet's name and its head text, and says whether the
+ * sheet is a handoff for the leg about to be lost. It never touches the disk and never throws — the
+ * reading is `laneadmin.ts:auditHandoff`, which is where the filesystem half lives.
+ */
+export const handoffContentVerdict = (
+  name: string,
+  head: string,
+  legDeclared: string = currentLeg(),
+): HandoffContentVerdict => {
+  const legFile = legInName(name) ?? legInHead(head);
+  const present = resumeSectionsPresent(head);
+  const missing = RESUME_SECTIONS.map((s) => s.label).filter((l) => !present.includes(l));
+  const base = { legFile, legDeclared, present, missing };
+  if (legDeclared && legFile === null)
+    return {
+      ...base,
+      ok: false,
+      reason:
+        `${name} names no leg, and this seat declares ${LEG_ENV}=${legDeclared} — a sheet that does not say ` +
+        `which leg it describes cannot be admitted for the one about to be lost. Add one opening line: ` +
+        `\`leg ${legDeclared} — <one-line verdict>\`.`,
+    };
+  if (legDeclared && legFile !== legDeclared)
+    return {
+      ...base,
+      ok: false,
+      reason:
+        `${name} describes leg ${legFile}, but this seat is running leg ${legDeclared} — that sheet is current ` +
+        `by BOOT, which is the wrong key (iid 17): obeying it would hand the next seat instructions for a task ` +
+        `that is already finished. Write a handoff for leg ${legDeclared} — same path, first line ` +
+        `\`leg ${legDeclared} — <one-line verdict>\`.`,
+    };
+  if (present.length < RESUME_MIN_SECTIONS)
+    return {
+      ...base,
+      ok: false,
+      reason:
+        `${name} answers ${present.length} of ${RESUME_SECTIONS.length} blocks a handoff must state — missing: ` +
+        `${missing.join(", ") || "none named"}. The floor is not a byte count (${RESUME_MIN_BYTES} is unchanged ` +
+        `on purpose): a sheet of headings with nothing under it is the case this bar exists for. Fill the `
+        + `blocks the FORCED HANDOFF notice lists, in words of your own — the check wants an answer on the `
+        + `line, not the heading alone.`,
+    };
+  return {
+    ...base,
+    ok: true,
+    reason: legDeclared
+      ? `handoff ${name} names leg ${legDeclared} and answers ${present.length}/${RESUME_SECTIONS.length} blocks`
+      : `handoff ${name} names leg ${legFile ?? "(none)"} and answers ${present.length}/${RESUME_SECTIONS.length} ` +
+        `blocks — ${LEG_ENV} is not set for this seat, so the leg was READ, not COMPARED: set ` +
+        `${LEG_ENV}=<n> in the seat's launcher and the bar checks it`,
+  };
+};
 
 /**
  * tabichat §5 ITEM 1 / leg 420 ACT A — WHERE A HANDOFF IS ALLOWED TO LIVE, decided by ONE pure
@@ -332,7 +567,8 @@ export const forceBlockNote = (path: string): string =>
   `Fill in, briefly:\n${RESUME_TEMPLATE}`;
 
 /** What a lane that did not cooperate leaves the room saying. */
-export const RESUME_TEMPLATE = `  venue / working dir (which clone, which work<N>)
+export const RESUME_TEMPLATE = `  leg <n> this handoff describes (the number in your dispatch) — name it on the first line
+  venue / working dir (which clone, which work<N>)
   task and the spec file path it came from
   branch, tip commit, and ANYTHING uncommitted or unpushed
   what is mid-flight right now (the exact next command you would have run)

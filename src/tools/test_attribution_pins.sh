@@ -106,9 +106,31 @@ git -C "$BARE" init -q .
 git -C "$BARE" config user.name "$GOOD_NAME"; git -C "$BARE" config user.email "$GOOD_MAIL"
 cp "$CHK" "$BARE/src/tools/check_attributions.sh"
 printf 'x\n' > "$BARE/x"; git -C "$BARE" add -A && git -C "$BARE" commit -q -m one
-out=$( cd "$BARE" && sh src/tools/check_attributions.sh 2>&1 ); rc=$?
+# This control depends on an ambient variable the gate reads when it is given no argument, so the call
+# site controls that variable instead of inheriting it: the bare clone is built to have no base, and a
+# base arriving from the caller's shell would route it to a different, equally real refusal.
+out=$( cd "$BARE" && env -u ATTRIB_BASE sh src/tools/check_attributions.sh 2>&1 ); rc=$?
 check "a clone with no remote branch to compare against REFUSES rather than passing blind (rc=1)" "$rc" "1"
 contains "$out" "uncomputable diff" "and it says the sentence the rule turns on"
+# The paired faces, in this file and not in someone's shell history: the same control with the variable
+# exported in the calling subshell must answer identically, because the call site clears it — and the
+# counter-face, which hands the value to the child ON PURPOSE, must still route to the other refusal.
+# That third face is what keeps the first two honest: it proves the variable really does change the
+# gate's answer when the harness does not clear it, so a pass here is control, not luck.
+out=$( export ATTRIB_BASE=0.1.0; cd "$BARE" && env -u ATTRIB_BASE sh src/tools/check_attributions.sh 2>&1 ); rc=$?
+check "PAIRED — the same bare clone still REFUSES when the caller's shell exported ATTRIB_BASE (rc=1)" "$rc" "1"
+contains "$out" "uncomputable diff" "and it says the identical sentence, so the harness owns its input"
+out=$( cd "$BARE" && ATTRIB_BASE=0.1.0 sh src/tools/check_attributions.sh 2>&1 ); rc=$?
+check "COUNTER-FACE — a base handed to the child on purpose is still a REFUSAL (rc=1)" "$rc" "1"
+contains "$out" "not a commit in this clone" "and it routes to the other refusal, which is the CLI contract working"
+lacks "$out" "uncomputable diff" "and the two sentences are distinguishable, so the face above cannot pass by accident"
+# The wiring itself, checked in the shipped text the way the roster wiring is checked below: a control that
+# clears its input only because the operator's shell happened to be clean is not a control. The pattern is
+# anchored on the call form, not on the literal, because a grep for its own string counts itself — measured
+# here as 3 of 2 on the first draft. If either call site loses its clearance, this cell reddens instead of
+# the whole face quietly needing a special environment to fail.
+clearances=$(grep -cE 'out=.*env -u ATTRIB_BASE sh src/tools/check_attributions\.sh' "$0")
+check "both bare-clone call sites clear the ambient base in the shipped text (2 of 2)" "$clearances" "2"
 
 say "THE PRE-EXISTING POPULATION IS NOT THIS GATE'S BUSINESS, and that is why it arrives green"
 rewind

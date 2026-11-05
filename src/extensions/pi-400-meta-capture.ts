@@ -16,14 +16,17 @@
  * Why a second event path: the s22 instrument never fired. Its only trigger was
  * `after_provider_response` with `status >= 400` — an HTTP-level signal. If a
  * refusal arrives MID-STREAM, that handler is presented a 2xx status and sees
- * nothing. `agent_end` is provably the event that does see them: the live tabichat
- * extension renders its upstream notice
- * ("[tabichat] UPSTREAM 400 provider error — turn ended, not retried; pi shows the provider's
- * message.") from `event.messages` in its own `agent_end` handler — `upstreamErrorNote(msgs)` in
+ * nothing. `agent_end` is provably the event that does see them: the live tabichat extension builds its
+ * upstream notice
+ * ("[tabichat] UPSTREAM 400 provider error — no automatic retry is coming; pi shows the provider's
+ * message.") from `event.messages` in its `agent_end` handler — `upstreamErrorNote(msgs)` in
  * `src/extensions/tabichat/index.ts`, whose text comes from `buildNote` in
  * `src/extensions/tabichat/errnote.ts`, which reads `stopReason === "error"` and `errorMessage`.
+ * Leg 907 moved only where that line is PRINTED — `agent_settled`, the boundary that can promise no retry is
+ * coming — and kept the OBSERVATION here, on the same two fields of the same event, which is the claim this
+ * paragraph rests on.
  * This module reads the same two
- * fields off the same event, so it fires exactly where the notice fires.
+ * fields off the same event, so it sees a failure exactly where the notice is decided.
  * `provider_stream_event` is added as an EARLY, opportunistic path: if pi hands the
  * error frame through it before the turn ends, we record the frame position, which
  * is what tells us the failure was mid-stream rather than at the HTTP layer.

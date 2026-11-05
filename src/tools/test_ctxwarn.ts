@@ -35,6 +35,18 @@ const {
   resumePath,
   resumeWritten,
   freshSessionDue,
+  // iid 17 / leg 959 — the payload and leg bar
+  currentLeg,
+  LEG_ENV,
+  RESUME_MIN_BYTES,
+  legInName,
+  legInLine,
+  legInHead,
+  RESUME_MIN_SECTIONS,
+  RESUME_SECTIONS,
+  resumeSectionTerms,
+  resumeSectionsPresent,
+  handoffContentVerdict,
 } = await import("../extensions/tabichat/ctxwarn.ts");
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -118,7 +130,7 @@ check("token threshold negative is off", ctxTokenThreshold("-5"), 0);
 check("absolute OFF means never due (negative half)", absoluteSessionDue(lying(500_000), 0, -1), false);
 check("absolute below the floor not due (negative half)", absoluteSessionDue(lying(199_999), 200_000, -1), false);
 check("absolute at the floor due (positive half)", absoluteSessionDue(lying(200_000), 200_000, -1), true);
-// THIS CELL WAS REVERSED, not deleted, at leg 652, and the owner's order is the reason: the same
+// THIS CELL WAS REVERSED, not deleted, at leg 652, and the reason is the defect it addressed: the same
 // reading (a floor crossed at a fifth of the declared window) is the false alarm that was halting
 // staffed lanes, and the guard it was meant to provide is kept by the two cells under it — the lie
 // that is caught is one whose declaration puts it in the band, not one read at 20%.
@@ -264,6 +276,93 @@ check("the template asks for uncommitted/unpushed state", RESUME_TEMPLATE.includ
 check("the trigger line addresses the lead", forceRoomLine("flash1", at(76), 75, "/r/RESUME-flash1-000001.md", ["lead-agent", "dust"]).includes("@lead-agent"), true);
 check("...and carries the path", forceRoomLine("flash1", at(76), 75, "/r/RESUME-flash1-000001.md", ["dust"]).includes("/r/RESUME-flash1-000001.md"), true);
 check("the give-up line names the lane and the file", giveUpLine("flash1", 75, "/r/RESUME-flash1-000001.md").includes("did not write its RESUME file"), true);
+
+
+// ─── iid 17 / leg 959 — the payload bar and leg currency ──────────────────────────────────────
+// The row: the renew bar admitted a handoff by BOOT, so a sheet written early in a boot for an
+// earlier leg passed for the leg about to be lost, and a fresh file of headings with nothing under it
+// cleared the byte floor. Both halves get their refusal case AND their acceptance case here, and every
+// fixture is a string — this gate never reads the disk, so no cell can pass on one lane's /tmp.
+console.log("\n== iid 17: leg currency, read from the name and the head ==");
+check("a plain `leg 954` in a sentence answers", legInLine("flash3 resume: leg 954 — CLOSED, nothing in flight"), "954");
+check("the block form answers too", legInLine("leg 959"), "959");
+check("...and so does `Leg: 959 — verdict`", legInLine("Leg: 959 — verdict"), "959");
+check("NEGATIVE: a branch slug `by-leg-17` is NOT a leg — it would answer for the wrong number", legInLine("Branch `feature/handoff-bar-by-leg-17`"), null);
+check("NEGATIVE: a bare number with no leg word before it is not a leg either", legInLine("959-leg handoff"), null);
+check("a `-leg959` filename slug answers", legInName("RESUME-flash3-0554ee-leg959.md"), "959");
+check("a trailing all-digit component answers — this box has sheets named that way", legInName("RESUME-clerk-01a1a325-940.md"), "940");
+check("NEGATIVE: a hex BOOT tag is not a leg. That is the key this row says is the wrong key", legInName("RESUME-flash3-0554ee.md"), null);
+check("NEGATIVE: and digits nowhere in the name means no leg in the name", legInName("RESUME-flash3-next-s141.md"), null);
+check("legInHead reads in order and takes the first", legInHead("title line\nleg 959\nleg 12\n"), "959");
+check("currentLeg pulls the digits out of a hand-written launcher value", currentLeg({ MQTT_LEG: "leg-959" }), "959");
+check("...and the plain form", currentLeg({ MQTT_LEG: "959" }), "959");
+check("NEGATIVE: unset is empty, not zero", currentLeg({}), "");
+check("NEGATIVE: garbage declares NO leg rather than a wrong one", currentLeg({ MQTT_LEG: "soon" }), "");
+check("the knob the refusal names is the knob this reads", LEG_ENV, "MQTT_LEG");
+
+console.log("\n== iid 17: the blocks, and what counts as answering one ==");
+check("every block resolves to a real line of the template (a rename goes RED, not unchecked)",
+  resumeSectionTerms().every((d) => d.terms.length > 2), true);
+check("and each block's fragment identifies EXACTLY ONE template line (no overlap, no orphan)",
+  RESUME_SECTIONS.map((s) => [s.label, RESUME_TEMPLATE.split("\n").filter((l) => l.toLowerCase().includes(s.line.toLowerCase())).length]),
+  [
+    ["venue", 1],
+    ["task", 1],
+    ["branch", 1],
+    ["mid-flight", 1],
+    ["next steps", 1],
+    ["report", 1],
+    ["HOLD", 1],
+  ]);
+check("the template now asks the lane for its leg, in the same notice the bar reads",
+  RESUME_TEMPLATE.includes("leg <n> this handoff describes"), true);
+check("a sheet of headings with nothing under it answers NOTHING",
+  resumeSectionsPresent(Array.from({ length: 40 }, (_, i) => `## block ${i}`).join("\n")), []);
+check("an empty string answers nothing", resumeSectionsPresent(""), []);
+check("NEGATIVE: the template copied out VERBATIM is unfilled slots, not answers",
+  resumeSectionsPresent("# handoff\n" + RESUME_TEMPLATE + "\n"), []);
+check("a heading is not a value", resumeSectionsPresent("next steps:\nvenue:\nreport:\nHOLD:\nbranch:\n"), []);
+
+const GOOD = `flash3 report: the renew bar is current by leg, not by boot
+leg 954 — payload floor and leg currency are in
+  venue: /tabith/work5-tabichat-959 (my tabichat clone, branch feature/handoff-bar-by-leg-17)
+  task and the spec path it came from: /tabith/wave47-specs-20261104/flash3-handoff-bar-by-leg-959.md
+  branch tip 580572c, nothing uncommitted or unpushed
+  mid-flight right now: writing the cells, next command is the stage run
+  next steps: faces 2 to 8, then the report, then push both faces
+  report path: /tabith/wave47-specs-20261104/flash3-handoff-bar-by-leg-959-report.md
+  HOLD flags — no merge, no tag, no deploy verb at the live destination
+`;
+const NOLEG = GOOD.replace("leg 954 — payload floor and leg currency are in\n", "");
+check("a genuine sheet answers all seven blocks", resumeSectionsPresent(GOOD).length, 7);
+check("NEGATIVE for the n-of-m choice: one block missing still PASSES, because four-block real handoffs are on this box",
+  resumeSectionsPresent(GOOD.replace(/  HOLD flags[^\n]*\n/, "")).length >= RESUME_MIN_SECTIONS, true);
+check("RESUME_MIN_SECTIONS is the derived 4, not a picked number", RESUME_MIN_SECTIONS, 4);
+check("and seven blocks are enumerated", RESUME_SECTIONS.length, 7);
+
+console.log("\n== iid 17: handoffContentVerdict — both doors, both ways ==");
+const stale = handoffContentVerdict("RESUME-flash3-0554ee.md", GOOD, "961");
+check("RENEW REFUSED: a sheet for leg 954 cannot stand for leg 961, same boot and all", stale.ok, false);
+says("...and the refusal prints the leg the sheet describes", stale.reason, "leg 954");
+says("...and the leg the seat is actually on", stale.reason, "leg 961");
+says("...and how to fix it", stale.reason, "Write a handoff for leg 961");
+const match = handoffContentVerdict("RESUME-flash3-0554ee.md", GOOD, "954");
+check("PASSES: the same sheet, for the leg the seat is running", match.ok, true);
+says("...and the accepted reason says what it checked", match.reason, "names leg 954");
+check("a sheet that names NO leg is refused when the seat declares one",
+  handoffContentVerdict("RESUME-flash3-0554ee.md", NOLEG, "954").ok, false);
+const nolane = handoffContentVerdict("RESUME-flash3-0554ee.md", NOLEG, "");
+check("NEGATIVE: with no leg declared it is NOT refused — that would strand every lane on a box that never set MQTT_LEG",
+  nolane.ok, true);
+says("...and the accept line says the leg was read, not compared", nolane.reason, "READ, not COMPARED");
+says("...and names the knob that would make it bite", nolane.reason, "MQTT_LEG=<n>");
+const padded = handoffContentVerdict("RESUME-flash3-0000aa.md", "x".repeat(400), "");
+check("RENEW REFUSED: a 400-byte sheet that answers nothing — over the byte floor, under the payload one", padded.ok, false);
+says("...and the refusal lists what is missing", padded.reason, "venue");
+says("...and states that the byte floor was NOT the fix", padded.reason, "200 is unchanged on purpose");
+check("THE FLOOR THIS ROW FORBADE: RESUME_MIN_BYTES is still 200 — the byte measure was not raised to reach green",
+  RESUME_MIN_BYTES, 200);
+check("and the payload bar is a SEPARATE bar, so the byte floor still bites on its own", resumeWritten(true, 199), false);
 
 console.log(failed ? `\n${failed} check(s) FAILED` : "\nall checks pass");
 process.exitCode = failed ? 1 : 0;

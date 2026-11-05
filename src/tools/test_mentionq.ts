@@ -460,12 +460,18 @@ for (const bad of ["0", "-1", "abc", "12.5x", "1e999", "99999999999999999999999"
   const drainSrc = index.slice(drainStart, index.indexOf('pi.on("', drainStart + 10));
   check("the drain handler was found for the fan-out check", drainStart > -1, true);
   check(
-    "the settle drain has exactly ONE sendUserMessage call SITE",
+    "the settle drain has exactly TWO sendUserMessage call SITES, and both are named",
     // tabichat#19: the send moved to the re-armed `sendUser` handle (pi's load-time API throws for
     // the rest of the process after a replacement). The count is the cell, not the identifier.
+    // iid 11 (leg 973) re-numbered it from 1, and the second site is a DUTY, not a fan-out: held
+    // traffic ships as one batch, and a pending loss tell ships alone when nothing is held. Both are
+    // pinned by their own text below, so a third site has to arrive as a third named duty.
     (drainSrc.match(/pi\.sendUserMessage|\bsendUser\(/g) ?? []).length,
-    1,
+    2,
   );
+  says("and ONE of them is the held batch, tell welded to its front", drainSrc, "sendUser(`${lossBlock}");
+  says("and the other is the loss tell alone, for a lane that was never talked to", drainSrc,
+    "sendUser(lossBlock, { expandPromptTemplates: false });");
   check(
     "the settle drain has NO iteration at all (nothing per-line to fan out)",
     /\bfor\s*\(|\.forEach\(/.test(drainSrc),

@@ -98,6 +98,14 @@ plugin({
   },
 });
 
+// iid 28: this cell MOUNTS the shipped entry twice, so both sinks go into this cell's own scratch
+// dir before any import runs. Unset is not off: with no env the sinks resolve to the box-level
+// defaults the live seats write — diaglog.ts's `DIAG_DEFAULT_SUBPATH` under $HOME, and exitlog.ts's
+// `EXIT_LOG_DEFAULT`, which is absolute so a scratch cwd cannot redirect it. A later seat greps
+// those files for lane traffic, and a cell line in there reads as if a lane had said it.
+process.env.MQTT_DIAG_LOG = join(stubDir, "diag.log");
+process.env.MQTT_EXIT_LOG = join(stubDir, "lane-exits.log");
+
 // ─── the recording fake ExtensionAPI ───────────────────────────────────────────────────────────
 type Rec = { ev: string; fn: (...a: never[]) => unknown };
 const makePi = (tag: string) => {

@@ -32,6 +32,8 @@ import mqtt from "mqtt";
 import {
   ackLostLine,
   ackTopic,
+  ackWatchKey,
+  deliveryVerdict,
   expireAcks,
   settleAck,
   watchAck,
@@ -74,7 +76,23 @@ interface Obs {
   peer: string[];
   /** topics the PUBLISHING client heard back on its own subscription (the echo) */
   self: string[];
+  /**
+   * iid 21 finding 1 — the SAME frames as `self`, with the payload id each one carried. The room
+   * topic is shared by every lane, so a topic alone cannot say which publish arrived; this is what
+   * the shipped inbound handler has in hand, and what the watch now keys on.
+   */
+  selfFrame: { topic: string; id: string }[];
 }
+
+/** The id an inbound frame carried, read the way `index.ts` reads it. Never printed as content. */
+const frameId = (p: Buffer): string => {
+  try {
+    const o = JSON.parse(p.toString()) as { id?: unknown };
+    return typeof o.id === "string" ? o.id : "";
+  } catch {
+    return "";
+  }
+};
 
 async function probe(phase: "phase1" | "phase2") {
   const up = sh(["src/tools/broker-fixture.sh", "up", phase]);
@@ -116,7 +134,7 @@ async function probe(phase: "phase1" | "phase2") {
   // wildcard, per #3 — not both, which is what double-adjudicated a request and forked a seat).
   const pub = await conn("wren");
   const peer = await conn("flash6");
-  const obs: Obs = { peer: [], self: [] };
+  const obs: Obs = { peer: [], self: [], selfFrame: [] };
   const filters = [`chat/${ROOM}`, `chat/${ROOM}/_ctl/#`, `chat/${ROOM}/msg/+`];
   const subOk = (c: mqtt.MqttClient) =>
     new Promise<string[]>((r) => {
@@ -139,7 +157,7 @@ async function probe(phase: "phase1" | "phase2") {
     gPub.some((g) => g.startsWith(`chat/${ROOM}/_ctl/#:ok`)), true);
   check(`${phase}: the peer's _ctl/# subscription is GRANTED`,
     gPeer.some((g) => g.startsWith(`chat/${ROOM}/_ctl/#:ok`)), true);
-  pub.on("message", (t) => obs.self.push(t));
+  pub.on("message", (t, p) => { obs.self.push(t); obs.selfFrame.push({ topic: t, id: frameId(p) }); });
   peer.on("message", (t) => obs.peer.push(t));
   await new Promise((r) => setTimeout(r, 400));
 
@@ -201,6 +219,60 @@ async function probe(phase: "phase1" | "phase2") {
     const { live, lost } = expireAcks(list, Date.now() + 10_000, 3000);
     check("PHASE1 watchdog: every watch settles, nothing is lost, NO alarm is raised",
       [live.length, lost.length, ackLostLine(lost, Date.now())], [0, 0, ""]);
+
+    // ─── iid 21 finding 1 (leg 926) — THE SHARED TOPIC FACE, ON A REAL BROKER ──────────────────
+    // Every lane writes and reads `chat/<room>`, so a watch keyed on that topic is answered by
+    // whichever frame arrived first. Measured at 18 of 20 room posts at `6e3e76771`: a lane was told
+    // its own line was carried by a PEER's bytes. Here three publishes go onto the one shared topic
+    // — two by wren, one by flash6 — and the frames THIS socket actually received are replayed at the
+    // shipped settle shape, in arrival order.
+    const kFlat = `chat/${ROOM}`;
+    const kA = `wren-926-a-${id}`;
+    const kB = `wren-926-b-${id}`;
+    const kC = `wren-926-c-${id}`;
+    const kPeer = `flash6-926-p-${id}`;
+    pub.publish(kFlat, JSON.stringify({ nick: "wren", message: "926 first post", id: kA, ts: Date.now() }));
+    peer.publish(kFlat, JSON.stringify({ nick: "flash6", message: "926 peer post", id: kPeer, ts: Date.now() }));
+    pub.publish(kFlat, JSON.stringify({ nick: "wren", message: "926 second post", id: kB, ts: Date.now() }));
+    await new Promise((r) => setTimeout(r, 1500));
+    const kFrames = obs.selfFrame.filter((f) => f.topic === kFlat);
+    check("926 POSITIVE CONTROL, MEASURED: the one shared topic carried a PEER's frame as well as both of mine (a quiet room would have proved nothing)",
+      [kFrames.some((f) => f.id === kA), kFrames.some((f) => f.id === kB), kFrames.some((f) => f.id === kPeer)],
+      [true, true, true]);
+    let kWatch = watchAck([], kFlat, "room line", Date.now(), kA).pending;
+    kWatch = watchAck(kWatch, kFlat, "room line", Date.now() + 1, kB).pending;
+    check("926 two posts by ONE lane on ONE shared topic are TWO watches, each keyed by its own id",
+      kWatch.map(ackWatchKey), [kA, kB]);
+    const kEarned: string[] = [];
+    let kTopicSettles = 0;
+    let kList = kWatch;
+    for (const f of kFrames) {
+      // the shipped inbound shape, both calls: settle on the frame's own id, then the #10 topic settle
+      const s1 = settleAck(kList, f.id);
+      if (s1.settled) kEarned.push(f.id);
+      kList = s1.pending;
+      const s2 = settleAck(kList, f.topic);
+      if (s2.settled) kTopicSettles++;
+      kList = s2.pending;
+    }
+    check("926 EACH watch was earned by the frame carrying ITS OWN id — zero cross-earnings, the 18/20 face at the new tip",
+      [kEarned.sort(), kList.length], [[kA, kB].sort(), 0]);
+    check("926 NEGATIVE: the peer's frame earned nothing, and the #10 TOPIC settle took nothing off the list either",
+      [kEarned.includes(kPeer), kTopicSettles], [false, 0]);
+    // The paired negative the row asked for, on the same busy topic: a publish nobody carried.
+    let kBusy = watchAck([], kFlat, "room line", Date.now(), kC).pending;
+    for (const f of kFrames) {
+      kBusy = settleAck(kBusy, f.id).pending;
+      kBusy = settleAck(kBusy, f.topic).pending;
+    }
+    check("926 a publish whose echo never came back is STILL WATCHED while every other lane's frame flies past on the same topic",
+      [kBusy.length, kBusy.map(ackWatchKey)], [1, [kC]]);
+    const kExp = expireAcks(kBusy, Date.now() + 10_000, 3000);
+    check("926 …the sweep ages it out, recorded under its OWN key, and the waiter's answer is UNCONFIRMED",
+      [kExp.lost.map(ackWatchKey), deliveryVerdict(kC, kExp.live, new Set(kExp.lost.map(ackWatchKey)))],
+      [[kC], "unconfirmed"]);
+    check("926 and the alarm still NAMES the lost publish's topic, so an operator can tie it to the post they just made",
+      ackLostLine(kExp.lost, Date.now() + 10_000).includes(kFlat), true);
   } else {
     // what the GENERATOR emits, and the cutover the tag would ship: `topic readwrite chat/<room>/_ctl`
     // is an exact match, so it cannot cover a child, and `_ctl/#` is granted READ only
@@ -242,6 +314,19 @@ async function probe(phase: "phase1" | "phase2") {
       [rExp.lost.length, rExp.live.length, rExp.lost[0]?.topic], [1, 0, `chat/${ROOM}`]);
     check("PHASE2 and the alarm calls it a room line, so an operator can tie it to a `posted as ...` they just saw",
       ackLostLine(rExp.lost, Date.now() + 10_000).includes("room line"), true);
+    // iid 21 finding 1, PHASE 2 face: this write is REFUSED outright (asserted just above, physically
+    // — the far side heard nothing and no echo ever reached the publisher). Keyed on the publish's own
+    // id, no frame this socket received can settle it, so the answer is the truth and not a pass.
+    const kSw = `wren-926-sw-${id}`;
+    let kSwList = watchAck([], `chat/${ROOM}`, "room line", Date.now(), kSw).pending;
+    for (const f of obs.selfFrame) {
+      kSwList = settleAck(kSwList, f.id).pending;
+      kSwList = settleAck(kSwList, f.topic).pending;
+    }
+    const kSwExp = expireAcks(kSwList, Date.now() + 10_000, 3000);
+    check("926 PHASE2 the refused write stays watched through EVERY inbound frame, ages out, and answers UNCONFIRMED",
+      [kSwList.length, kSwExp.lost.map(ackWatchKey), deliveryVerdict(kSw, kSwExp.live, new Set(kSwExp.lost.map(ackWatchKey)))],
+      [1, [kSw], "unconfirmed"]);
     let list = watched;
     for (const t of obs.self) list = settleAck(list, t).pending;
     const now = Date.now();

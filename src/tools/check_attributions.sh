@@ -67,7 +67,7 @@ git rev-parse --verify -q "${base}^{commit}" >/dev/null \
 
 # The owner-credit class, phrase by phrase. Each alternative is written so the line it sits on cannot
 # match itself: a bracketed final character is the same regex and a different string.
-PATTERN='[Oo]wner (direc[t]ive|direc[t]ed|rule[d]|order[s]|ordere[d]|wor[d]|aske[d]|decide[d]|decisio[n]|cal[l]|approva[l]|approve[d]|not[e]|pi[n]|caution|conditio[n]|requirement|instructio[n])|per the [Oo]wne[r]|as per the own[e]r|the own[e]r.s (wor[d]|cal[l]|approva[l]|orde[r]|decisio[n]|rulin[g]|instructio[n]|conditio[n]|caution|requirement|wish|word|call)|own[e]r.s (direc[t]ive|ruling|verdict)|as (instructe[d]|rule[d]|ordere[d]|directe[d]) by the own[e]r|writt[e]n by the own[e]r|requeste[d] by the own[e]r|the own[e]r (rule[d]|decide[d]|ordere[d]|aske[d]|directe[d]|approve[d])|requeste[d] by the leade[r]|pe[r] the leade[r]|Co-authored-b[y]:|owner-nic[k]|seat nic[k]'
+PATTERN='[Oo]wner (direc[t]ive|direc[t]ed|rule[d]|order[s]|ordere[d]|wor[d]|aske[d]|decide[d]|decisio[n]|cal[l]|approva[l]|approve[d]|not[e]|pi[n]|caution|conditio[n]|requirement|instructio[n])|per the [Oo]wne[r]|as per the own[e]r|the own[e]r.s (wor[d]|cal[l]|approva[l]|orde[r]|decisio[n]|rulin[g]|instructio[n]|conditio[n]|caution|requirement|wish|word|call)|own[e]r.s (direc[t]ive|ruling|verdict)|as (instructe[d]|rule[d]|ordere[d]|directe[d]) by the own[e]r|writt[e]n by the own[e]r|requeste[d] by the own[e]r|the own[e]r (rule[d]|decide[d]|ordere[d]|aske[d]|directe[d]|approve[d])|requeste[d] by the leade[r]|pe[r] the leade[r]|Co-authored-b[y]:|owner-nic[k]|seat nic[k]s? (rule[d]|rule[s]|decide[d]|decide[s]|order[s]|ordere[d]|direc[t]|directe[d]|approv[e]|approve[d]|as[k]|aske[d]|sai[d]|verdic[t]|decisio[n]|wor[d]|cal[l])'
 # Why the possessive branch lists nouns instead of matching anything after `owner's`: the product's own
 # vocabulary legitimately uses the word — an env var, a payload field, a sentence about what the human's
 # posts may do — and a gate that reds shipped documentation on its first day is a gate that gets turned
@@ -76,6 +76,18 @@ PATTERN='[Oo]wner (direc[t]ive|direc[t]ed|rule[d]|order[s]|ordere[d]|wor[d]|aske
 # word that could complete a credit phrase keeps its final letter in a bracket, which is the same regex and
 # a different string. `NAMES` carries no credit preposition and `CRED` carries no person word, so the pair
 # exists only at run time — which is the same discipline the harness below uses for its planted fixtures.
+#
+# THE SEAT-NICK BRANCH SCOPES TO A CREDIT NOW (leg 906, F2). It used to end `PATTERN` above as a bare phrase, so it
+# refused any added line that merely CONTAINED the two-word term — and it caught honest test data doing it:
+# an assertion naming the variable concept under test, crediting nobody. That is the shape :31 warns about,
+# read the other way: a branch that bans a phrase rather than a credit reds the line that describes the thing
+# being tested, and the next lane teaches itself to reword the fixture instead of scoping the matcher. So the
+# branch now requires a decision word after the term, the same construction the owner-credit branches above
+# already use, and the roster rule is unchanged: a seat word alone is not a credit and is not refused.
+# Removing the branch outright was the other option and was not taken: a credit phrased as "the seat nic[k]
+# decided X" names no roster member, and this branch is the only place that shape is caught. The term is
+# bracketed here for the reason :41-44 gives: a comment that spelled the phrase would be refused by its own
+# file the day the wrap moved, and a gate that reds its own documentation teaches people to delete the gate.
 CRED='pe[r]|a[s] requested b[y]|a[s] ruled b[y]|a[s] directed b[y]|a[s] instructed b[y]|a[s] ordered b[y]|a[s] decided b[y]|a[s] approved b[y]|a[t] the request of|requeste[d] by|aske[d] by|rule[d] by|direc[t]ed by|instructe[d] by|ordere[d] by|approve[d] by|deci[d]ed by|according t[o]'
 # THE ROSTER. Two of its entries were blind when leg 850 arrived, and both are named here because a reader
 # of a diff is the audience for that sentence:

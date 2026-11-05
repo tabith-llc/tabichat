@@ -195,13 +195,16 @@ check("shipped extension uses the RESOLVED url to connect", shipped.includes("mq
 check("shipped extension never guesses past the refusal", /if \(brokerRefusal !== ""\) \{[\s\S]{0,400}return;\n\s*\}/.test(shipped), true);
 // RE-PAIRED by leg 517 (owner order 2026-10-24, verbatim: "can we not figure out how to keep errors
 // out of the place the owner types?"). The refusal is STILL operator-visible on the notify surface, and
-// its second channel is now the DURABLE DIAGNOSTIC FILE rather than the terminal the owner is typing
-// into. Before: shipped.includes("ctx.ui.notify(brokerRefusal, \"error\")") &&
-// shipped.includes("console.error(brokerRefusal)"). The negative half is added in the same edit: the
-// stderr call for THIS site is gone, so a re-landed print at the human is caught by this file too.
+// its second channel is the DURABLE DIAGNOSTIC FILE rather than the terminal the owner is typing into.
+// Before: shipped.includes("ctx.ui.notify(brokerRefusal, \"error\")") &&
+// shipped.includes("console.error(brokerRefusal)"). Leg 954 re-PAIRS it again, in the same direction:
+// the two channels are no longer two calls a person can pull apart, they are the ONE arm that records
+// and shows. This cell now asks for the routed call and for the absence of the raw one; the pairing
+// rule itself — any error-level notify that carries no record is refused — is measured by
+// test_diaglog_routing.ts on every run, so a bypass cannot come back quietly.
 check(
-  "and it prints the refusal on BOTH channels (notify + diagnostic file), never a third at the terminal",
-  shipped.includes('ctx.ui.notify(brokerRefusal, "error")') && shipped.includes('diag("ERROR", brokerRefusal)'),
+  "and the refusal reaches BOTH channels (notify + diagnostic file) through the one arm, never a third at the terminal",
+  shipped.includes('notifySafely(ctx, brokerRefusal, "error")') && !/ctx\.ui\.notify\(brokerRefusal/.test(shipped),
   true,
 );
 check("NEGATIVE: the broker refusal no longer writes raw text into the operator's input area", shipped.includes("console.error(brokerRefusal)"), false);

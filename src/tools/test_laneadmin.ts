@@ -15,7 +15,7 @@
  *     registers the renew command. It is a grep, not a runtime test, and says so.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -44,6 +44,10 @@ import {
   wakeDirective,
   wakePathFor,
   wakePickPath,
+  // iid 17 / leg 959 — the payload and leg audit, and the note the wake line adds
+  auditHandoff,
+  handoffDirs,
+  wakeLegNote,
   WAKE_DELIVER_AS,
   AUTO_RENEW_ENV,
   AUTO_RENEW_FLAG,
@@ -77,6 +81,7 @@ import {
 import {
   pickResumeHandoff,
   RESUME_SCAN_MAX,
+  RESUME_TEMPLATE,
   type ResumeFileStat,
 } from "../extensions/tabichat/ctxwarn.ts";
 
@@ -498,7 +503,10 @@ check("a failed wake injection speaks on stderr (the act, where it now lives)", 
 // --- LEG D2: the wake act EXECUTED against a fake replacement session (a behavior proof, not a grep)
 const LA = readFileSync(join(SRC, "laneadmin.ts"), "utf8");
 check("the act lives in the tested module, not only in the importer", LA.includes("export const wakeRenewedSeat"), true);
-check("the act is what speaks, so the grep above is about wiring and nothing else", LA.includes('await next.sendUserMessage(wakeDirective(path, deps.leadNick ?? ""), { deliverAs: WAKE_DELIVER_AS })'), true);
+// 959: this call line grew a third argument — `wakeLegNote(path)` — so the literal moved. It is
+// re-pinned, not relaxed: the same assertion (the act itself speaks, at the injection point), and it
+// now also pins that the leg note is wired THERE rather than defined and never called.
+check("the act is what speaks, so the grep above is about wiring and nothing else", LA.includes('await next.sendUserMessage(wakeDirective(path, deps.leadNick ?? "", wakeLegNote(path)), { deliverAs: WAKE_DELIVER_AS })'), true);
 
 const runWake = async (cands, opts = {}) => {
   const sent = [];
@@ -1354,8 +1362,16 @@ check("#10 and it is CALLED at all five publish sites (room leaf, room flat, con
   (index.match(/watchSend\(/g) || []).length, 5);
 check("#10 NEGATIVE: no site hand-rolls the watch — `watchAck(ackWatch` exists only inside the registrar",
   (index.match(/watchAck\(ackWatch/g) || []).length, 1);
-check("#10 the room publish registers on the topic it ACTUALLY used, per-sender leaf and flat both",
-  /client\.publish\(t, JSON\.stringify\(payload\)\);\s*\n\s*watchSend\(t, ROOM_SEND_KIND\);[\s\S]{0,240}client\.publish\(`chat\/\$\{room\}`, JSON\.stringify\(payload\)\);[\s\S]{0,600}watchSend\(`chat\/\$\{room\}`, ROOM_SEND_KIND\);/.test(index), true);
+// iid 21 finding 1 (leg 926): the two room sites gained the publish's OWN id, because `chat/<room>`
+// is the topic every lane writes to and a watch keyed on it can be settled by anybody's inbound. Only
+// the argument list moved. The guard this cell exists for is unchanged — register at the publish site,
+// on the topic ACTUALLY used, per-sender leaf AND flat — and it went RED at this tip before the line
+// was updated, which is the proof that it still bites rather than being widened to fit.
+check("#10 the room publish registers on the topic it ACTUALLY used, WITH the publish's own id, per-sender leaf and flat both",
+  /client\.publish\(t, JSON\.stringify\(payload\)\);\s*\n\s*watchSend\(t, ROOM_SEND_KIND, sendId\);[\s\S]{0,240}client\.publish\(`chat\/\$\{room\}`, JSON\.stringify\(payload\)\);[\s\S]{0,600}watchSend\(`chat\/\$\{room\}`, ROOM_SEND_KIND, sendId\);/.test(index), true);
+check("#10/#21 NEGATIVE: neither room site registers on the topic alone any more (the id-less form is the one a peer's echo could answer for)",
+  [index.includes("watchSend(t, ROOM_SEND_KIND);"), index.includes("watchSend(`chat/${room}`, ROOM_SEND_KIND);")],
+  [false, false]);
 check("#10 the admin REQUEST path registers too (a refused request is a renew nobody adjudicates)",
   /client\.publish\(controlTopic\(room\), JSON\.stringify\(payload\)\);[\s\S]{0,600}watchSend\(controlTopic\(room\), "control request"\);/.test(index), true);
 check("#10 a QUEUED publish is NOT watched — the registrar bails unless the socket is connected",
@@ -1490,8 +1506,16 @@ check("AC4 the authority grid is the whole surface, not a sample", grid, 7500);
   // THE SEED. Deliberately widen the door the same way a careless edit would — accept a self
   // compact/shutdown — and require the SAME instrument to report it. Without this line the 0 above is
   // unfalsifiable, and 488's cell is the cautionary tale.
-  const seededFile = join(baseDir, "src", "seeded-laneadmin.ts");
-  mkdirSync(join(baseDir, "src"), { recursive: true });
+  const seedDir = join(tmpdir(), `ac4-seed-${process.pid}`);
+  const seededFile = join(seedDir, "src", "seeded-laneadmin.ts");
+  mkdirSync(join(seedDir, "src"), { recursive: true });
+  // 959: the seed is the CURRENT file with two hunks stubbed, so it must sit beside the CURRENT
+  // siblings, not baseDir's. It used to land in baseDir and that was invisible while laneadmin.ts
+  // imported nothing new; leg 959 adds `currentLeg`/`handoffContentVerdict` to that import list, and
+  // the base ctxwarn.ts does not export them — the seed died on a missing export, an instrument fault
+  // wearing a verdict. Same rule as the comment above, applied to the other copy.
+  for (const sib of ["mention.ts", "ctxwarn.ts", "roommsg.ts"])
+    copyFileSync(join(SRC, sib), join(seedDir, "src", sib));
   // TWO substitutions, and the second one is the reason the first attempt read as a dud: stubbing
   // only the action check leaves the SELFRENEW gate in place, so a self `compact` still comes back
   // refused (with a different reason) and the instrument correctly reports NO difference. My cell
@@ -1525,6 +1549,7 @@ check("AC4 the authority grid is the whole surface, not a sample", grid, 7500);
     [authorVerdict("chat/tabith/msg/wren", "tabith", "wren").ok,
       authorVerdict("chat/tabith/msg/wren", "tabith", "flash6").ok], [true, false]);
   rmSync(baseDir, { recursive: true, force: true });
+  rmSync(seedDir, { recursive: true, force: true });
 }
 
 // --- F2 (s269) — the wake pointer admits a fresh nick-scanned handoff, under the RENEWING floor ---
@@ -1592,6 +1617,216 @@ check("F2 wired: the gate's own floor is UNCHANGED — still BOOT_AT_MS, never a
   /pickResumeHandoff\(files, nick, BOOT_AT_MS\)/.test(indexCode), true);
 check("F2 wired: gate and fallback share ONE disk walk (resumePathsOf), so they cannot scan two different worlds",
   (indexCode.match(/resumePathsOf\(\)/g) ?? []).length >= 2, true);
+
+// ─── iid 17 / leg 959 — the handoff audit, on a real temp dir ──────────────────────
+// The row's defect, reproduced at this face rather than asserted: a sheet that is fresh by mtime and
+// over the byte floor, written for a leg that is already finished, used to be admitted for the leg about
+// to be lost. Every fixture below is written by THIS block into its own directory and removed at the end,
+// so no cell can pass on whatever a lane happens to have in /tmp/tabichat.
+console.log("\n== iid 17: auditHandoff, adminVerdict, autoRenewVerdict — the same sheet, both doors ==");
+// The wording helper from tools/test_ctxwarn.ts, local here so a refusal is asserted by what it SAYS and
+// not only by the boolean. This file had none, and the first cell that wanted one came back a
+// ReferenceError, which is an instrument fault, not a verdict.
+const says = (name: string, hay: string, needle: string) => check(name, hay.includes(needle), true);
+const A9 = join(tmpdir(), `959-audit-${process.pid}`);
+mkdirSync(A9, { recursive: true });
+const GOOD9 = `flash3 resume: leg 959 — the audit is wired\nleg 959 — both doors answer\n  venue: /tabith/work5-tabichat-959 (my clone)\n  task and the spec path it came from: wave47-specs-20261104/flash3-handoff-bar-by-leg-959.md\n  branch tip 580572c, nothing uncommitted or unpushed\n  mid-flight right now: the stage run, then the report\n  next steps: faces 2 to 8, then push both faces\n  report path: wave47-specs-20261104/flash3-handoff-bar-by-leg-959-report.md\n  HOLD flags — no merge, no tag, no deploy verb at the live destination\n`;
+writeFileSync(join(A9, "RESUME-flash3-0554ee.md"), GOOD9);
+writeFileSync(join(A9, "RESUME-flash9-0554ee.md"), "x".repeat(400));
+writeFileSync(join(A9, "RESUME-flash8-0554ee.md"), "# handoff\n" + RESUME_TEMPLATE + "\n");
+writeFileSync(join(A9, "RESUME-flash6-0554ee.md"), "leg 954 — the previous task, already closed\n  venue: /tabith/work5-tabichat-954\n  task and the spec path: the leg before this one\n  branch tip 650ded2, nothing uncommitted\n  mid-flight: nothing in flight, the leg is closed\n  next steps: none, this seat is idle\n  report path: the 954 report\n  HOLD flags — hold for a dispatch\n");
+mkdirSync(join(A9, "RESUME-flash7-0554ee.md")); // a DIRECTORY wearing the name: not a candidate, not a refusal
+
+check("PASSES: a current sheet for the leg the seat declares", auditHandoff({ nick: "flash3", dirs: [A9], leg: "959" }),
+  { audited: true, ok: true, picked: "RESUME-flash3-0554ee.md", reason: "handoff RESUME-flash3-0554ee.md names leg 959 and answers 7/7 blocks" });
+const stale9 = auditHandoff({ nick: "flash6", dirs: [A9], leg: "959" });
+check("RENEW REFUSED: the row's own case — a fresh, over-floor sheet for leg 954, seat on leg 959", stale9.ok, false);
+says("...and it says WHICH leg the sheet is really for", stale9.reason ?? "", "leg 954");
+says("...and which leg is about to be lost", stale9.reason ?? "", "leg 959");
+check("RENEW REFUSED: a 400-byte sheet with nothing answered (clears the 200-byte floor, not this one)",
+  auditHandoff({ nick: "flash9", dirs: [A9], leg: "" }).ok, false);
+check("RENEW REFUSED: the FORCED HANDOFF notice copied out verbatim is unfilled slots, not a handoff",
+  auditHandoff({ nick: "flash8", dirs: [A9], leg: "" }).ok, false);
+check("NEGATIVE: no sheet for this nick is NOT audited, and never refused — an instrument fault is not a verdict",
+  auditHandoff({ nick: "flash5", dirs: [A9], leg: "959" }).audited, false);
+check("...and a directory wearing the RESUME name contributes no candidate (and no refusal)",
+  auditHandoff({ nick: "flash7", dirs: [A9], leg: "959" }).audited, false);
+check("...and neither does a dir that is not there at all",
+  auditHandoff({ nick: "flash3", dirs: [`${A9}-absent`], leg: "959" }).audited, false);
+check("the byte floor still bites INSIDE the audit — nothing was weakened to reach green",
+  auditHandoff({ nick: "flash3", dirs: [A9], leg: "959", minBytes: 5000 }).ok, false);
+check("handoffDirs takes the declared durable dir, and only it", handoffDirs({ MQTT_CTX_RESUME_DIR: A9 }), [A9]);
+check("...and with nothing declared it names the scratch fallback ONCE, never twice", handoffDirs({}), ["/tmp/tabichat"]);
+
+const R9 = { LANE_ADMIN_RENEW: "yes", LANE_ADMIN_COMPACT: "1", LANE_ADMIN_SHUTDOWN: "on" };
+const renewStale = adminVerdict({
+  action: "renew", by: "lead-agent", to: "flash6", self: "flash6", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
+  idle: true, resumeWritten: true, resumeSearched: [A9],
+});
+check("the REMOTE renew bar refuses the stale sheet the byte bar used to admit", renewStale.ok, false);
+says("...and the lane says so out loud (speak, not silence)", String((renewStale as { speak?: boolean }).speak), "true");
+const renewGood = adminVerdict({
+  action: "renew", by: "lead-agent", to: "flash3", self: "flash3", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
+  idle: true, resumeWritten: true, resumeSearched: [A9],
+});
+check("...and honours the same request for the seat whose sheet IS current", renewGood.ok, true);
+const compactStale = adminVerdict({
+  action: "compact", by: "lead-agent", to: "flash6", self: "flash6", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
+  idle: true, resumeWritten: true, resumeSearched: [A9],
+});
+check("★ NEGATIVE THAT IS THE POINT: compact keeps the session, so the SAME stale sheet does NOT hold it",
+  compactStale.ok, true);
+check("...and the new bar widened nothing on the door it was never for (the shipped ok shape is intact)",
+  compactStale.ok === true && (compactStale as { action?: string }).action === "compact", true);
+const noDirs = adminVerdict({
+  action: "renew", by: "lead-agent", to: "flash6", self: "flash6", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
+  idle: true, resumeWritten: true,
+});
+check("a caller with NO dirs gets the shipped verdict: the audit never reads an ambient /tmp",
+  noDirs.ok, true);
+check("★ and the per-boot loop brake still fires FIRST — good sheet, stale sheet, it is the brake that answers",
+  autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: true, resumeWritten: true, nick: "flash6", env: { MQTT_LEG: "959" }, dirs: [A9] }).reason,
+  "already auto-renewed once this boot — no renew loop");
+check("the self-renew door honours a current sheet", autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: false, resumeWritten: true, nick: "flash3", env: { MQTT_LEG: "959" }, dirs: [A9] }).ok, true);
+check("...and refuses the stale one, same bar as the remote gate", autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: false, resumeWritten: true, nick: "flash6", env: { MQTT_LEG: "959" }, dirs: [A9] }).ok, false);
+check("NEGATIVE: with no nick named it does not go looking — a gate that read the developer's home dir would be green here and wrong there",
+  autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: false, resumeWritten: true }).ok, true);
+check("wakeLegNote prints the leg the pointed-at sheet names, to the seat that has to judge it",
+  wakeLegNote(join(A9, "RESUME-flash3-0554ee.md"), {}).includes("It names leg 959"), true);
+check("...and it says plainly when that is READ rather than CHECKED", wakeLegNote(join(A9, "RESUME-flash6-0554ee.md"), {}).includes("READ, not checked"), true);
+check("...and it refuses to pretend when the sheet disagrees with the seat", wakeLegNote(join(A9, "RESUME-flash6-0554ee.md"), { MQTT_LEG: "959" }).includes("Do NOT obey it"), true);
+check("NEGATIVE: no file, no note — it never invents a leg", wakeLegNote(`${A9}/RESUME-nope-000000.md`, {}), "");
+check("...and no path at all is still no note", wakeLegNote(null, {}), "");
+check("the wake line still carries the shipped sentence, with the leg note added beside it",
+  [wakeDirective(join(A9, "RESUME-flash3-0554ee.md"), "", wakeLegNote(join(A9, "RESUME-flash3-0554ee.md"), {})).includes("it does not say what you are authorised to do next"),
+    wakeDirective(join(A9, "RESUME-flash3-0554ee.md"), "", wakeLegNote(join(A9, "RESUME-flash3-0554ee.md"), {})).includes("It names leg 959")],
+  [true, true]);
+// A grep, labelled as one, same as the other wiring cells in this file: the bar only bites if the caller
+// hands the gate the dirs, and index.ts is the only production caller.
+check("wired: index.ts hands the REMOTE bar the dirs it searched, so the audit runs on a live seat",
+  /resumeSearched: resumeSearchDirs\(\)/.test(indexCode), true);
+check("wired: and it passes the seat's own env, which is where MQTT_LEG lives when the launcher sets one",
+  /env: process\.env,[\s\S]{0,120}resumeWritten: handoffOnDisk\(\)/.test(indexCode), true);
+// iid 17 — THE DOOR, PINNED LIVE. This cell was pinned the other way while the hole was open and disclosed:
+// it asserted that NO nick reached the self-renew call site, so a green suite could not hide the gap. The
+// call site passes `nick: nick,` now, so the same instrument is re-pinned to the rule it was always
+// protecting — a lane about to renew itself has its handoff audited by seat, the way the remote gate audits
+// it. That is a re-pin, not a removal: the two controls below show the predicate returning NO, which is the
+// direction that reddens any future refactor that quietly drops the field again.
+const selfRenewNickRe = /autoRenewVerdict\(\{[\s\S]{0,600}nick:/;
+check("the SELF-RENEW call site names the seat, so the handoff audit runs on a live lane before it renews",
+  selfRenewNickRe.test(indexCode), true);
+check("NEGATIVE CONTROL: the same predicate says NO to that call site with the field stripped — dropping `nick:` again reddens this cell",
+  selfRenewNickRe.test(indexCode.replace(/\n\s*nick: nick,/, "")), false);
+check("...and it says NO to a source that never calls the verdict, so the match is a call site and not prose",
+  selfRenewNickRe.test("const nothingRelevant = 1;"), false);
+check("...and the window is bounded, so a nick belonging to some later call cannot stand in for this one",
+  /autoRenewVerdict\(\{[\s\S]{0,2000}nick:/.test(indexCode.replace(/\n\s*nick: nick,/, "\n")), false);
+rmSync(A9, { recursive: true, force: true });
+
+// ─── iid 17 / leg 982 — the AGE rule has ONE support, and it is not the audit ───────────────────
+// F5, measured by the reviewer of the merged door: on a sheet whose mtime is older than the seat's
+// own start, the CALLER's floor (`resumeWritten`) refuses, the DOOR's own audit says ok, and the
+// renew does not happen. So the age rule is standing on one leg: if `resumeWritten` ever stops
+// carrying freshness, a stale sheet opens the self-renew door and nothing in the suite says so.
+// This block is the instrument for that, and ONLY that. It changes no behaviour, and it deliberately
+// does NOT pass `startedAtMs` into the audit — see the shipped note above the audit block in
+// laneadmin.ts: freshness is the caller's floor, and re-checking it against this run's clock would
+// invent refusals for exactly the pre-renew sheets the wake path must admit. The last two cells here
+// are the tripwire against that forbidden edit, and they are labelled as source-shape because that
+// is what they are: a grep, and a runtime plant for everything else.
+console.log("\n== iid 17 / leg 982: the age rule, its one support, and the plant that proves it ==");
+{
+  const AGE = join(tmpdir(), `982-age-${process.pid}`);
+  const AGE_EMPTY = join(AGE, "empty");
+  mkdirSync(AGE, { recursive: true });
+  mkdirSync(AGE_EMPTY, { recursive: true });
+  const NICK = "flash982";
+  // A sheet that answers every block and names the leg its seat is on, so NOTHING but its AGE can
+  // be the reason anything here refuses. That isolation is the whole point of the block.
+  writeFileSync(
+    join(AGE, `RESUME-${NICK}-0a982f.md`),
+    `flash982 report: leg 982 — the age rule and its one support\nleg 982 — one cell, no behaviour change\n  venue: /tabith/work2-tabichat-982 (my clone, branch feature/door-age-rule-pair-cell-17)\n  task and the spec file path it came from: wave47-specs-20261104/flash2-door-age-rule-pair-cell-982.md\n  branch, tip commit a372013, and NOTHING uncommitted or unpushed\n  what is mid-flight right now: the stage run of tools/test_laneadmin.ts\n  next steps, in order: gate at tip, gate at base, md5 the destination, push both faces\n  report path: wave47-specs-20261104/flash2-door-age-rule-pair-cell-982-report.md\n  HOLD flags — no merge, no tag, no deploy at the live destination, iid 17 stays open\n`,
+  );
+  const BOOT = Date.now(); // this seat's start, the same value index.ts mints as BOOT_AT_MS
+  const STALE_AT = BOOT - 3_600_000; // written an hour before this run began: a prior task's sheet
+  utimesSync(join(AGE, `RESUME-${NICK}-0a982f.md`), new Date(STALE_AT), new Date(STALE_AT));
+  // The same walk index.ts:resumePathsOf does, over this dir only. Real bytes, real mtimes off the
+  // filesystem — the plant below has to be able to lie about a sheet, not about a literal.
+  const walkAge = (dir: string): ResumeFileStat[] =>
+    readdirSync(dir)
+      .filter((n) => n.startsWith("RESUME-") && n.endsWith(".md"))
+      .map((n) => { const st = statSync(join(dir, n)); return { name: n, bytes: st.size, mtimeMs: st.mtimeMs }; });
+  const AR = { armed: true, percent: 90, floorPct: 75, renewedThisBoot: false };
+  const DOOR = { nick: NICK, env: { MQTT_LEG: "982" }, dirs: [AGE] };
+
+  // ── POSITIVE: the shipped truth, end to end ────────────────────────────────────────────────
+  const floor = pickResumeHandoff(walkAge(AGE), NICK, BOOT); // what index.ts:handoffOnDisk returns
+  check("982 POSITIVE: a sheet older than this seat's own start is refused by the caller's floor",
+    floor.ok, false);
+  says("982 POSITIVE: and the FLOOR's sentence names the reason — STALE (this is the instrument that prints it)",
+    floor.reason, "STALE");
+  const door = autoRenewVerdict({ ...AR, resumeWritten: floor.ok, ...DOOR });
+  check("982 POSITIVE: so the SELF-RENEW door refuses the same sheet", door.ok, false);
+  // Stated as it is: `resumeWritten` is a BOOLEAN, so the STALE sentence above is discarded at the
+  // call site and the seat hears the shipped no-file sentence instead. Refused, correctly — and the
+  // wording is a legibility finding for the report, not a cell to weaken.
+  says("982 POSITIVE: and what the DOOR actually says is the no-RESUME-file sentence, because the floor's reason is a boolean at that edge",
+    String(door.reason), "no RESUME file for this seat");
+  const audStale = auditHandoff(DOOR);
+  check("982 POSITIVE: the audit, called exactly as the door calls it (no startedAtMs), ADMITS the same stale sheet — this is F5's B, and the reason the pair exists",
+    { audited: audStale.audited, ok: audStale.ok, picked: audStale.picked },
+    { audited: true, ok: true, picked: `RESUME-${NICK}-0a982f.md` });
+
+  // ── THE PAIR: the plant, as a runtime fact ─────────────────────────────────────────────────
+  // Same sheet, same dirs, same door, same env. The ONLY thing changed is the caller's floor: 0 is
+  // what `resumeWritten` looks like when it carries existence but not freshness. If the shipped
+  // wiring ever drops that half, this cell is already the shape of the failure — green door, stale
+  // sheet — and the two source-shape cells below are what reddens it.
+  const plantFloor = pickResumeHandoff(walkAge(AGE), NICK, 0);
+  const plant = autoRenewVerdict({ ...AR, resumeWritten: plantFloor.ok, ...DOOR });
+  says("982 PLANT: with the floor set to 0 the SAME hour-old sheet is described as a fresh handoff",
+    plantFloor.reason, "fresh handoff");
+  check("982 PLANT: strip the freshness half from the caller's floor and the SAME stale sheet OPENS the door",
+    plant, { ok: true });
+  check("982 PLANT: and the shipped floor, on the very same bytes, still refuses — so the flip is the floor, not the fixture",
+    autoRenewVerdict({ ...AR, resumeWritten: pickResumeHandoff(walkAge(AGE), NICK, BOOT).ok, ...DOOR }).ok, false);
+
+  // ── NEGATIVES: so this block is not an always-red assertion ────────────────────────────────
+  utimesSync(join(AGE, `RESUME-${NICK}-0a982f.md`), new Date(BOOT + 60_000), new Date(BOOT + 60_000));
+  const freshFloor = pickResumeHandoff(walkAge(AGE), NICK, BOOT);
+  check("982 NEGATIVE: a FRESH sheet passes the floor", freshFloor.ok, true);
+  check("982 NEGATIVE: and the door admits it — the block cannot go red on a good handoff",
+    autoRenewVerdict({ ...AR, resumeWritten: freshFloor.ok, ...DOOR }), { ok: true });
+  const goneFloor = pickResumeHandoff(walkAge(AGE_EMPTY), NICK, BOOT);
+  check("982 NEGATIVE: an ABSENT sheet refuses at the floor too, and the two states are NOT the same sentence",
+    [goneFloor.ok, /STALE/.test(goneFloor.reason)], [false, false]);
+  says("982 NEGATIVE: the absent case says what it is — no file for this nick, in the dirs searched",
+    goneFloor.reason, "no RESUME-<nick>-*.md file");
+
+  // ── SOURCE SHAPE (a grep, labelled as one) ─────────────────────────────────────────────────
+  // Which of the two `resumeWritten: handoffOnDisk(),` sites is the self-renew door, and that the
+  // field there is a real verdict rather than a literal. Both halves can go red on a future edit, and
+  // the second one is the edit F5 is about: `resumeWritten: true` is green to every runtime cell above.
+  const arvSite = /const arv = autoRenewVerdict\(\{[\s\S]{0,600}?\n\s*\}\);/.exec(indexCode) ?? [""];
+  check("982 STRUCTURAL (a grep, and it says so): the SELF-RENEW call site carries `resumeWritten`, sliced out of the arv block alone",
+    /resumeWritten: handoffOnDisk\(\)/.test(arvSite[0]), true);
+  check("982 STRUCTURAL: POSITIVE CONTROL — that predicate reads NO when the block carries a literal instead of the verdict",
+    /resumeWritten: handoffOnDisk\(\)/.test(arvSite[0].replace("resumeWritten: handoffOnDisk(),", "resumeWritten: true,")), false);
+  // The forbidden fix, pinned. §1 of the leg bars it, so it is worth a cell that reddens when someone
+  // does it anyway: `autoRenewVerdict` must not hand the audit a floor of its own.
+  const arvAudit = /export const autoRenewVerdict[\s\S]*?\n\};/.exec(
+    LA.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")) ?? [""];
+  // Tolerant of line breaks and key order inside the one call, because this pins a FACT about the
+  // argument list, not the formatting: the audit receives nick, env and dirs, and no floor.
+  const arvAuditRe = /auditHandoff\(\{[^}]*dirs: opts\.dirs[^}]*\}\)/;
+  check("982 STRUCTURAL (a grep, and it says so): the door's own audit call still carries NO startedAtMs — freshness stays the caller's floor (the shipped note says why)",
+    [arvAuditRe.test(arvAudit[0]), /startedAtMs/.test(arvAudit[0])], [true, false]);
+  check("982 STRUCTURAL: POSITIVE CONTROL — give that one call a floor of its own and the startedAtMs half of the predicate fires, so the forbidden edit reddens the cell above",
+    [arvAuditRe.test(arvAudit[0].replace("dirs: opts.dirs", "dirs: opts.dirs, startedAtMs: BOOT")), /startedAtMs/.test(arvAudit[0].replace("dirs: opts.dirs", "dirs: opts.dirs, startedAtMs: BOOT"))],
+    [true, true]);
+  rmSync(AGE, { recursive: true, force: true });
+}
 
 // ─── THE VERDICT, AT THE END ────────────────────────────────────────────────────────────────────
 // This used to sit at line ~937, which meant 301 `check()` calls after it — the entire #10 wiring

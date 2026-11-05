@@ -25,6 +25,10 @@
 #   tools/deploy-tabichat.sh --dry-run     # show what would move, touch nothing
 #   tools/deploy-tabichat.sh               # verify gates, stage, move, re-diff
 #   tools/deploy-tabichat.sh --no-gates    # skip the test suites (NOT for the live dir)
+#   tools/deploy-tabichat.sh --loadcheck DIR  # read-only: load-check DIR with the deploy's own probe.
+#       Nothing is staged, nothing is published, no gate runs. This exists so a harness that builds a
+#       tree of shipped bytes (src/tools/tls-two-seat.sh builds a seat dir) can ask the same question the
+#       deploy asks instead of carrying a third copy of the answer.
 #
 # Env:
 #   EXT      which extension to deploy: tabichat (default) or fs-gate
@@ -103,10 +107,31 @@ GATES+=(test_400_meta_capture.ts test_exit_class.ts test_lead_model.ts)
 # see the same realm holder — has never been measurable from a source-shape cell, and leg 888 read 0
 # teardown rows against a seat that had retained a socket.
 GATES+=(test_renewal_realm.ts)
+# iid 29, leg 992: the owed-turn notice joins the stage for the reason the census exists — a check in
+# src/tools/ that no array names is run by nobody. This one LOADS index.ts and drives a real turn (arm,
+# publish, agent_end) against a stub socket, so it is the only gate that measures the sentence the seat
+# reads at end of turn rather than its text. It is GATES and not PHYSICAL: no broker, no fixture.
+GATES+=(test_owed_notice.ts)
+# iid 28, leg 995: the sink guard joins the stage because the census is the whole point of this row —
+# a check in src/tools/ that no array names is run by nobody, and the protection must be reachable by
+# every stage run rather than by a cell author's memory. Appended in the same shape as the lines above
+# so test_deploy_closure.ts keeps reading the `GATES=(…)` literal it pins by exact text.
+GATES+=(test_sink_guard.ts)
 TARGET="${TARGET:-$HOME/.pi/agent/extensions/$EXT}"
 SRC="$BASE/extensions/$EXT"
 
 dry=0; gates=1; want_physical=0
+# --loadcheck is recognised HERE, before the loop below, for one reason: the loop refuses any word it
+# does not know, and a directory name is exactly such a word. The handler runs further down, after
+# load_check_tree exists (line numbers are not the point — the function must be defined first) and before
+# the first write to TARGET, which is the `mkdir -p` below it. Gates are forced off: a load proof must not
+# depend on the whole suite, and it must not move a byte. The positional list is cleared so the deploy's
+# own argument loop sees nothing to refuse; --physical and --dry-run are therefore not combinable with it.
+LOADCHECK_DIR=""
+if [ "${1:-}" = "--loadcheck" ]; then
+  [ -n "${2:-}" ] || { printf 'REFUSED: --loadcheck wants exactly one directory\n' >&2; exit 2; }
+  LOADCHECK_DIR="$2"; gates=0; set --
+fi
 for a in "$@"; do
   case "$a" in
     --dry-run) dry=1 ;;
@@ -127,22 +152,35 @@ die() { printf 'REFUSED: %s\n' "$*" >&2; exit 1; }
 # when it could not run, so "NOT RUN" can never be read as a pass.
 if [ "$want_physical" = 1 ]; then
   say "physical checks for EXT=$EXT: ${PHYSICAL[*]}"
-  phy_fail=0
+  phy_fail=0; phy_failed=""
   for t in "${PHYSICAL[@]}"; do
-    [ -f "$BASE/tools/$t" ] || { say "  MISSING  $t — declared but not in the tree"; phy_fail=1; continue; }
+    [ -f "$BASE/tools/$t" ] || { say "  MISSING  $t — declared but not in the tree"; phy_fail=1; phy_failed="$phy_failed $t(file absent)"; continue; }
+    # The interpreter is chosen into an array and the call happens once, below, inside the `if`. The old
+    # shape put the capture in each `case` arm, and that is what silenced the runner (see the note there).
     case "$t" in
-      *.py) out=$(python3 "$BASE/tools/$t" 2>&1) ; rc=$? ;;
-      *)    out=$(env -u MQTT_LEAD_NICK bun "$BASE/tools/$t" 2>&1) ; rc=$? ;;
+      *.py) run=(python3 "$BASE/tools/$t") ;;
+      *)    run=(env -u MQTT_LEAD_NICK bun "$BASE/tools/$t") ;;
     esac
-    if [ "$rc" -eq 0 ]; then
+    # THE CAPTURE SITS INSIDE `if`, exactly the shape this file already uses at the shell-gate loop and at
+    # the load-check. `out=$(...failing member...) ; rc=$?` DOES NOT WORK under `set -e`: the assignment is
+    # a simple command whose status is the member's non-zero status, so the script ends AT THE ASSIGNMENT
+    # and neither the member's name nor its own words ever print. Measured at leg 976 on a cold box: the
+    # header, 3 PASS, then silence at rc 1 — a red release gate that looked like a green one that had
+    # simply stopped talking. The success case comes FIRST and the code is read in the `else`, never
+    # `if ! out=$(...)`: `!` makes the tested status 0, so the `$?` in the body would print "exited 0" —
+    # the false number in the one sentence written to carry it.
+    if out=$( "${run[@]}" 2>&1 ); then
       say "  PASS     $t"
     else
+      rc=$?
       say "  FAIL     $t (exit $rc)"
       printf '%s\n' "$out" | sed 's/^/           /' | tail -12
-      phy_fail=1
+      phy_fail=1; phy_failed="$phy_failed $t(exit $rc)"
     fi
   done
-  [ "$phy_fail" = 0 ] || die "physical checks did not all pass"
+  # Every member gets a line and the run reports the whole set, so the last refusal names which members
+  # did not pass instead of leaving the reader to count PASS lines against the declared set above.
+  [ "$phy_fail" = 0 ] || die "physical checks did not all pass — not green:${phy_failed}"
   say "all physical checks pass"
   exit 0
 fi
@@ -207,6 +245,16 @@ if [ "$gates" = 1 ]; then
   # client a human reads their missed messages with. All five were green standing alone before they were
   # named here, which is the only reason naming them is safe.
   PYGATES+=(test_tlsenv.py test_addressing.py test_paste.py test_presence.py test_tabichat_cli.py)
+  # THE PAHO-DEPENDENT SET, declared, leg 905 (F4). The exemption below used to name ONE file, and
+  # `test_tabichat_cli.py` joined PYGATES in this same release by the `+=` line above — so on a host whose
+  # python3 has no paho the deploy died on the second name with an import traceback and no skip line, an
+  # unrelated-looking refusal for a host shape that is normal. Measured at 4f97ada6 by running every member
+  # both ways: without paho, `test_wrap_rows.py` rc 1 and `test_tabichat_cli.py` rc 1, the other five rc 0;
+  # with paho, all seven rc 0. `test_tlsenv.py` IMPORTS paho and handles its absence, so it is not in this
+  # set — membership here means "dies without it", not "mentions it", and tools/test_paho_skip.sh derives
+  # that set by running each member and requires this list to equal it. The array is the point: an exemption
+  # written against a name cannot be warned about when the array grows, and this one did not grow with it.
+  PYGATES_NO_PAHO=(test_wrap_rows.py test_tabichat_cli.py)
   # THE SHELL GATES, and why they are not in GATES above: that array is executed through bun, and bun
   # 1.4.3 does not run a shell script — it parses the file as a module and stops at the first `case`
   # arm. Measured at this leg's gate run: `bun tools/check_guard_armed.sh` -> "Failed to run
@@ -243,6 +291,54 @@ if [ "$gates" = 1 ]; then
   # the secret guard's own design leg; the measurement of both faces is in
   # wave44-specs-20261101/flash1-gate-registration-862-report.md.
   SHGATES+=(test_subject_guard.sh)
+  # leg 944: the release-record check joins the same stage, appended at the END so every line above
+  # keeps the exact text another check pins it by. It reads the declared version and the newest
+  # CHANGELOG section out of the same tree and refuses when they disagree — the invariant README.md
+  # states in prose (tabichat iid 24). A shell check lives here, not in GATES, for the reason already
+  # written above this array: bun parses a .sh as a module and stops at the first `case` arm, so a
+  # shell name in GATES reddens every deploy with a parse error while gating nothing.
+  SHGATES+=(check_release_record.sh)
+  # leg 955 (iid 13's coverage cell): the directory census and the one repaired truth table join the stage,
+  # appended at the END so every line above keeps the exact text another check pins it by.
+  #   test_gate_coverage.sh — enumerates src/tools/ for `test_*`/`check_*` files and refuses any name that
+  #     sits in no gate array and on no ruled exclusion. Nothing does this today: the arrays were counted by
+  #     test_secret_guard.sh, and a count over arrays cannot see the file no array names — which is how
+  #     test_deploy_pi_nm.sh pinned a line leg 947 deleted and went rc 1 while the 37-line stage passed.
+  #     It reads and refuses: it never edits an array and never runs this script, so unlike the two files
+  #     below it, being a member of what it censuses asserts nothing about a tree it changed.
+  #   test_deploy_pi_nm.sh — re-pointed at the current load-check mechanism by leg 953, green at this base
+  #     (rc 0, 76 cells), and measured under BOTH interpreters: `bash` rc 0 and `sh` rc 0, which is what this
+  #     loop consults.
+  # test_paho_skip.sh now joins this array too — see the leg 958 registration below, and the leg 955 note
+  # preserved there: it was the last bash-only file, and the fix was to port the file, not the loop.
+  # test_secret_guard.sh remains out of this array for the mechanism reason recorded above it, and the census
+  # carries that as a named exclusion with the reason printed, so an exclusion cannot silently become a habit.
+  SHGATES+=(test_gate_coverage.sh test_deploy_pi_nm.sh)
+  # leg 958 (iid 13 finished): test_paho_skip.sh joins the same stage. It was the last bash-only file in the
+  # directory — the shell loop consults `sh`, which is dash here, and its two `grep -vxF -f <(printf …)`
+  # process substitutions stopped that file at parse time (rc 2, `Syntax error: "(" unexpected`) while bash ran
+  # it green. Leg 958 ported both to a temp-file set comparison, so the 34 cells now agree under `sh` and
+  # `bash`, and the file can be registered without teaching this loop to sniff shebangs. It is not the
+  # self-census case leg 862 excluded: its planted faces strip the arrays inside ITS OWN scratch clone (see
+  # the guard below for why that still works), and its static cells read the shipped tree untouched.
+  SHGATES+=(test_paho_skip.sh)
+  # leg 997 (iid 27): the face-cite check joins the same stage, appended at the END for the reason every
+  # line above keeps the same shape — another check pins these registrations by exact text. It reads
+  # pointers out of Markdown (or a diff on stdin) and prints, per cite: does it resolve, which refs carry
+  # it, and for a tag name what it peels to. It exits non-zero for one case only — a cite that resolves
+  # nowhere — because a cite that opens on the wrong release line is a writing problem a gate must not
+  # settle by force. POSIX sh, and the loop's interpreter is `sh` (dash here), so `sh -n` was run on it.
+  SHGATES+=(check_cite_faces.sh)
+  # AN EMPTY SHELL-GATE ARRAY IS NOT AN EMPTY RUN (leg 958, the class leg 949 closed for FILES and LOADCHECK).
+  # Measured at 955: every `SHGATES`/`SHGATES+=` registration line emptied to `()` gave rc 0, 29 gate lines,
+  # zero shell gates, and `deployed set complete and identical` — ten checks deleted, nothing said so. A census
+  # cannot close this from inside the array, because emptying the array also removes the census.
+  # The position is deliberate and it is the paired negative: this sits at the REGISTRATION site, so deleting
+  # registrations refuses, while a run that empties the array later — test_paho_skip.sh inserts `SHGATES=()`
+  # immediately before its own loop on purpose, to keep a nested deploy from re-running the whole stage — still
+  # passes. Stripping ONE registration (what test_gate_words.sh does to close its own re-entrance) also passes:
+  # ten members remain, and the guard asks only that the stage is not empty.
+  [ "${#SHGATES[@]}" -gt 0 ] || die "SHGATES is empty — the shell-gate array registers nothing, so no shell check ran and a green deploy here would be silence wearing a completion line"
   # WHAT THE LOOP NOW SAYS, and why it said something false before (leg 851). The old shape sent the
   # check's ordinary output to /dev/null and then printed one fixed sentence about the hook path — so a
   # gate whose file was sitting in the clone and whose own words said something else was described by a
@@ -288,8 +384,13 @@ if [ "$gates" = 1 ]; then
   if command -v python3 >/dev/null 2>&1; then
     python3 -c "import paho.mqtt.client" >/dev/null 2>&1 || PY_HAVE_PAHO=0
     for t in "${PYGATES[@]}"; do
-      if [ "$t" = "test_wrap_rows.py" ] && [ "${PY_HAVE_PAHO:-1}" = 0 ]; then
-        say "WARNING: python3 has no paho-mqtt — tools/test_wrap_rows.py did NOT RUN"
+      # Membership in the declared set, not a filename: see PYGATES_NO_PAHO above. The skip stays LOUD and
+      # names the gate it skipped, because a skipped gate must never read as a passed one (the contract
+      # #396 was written for). Nothing here looks at the gate's output to decide whether to skip.
+      nopaho=0
+      for k in "${PYGATES_NO_PAHO[@]}"; do [ "$k" = "$t" ] && nopaho=1; done
+      if [ "$nopaho" = 1 ] && [ "${PY_HAVE_PAHO:-1}" = 0 ]; then
+        say "WARNING: python3 has no paho-mqtt — tools/$t did NOT RUN"
         continue
       fi
       # test_broker.py reads MQTT_URL/MQTT_HOST as inputs to the resolver rule, so those go out of
@@ -308,7 +409,183 @@ if [ "$gates" = 1 ]; then
       --external @earendil-works/pi-ai --external @earendil-works/pi-coding-agent \
       --external mqtt >/dev/null) || die "index.ts does not build"
 else
-  say "WARNING: gates skipped — this is a repo rehearsal, not a deploy"
+  # The sentence is chosen by which action asked for the skip. `--no-gates` on a deploy is a rehearsal and
+  # says so; `--loadcheck` never meant to deploy at all, and telling it that its gates were skipped would
+  # be a warning about something nobody asked for. The --no-gates text is unchanged, word for word.
+  if [ -n "$LOADCHECK_DIR" ]; then
+    say "note: no gate runs for --loadcheck; this action proves one tree loads, and nothing else"
+  else
+    say "WARNING: gates skipped — this is a repo rehearsal, not a deploy"
+  fi
+fi
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LOAD-CHECK A TREE — execute the shipped set, with the three package externals supplied.
+#
+# Two things this guard has to hold at once, and each one comes from an incident:
+#   * it must RUN the entry module's own bytes together with the sibling modules that will sit beside
+#     it, because a file omitted from FILES never moves, and a build over the SOURCE tree cannot see
+#     that (#12, legs 576/579);
+#   * it must not depend on which `@earendil-works/pi-ai` the host happens to resolve. The shape this
+#     replaces pointed NODE_PATH at pi's install tree and imported the entry directly, and at 21b34e1
+#     that refused the live, working deployment this box is running: `SyntaxError: Export named 'Type'
+#     not found in module '…/pi-ai/dist/index.js'`, against bytes every lane loads right now. pi's own
+#     loader supplies that value by a route this probe does not reproduce — no cause is claimed here,
+#     which is exactly why the check stopped trying to guess it.
+# So the three externals are supplied here, the way tools/test_renewal_realm.ts supplies them, and ONLY
+# the entry's three specifier lines are rewritten. Every relative import still resolves for real against
+# the copied set, and the copy carries EXACTLY the FILES array — not the directory — so a shipped name
+# missing from the tree being checked is still a load failure. That is the thing this guard exists to
+# catch; stubs that replaced the destination's own modules instead would be decoration, and are not what
+# this does.
+#
+# What it cannot prove is said rather than implied, and there are three items on that list:
+#   * it does not show pi's real pi-ai exports the same names as the stub — how pi's loader supplies that
+#     value was never established here, so the check no longer tries to guess it (leg 579's NODE_PATH
+#     derivation was the guess, and it refused a healthy deployment);
+#   * it does not CALL the factory. The set is imported, and a default export that is a function is what is
+#     asserted. Running the extension's real startup against a fake `pi` is a separate decision, recorded
+#     as open (leg 948's L-2), not quietly folded into a load check.
+#   * an UNUSED import is erased by the loader, so a dead specifier of an unshipped file is not something a
+#     lane can die from — and it is still named by the hermeticity scan below, because the scan reads the
+#     bytes and not the executed graph.
+# Why a probe directory and not a rewritten file written next to the entry: $TARGET is the directory pi
+# loads extensions from, and a stray rewritten copy living there would be offered to every lane that starts
+# while the check runs. The probe is removed on every path, including the refusing one.
+#
+# HERMETIC, in the sense this uses it: after the copy, every package specifier in the probe that the shipped
+# set actually reaches has been replaced by a relative path into this probe, and nothing else survives the
+# scan. Before this was true, a bare specifier reached from a SIBLING file (not the entry) was left alone by
+# the rewrite — the rewrite touched only the entries of LOADCHECK — and bun answered it from the host's
+# `~/.bun/install/cache` (that cache holds `mqtt@5.16.1` on this box, measured). The check then reported
+# `load ok` about a module graph that mixed the tree under test with a host package it never stubbed: a
+# silent pass, and the prose here claimed the opposite. So the rewrite now covers EVERY copied member, and
+# the scan is what makes "no host can answer for this tree" a property the code holds rather than a hope.
+probe_bare_specifiers() { # prints "<file> <specifier>" for each quoted module specifier that is neither relative nor a node: builtin
+  local dir="$1" f s
+  for f in "$dir"/*.ts; do
+    [ -f "$f" ] || continue
+    # The character class excludes a space on purpose: the shipped set carries quoted PROSE of exactly this
+    # shape inside template strings (`from "never arrived"`, three such tokens measured at 510e4ab), and no
+    # package specifier can contain a space. Without that exclusion the scan would refuse a valid tree.
+    grep -oE '(from|import)[[:space:]]*\(?[[:space:]]*["'"'"'][^"'"'"' ]+["'"'"']' "$f" 2>/dev/null \
+      | sed -E 's/^(from|import)[[:space:]]*\(?[[:space:]]*["'"'"']//; s/["'"'"']$//' \
+      | while IFS= read -r s; do
+          case "$s" in
+            ./*|../*|node:*) ;;
+            *) printf '%s %s\n' "$(basename -- "$f")" "$s" ;;
+          esac
+        done
+  done
+}
+
+load_check_tree() { # $1 = a directory holding the FILES set; $2 = which stage of the deploy this is, said back on refusal
+  local dir="$1" what="$2" out m bare
+  command -v "$BUN" >/dev/null 2>&1 || die "bun not found at $BUN — the shipped set cannot be load-checked"
+  [ -d "$dir" ] || die "load-check tree $dir does not exist — $what: the check cannot run against nothing"
+  # An empty array here is not an empty run: it is a check that never happened, and it prints as green.
+  # Measured at 510e4ab with both LOADCHECK literals emptied: rc 0, 37 gate lines, 13 files moved, and ZERO
+  # load lines — nothing in the repo requires that array to hold anything (`grep -rn LOADCHECK src/tools/*.ts`
+  # answers only this script). Same duty for FILES: a deploy with no ship set would "succeed" at everything.
+  [ "${#FILES[@]}" -gt 0 ] || die "FILES is empty ($what) — there is no shipped set, so nothing was load-checked"
+  [ "${#LOADCHECK[@]}" -gt 0 ] || die "LOADCHECK is empty ($what) — the array that must be load-checked holds nothing, so the tree was never executed"
+  loadcheck_probe="$(mktemp -d "${TMPDIR:-/tmp}/tabichat-loadcheck.XXXXXX")" \
+    || die "could not make a probe directory — the load-check did not run"
+  for m in "${FILES[@]}"; do
+    if [ ! -f "$dir/$m" ]; then
+      printf '%s\n' "  $dir has no $m" >&2
+      rm -rf "$loadcheck_probe"; loadcheck_probe=""
+      die "$m is not in the tree being checked ($what), so the shipped set is short and nothing was load-checked"
+    fi
+    if ! cp -p "$dir/$m" "$loadcheck_probe/$m"; then
+      rm -rf "$loadcheck_probe"; loadcheck_probe=""
+      die "could not copy $dir/$m into the probe — the load-check did not run"
+    fi
+  done
+  # The three externals, stubbed at LOAD time only — the same shapes tools/test_renewal_realm.ts writes.
+  # Kept here rather than borrowed from that harness because a deploy guard must not depend on a test file.
+  cat > "$loadcheck_probe/pi-ai.ts" <<'STUB_AI'
+const T = new Proxy(function () {}, { get: () => T, apply: () => ({ type: "object" }) });
+export const Type = T;
+STUB_AI
+  cat > "$loadcheck_probe/pi-ca.ts" <<'STUB_CA'
+export const defineTool = (t) => t;
+export const isToolCallEventType = () => false;
+STUB_CA
+  cat > "$loadcheck_probe/mqtt.ts" <<'STUB_MQ'
+const clients = [];
+export const connectCalls = () => clients.length;
+const factory = {
+  connect(url, opts) {
+    const c = {
+      url, opts, calls: [],
+      on(ev) { this.calls.push("on:" + String(ev)); },
+      publish(t, p) { this.calls.push("publish"); },
+      subscribe(t) { this.calls.push("subscribe"); },
+      end(force) { this.calls.push("end:" + (force === true)); },
+      removeAllListeners(ev) { this.calls.push("off:" + String(ev)); },
+      connected: false,
+    };
+    clients.push(c);
+    return c;
+  },
+};
+export default factory;
+STUB_MQ
+  # The three known package specifiers, replaced in EVERY copied member, quote-paired by backreference and
+  # global per line, and anchored on the `from`/`import` keyword so a data string that happens to read
+  # "mqtt" is not rewritten. That closes the sibling hole leg 948 measured (the rewrite used to touch only
+  # the LOADCHECK entries, so a bare specifier reached from a sibling stayed bare and bun answered it from
+  # the host cache), and it also closes the mirror failure: `from '@earendil-works/pi-ai'` in single quotes
+  # and two specifiers on one line were left untouched by the old exact-text sed, which refused a VALID
+  # tree for a host reason — the leg-579 class on the opposite side. Today only `index.ts` carries any of
+  # the three (each token counted once across the 13 names, zero in the other twelve), so widening this
+  # changes no current behaviour; it makes the guarantee structural instead of incidental.
+  for m in "${FILES[@]}"; do
+    if ! sed -E -e 's#(from|import)([[:space:]]*)(\(?)["'"'"']@earendil-works/pi-ai["'"'"']#\1\2\3"./pi-ai.ts"#g' \
+                 -e 's#(from|import)([[:space:]]*)(\(?)["'"'"']@earendil-works/pi-coding-agent["'"'"']#\1\2\3"./pi-ca.ts"#g' \
+                 -e 's#(from|import)([[:space:]]*)(\(?)["'"'"']mqtt["'"'"']#\1\2\3"./mqtt.ts"#g' \
+            "$loadcheck_probe/$m" > "$loadcheck_probe/$m.rewritten"; then
+      rm -rf "$loadcheck_probe"; loadcheck_probe=""
+      die "could not rewrite the package specifiers in $m ($what) — the load-check did not run"
+    fi
+    if ! mv -f "$loadcheck_probe/$m.rewritten" "$loadcheck_probe/$m"; then
+      rm -rf "$loadcheck_probe"; loadcheck_probe=""
+      die "could not install the rewritten $m into the probe ($what) — the load-check did not run"
+    fi
+  done
+  # HERMETICITY, asserted BEFORE anything is imported. Anything the scan still finds is a package the probe
+  # has no stub for, and the only thing that can answer it is this machine — which would make a green line a
+  # statement about the host. The refusal names the file and the specifier so the next person knows what to
+  # stub, and `moved=0` because this runs before the move loop.
+  bare=$(probe_bare_specifiers "$loadcheck_probe" || true)
+  if [ -n "$bare" ]; then
+    printf '%s\n' "$bare" | sed 's/^/    no stub for: /' >&2
+    rm -rf "$loadcheck_probe"; loadcheck_probe=""
+    die "the load-check probe is not hermetic ($what): the shipped set reaches a package specifier the probe does not stub, so a pass here would be the host's answer, not the tree's. Files and specifiers are listed above — add the stub in load_check_tree, or import it relatively and carry it in FILES."
+  fi
+  say "  probe hermetic: ${#FILES[@]} member(s) copied and rewritten, no package specifier left outside ./ ../ node: ($what)"
+  for m in "${LOADCHECK[@]}"; do
+    # The capture sits inside `if` because a bare failing assignment under set -e ends the script before
+    # the refusal can print — the trap the block this replaces recorded, and it still applies here.
+    if out=$(TABICHAT_LOAD_TARGET="$loadcheck_probe/$m" "$BUN" -e 'const M = await import(process.env.TABICHAT_LOAD_TARGET); if (typeof M.default !== "function") { console.error("loads but exports no default function"); process.exit(1); }' 2>&1); then
+      say "  load ok  : $m (the shipped set executes, default export present; tree checked: $dir)"
+    else
+      printf '%s\n' "$out" | sed 's/^/    /' >&2
+      rm -rf "$loadcheck_probe"; loadcheck_probe=""
+      die "$m does not LOAD from $dir ($what) — that tree is short or broken, and a lane starting against it dies at import"
+    fi
+  done
+  rm -rf "$loadcheck_probe"; loadcheck_probe=""
+}
+
+# THE READ-ONLY ACTION, placed here because `load_check_tree` must exist to serve it and because nothing
+# above this line has written anywhere: the first write to TARGET is the mkdir below.
+if [ -n "$LOADCHECK_DIR" ]; then
+  say "load-check only: $LOADCHECK_DIR — no gate ran, nothing was staged, nothing was published"
+  load_check_tree "$LOADCHECK_DIR" "an external --loadcheck request"
+  say "load ok: the shipped set loads from $LOADCHECK_DIR"
+  exit 0
 fi
 
 # Stage INSIDE the target directory, so every mv below is a rename on one
@@ -325,8 +602,18 @@ else
   say "WARNING: cannot stage inside $TARGET, staging in $stage"
   say "WARNING: different filesystem, so mv copies rather than renames - not atomic"
 fi
-trap 'rm -rf "$stage"' EXIT
+trap 'rm -rf "$stage" ${loadcheck_probe:+"$loadcheck_probe"}' EXIT
+loadcheck_probe=""
 for f in "${FILES[@]}"; do cp -p "$SRC/$f" "$stage/$f"; done
+
+# VERIFY BEFORE PUBLISHING (leg 947). The load-check used to run only after the `mv -f` loop below, so a
+# refusal — which is the whole point of a check that can refuse — arrived after the shared load path had
+# already been replaced: measured at 21b34e1, the run that died on `Export named 'Type' not found` had left
+# 13 files in its destination. Same bytes, same assertion, one order change: the staged tree is checked
+# first, so a refusal leaves $TARGET exactly as it was. The post-move check below stays, because #12 asks
+# for what landed to be executed and not only compared; `cmp -s` proves the two trees are identical, so
+# neither half is decoration.
+load_check_tree "$stage" "the staged tree, checked before anything was published"
 
 for f in "${FILES[@]}"; do
   if [ -f "$TARGET/$f" ] && cmp -s "$stage/$f" "$TARGET/$f"; then
@@ -357,29 +644,27 @@ done
 # shipped, so an omitted sibling matches nothing and that loop still reads green. This imports
 # what landed, from where it landed. Safe to run: the top level of both index.ts files is
 # imports plus pure consts and the factory (verified at d751c72) — no connect, no fs write, no
-# spawn — so the load needs no broker and leaves no state behind. LOADCHECK is consumed here, at
-# the end of every real deploy; an array nothing reads is how a mandatory check becomes a rumour.
+# spawn — so the load needs no broker and leaves no state behind. LOADCHECK is consumed here, after every
+# real deploy, and in the same leg it is consumed BEFORE the move on the staged tree; an array nothing reads
+# is how a mandatory check becomes a rumour, and a check that only ever runs after the publication it gates
+# can warn but never prevent.
 # This runs whatever --no-gates said: "gates skipped" must never mean "destination skipped".
 # (--dry-run exits earlier and --physical exits before this point, so neither can reach it.)
 command -v "$BUN" >/dev/null 2>&1 || die "bun not found at $BUN — the deployed tree cannot be load-checked"
-# pi resolves bare specifiers (e.g. @earendil-works/pi-ai) from its OWN install tree, not from the
-# extension's node_modules, so a bare import of a HEALTHY deployed tree failed resolution and this
-# guard refused a correct deployment (leg 579, #12). Give the check pi's resolution context, derived
-# so no version is hardcoded. If no install tree is found, the check still runs exactly as before —
-# a missing derivation must never become a skipped check — and says which context it used.
-PI_NM="$(ls -d "$HOME/.pi/agent/install/releases/"*/node_modules 2>/dev/null | sort -V | tail -1)"
-if [ -n "$PI_NM" ]; then say "  load-check context: NODE_PATH=$PI_NM (pi install tree)"; else say "  load-check context: no pi install tree found — default resolution, check unchanged"; fi
-for m in "${LOADCHECK[@]}"; do
-  # The capture sits inside `if` because a bare failing assignment under set -e ends the script
-  # before the refusal can print — seen in the scratch run for this leg, where the load failed
-  # correctly but said nothing.
-  if out=$(NODE_PATH="${PI_NM:-}" TABICHAT_LOAD_TARGET="$TARGET/$m" "$BUN" -e 'const M = await import(process.env.TABICHAT_LOAD_TARGET); if (typeof M.default !== "function") { console.error("loads but exports no default function"); process.exit(1); }' 2>&1); then
-    say "  load ok  : $m (default export resolves at $TARGET)"
-  else
-    printf '%s\n' "$out" | sed 's/^/    /' >&2
-    die "$m does not LOAD from $TARGET — the destination is short or broken; a lane starting against it dies at import"
-  fi
-done
+# The NODE_PATH derivation this line replaces is the leg-579 shape: pi resolves bare specifiers from its
+# own install tree, so pointing the check at that tree refused a HEALTHY deployment (measured at 21b34e1,
+# and the earlier "host shape" reading of it was wrong in the benign direction). load_check_tree supplies
+# the three externals itself, so no resolution context is guessed. What that guarantee rests on is stated
+# with it, because the sentence below was written too broadly and leg 948 falsified the broad reading: a bare
+# specifier reached from a SIBLING file was not rewritten and bun answered it from this machine's
+# `~/.bun/install/cache`, so a host WAS the reason a tree passed — the opposite direction, same root cause.
+# The guard now rewrites every copied member and refuses unless the probe is hermetic (see load_check_tree),
+# which is the form of the claim the code actually supports: no package outside ./ ../ node: can be reached,
+# and a fourth one the probe does not stub stops the deploy by name instead of resolving somewhere else.
+# Nothing here is skipped for want of a derivation: bun missing, the probe directory missing, an empty FILES
+# or LOADCHECK array, a shipped name missing, a rewrite that fails, a specifier with no stub, or a load that
+# fails each refuse in their own words.
+load_check_tree "$TARGET" "the published destination"
 
 say "deployed set complete and identical: ${FILES[*]}"
 say "remember: lanes already running hold the PREVIOUS code in memory. It loads on"

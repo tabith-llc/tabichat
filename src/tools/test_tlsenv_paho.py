@@ -9,6 +9,13 @@
     python3 src/tools/test_tlsenv_paho.py
     sh src/tools/broker-fixture.sh down
 
+IT IS SELF-CONTAINED ON A COLD BOX. With no `TABICHAT_FIXTURE_OWNER` in the env and no record at the
+`default` path, this file starts its OWN phase-2 fixture under owner `tls-paho-<pid>` and tears it down
+at exit, so `deploy-tabichat.sh --physical` needs no operator staging to be run — a release gate whose
+green depends on an unstated precondition is a gate that goes red on a clean box. The three steps above
+still work: an operator who names an owner is served the record that owner has, and if that record is
+missing the file still refuses instead of inventing a broker under someone else's name.
+
 WHY THIS FILE EXISTS SEPARATELY. `test_tlsenv.py` is a pure truth table and it is honest about that:
 it proves the DECISION. But the decision was checked against a FAKE paho for a whole round, and the
 fake accepted `tls_version="TLSv1.3"` — a string where paho wants an int — so a TLS configuration
@@ -28,9 +35,11 @@ PATHS ONLY. Nothing in this file opens, reads, prints or copies a private key. T
 handed to `ssl`, which loads them in process. That is the fleet law of 2026-10-18 (key-file content
 is `ultra`'s work alone), and it is also simply what a TLS client does.
 
-A CELL THAT CANNOT RUN IS A FAILURE, NOT A SKIP. If paho is missing, or no fixture is recorded, or
-the container is gone, this file says so and exits 1 — a not-run that reads as a pass is the exact
-lie this whole leg is written against.
+A CELL THAT CANNOT RUN IS A FAILURE, NOT A SKIP. If paho is missing, or our own fixture cannot start,
+or a record the caller named is not there, or the container is gone mid-run, this file says so and
+exits 1 — a not-run that reads as a pass is the exact lie this whole leg is written against. Being
+able to start a broker is not the same as having proved against one: only the FIRST case is ours to
+fix, and the other three stay refusals.
 """
 
 import atexit
@@ -90,12 +99,67 @@ except ImportError as exc:
 # and is not. Owner defaults to `default`, so `up phase2` and this file agree when neither names one.
 OWNER = os.environ.get("TABICHAT_FIXTURE_OWNER", "default")
 STATE = os.path.join(os.environ.get("TMPDIR", "/tmp"), "tabichat-fixture-%s.state" % OWNER)
-if not os.path.isfile(STATE):
-    fail_hard(
-        "no fixture recorded at %s. Start one with `sh src/tools/broker-fixture.sh up phase2` "
-        "before running this file. If a fixture IS up under another owner, run this file with the "
-        "same TABICHAT_FIXTURE_OWNER you started it with." % STATE
+MY_FIXTURE_OWNER = None  # non-None ONLY when this process started the fixture it is about to read
+
+
+def start_own_fixture():
+    """Cold box: bring up a phase-2 fixture this run owns, and say what to do about it at exit.
+
+    The owner name is run-scoped (`tls-paho-<pid>`) because `broker-fixture.sh up` clears the
+    predecessor recorded under the SAME owner: a shared name would let this run stop a neighbour's
+    broker, and `down` at teardown would destroy material another seat is proving against. Written
+    the same way `test_broker_auth.ts` and `test_ack_watch_broker.ts` name theirs.
+    """
+    global MY_FIXTURE_OWNER, STATE
+    MY_FIXTURE_OWNER = "tls-paho-%d" % os.getpid()
+    print(
+        "[paho-cell] no fixture recorded at %s — starting our own (owner=%s phase2)"
+        % (STATE, MY_FIXTURE_OWNER)
     )
+    env = dict(os.environ, TABICHAT_FIXTURE_OWNER=MY_FIXTURE_OWNER)
+    try:
+        r = subprocess.run(
+            ["sh", os.path.join(HERE, "broker-fixture.sh"), "up", "phase2"],
+            env=env, capture_output=True, text=True, timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        fail_hard("the fixture this run started did not finish coming up within 300s")
+    if "FIXTURE_PORT=" not in r.stdout:
+        # Its own words come out, then the refusal: a fixture that would not start is NOT RUN, and
+        # this file must not turn that into a skip or a pass.
+        print((r.stdout + r.stderr).strip()[-600:])
+        fail_hard(
+            "the fixture this run started (owner=%s) did not come up (rc %d) — docker and the "
+            "eclipse-mosquitto:2 image are the two things it needs" % (MY_FIXTURE_OWNER, r.returncode)
+        )
+    # The record is the same owner-scoped path the fixture writes; re-derive it here rather than
+    # parsing stdout, so reader and writer agree by construction (see test_fixture_isolation.py).
+    STATE = os.path.join(os.environ.get("TMPDIR", "/tmp"), "tabichat-fixture-%s.state" % MY_FIXTURE_OWNER)
+    if not os.path.isfile(STATE):
+        fail_hard("the fixture came up but left no record at %s" % STATE)
+
+
+def stop_own_fixture():
+    if MY_FIXTURE_OWNER:
+        subprocess.run(
+            ["sh", os.path.join(HERE, "broker-fixture.sh"), "down"],
+            env=dict(os.environ, TABICHAT_FIXTURE_OWNER=MY_FIXTURE_OWNER),
+            capture_output=True, text=True,
+        )
+
+
+if not os.path.isfile(STATE):
+    if "TABICHAT_FIXTURE_OWNER" in os.environ:
+        # An operator named an owner and nothing is recorded under it. Starting one under THEIR name
+        # would launder a missing precondition into a pass, so this stays a refusal.
+        fail_hard(
+            "no fixture recorded at %s. Start one with `sh src/tools/broker-fixture.sh up phase2` "
+            "before running this file. If a fixture IS up under another owner, run this file with the "
+            "same TABICHAT_FIXTURE_OWNER you started it with." % STATE
+        )
+    start_own_fixture()
+
+atexit.register(stop_own_fixture)
 
 name, fix_dir, port, room, phase = open(STATE, encoding="utf-8").read().split()
 

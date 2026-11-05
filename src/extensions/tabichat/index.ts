@@ -162,9 +162,14 @@ import {
   ACK_WATCH_ENV,
   ackPayload,
   ackTopic,
+  ackWatchKey,
   ACK_RETAIN_DEFAULT_MS,
   ACK_RETAIN_ENV,
   clearPayload,
+  deliveryClause,
+  deliveryVerdict,
+  outboxView,
+  type Delivery,
   pinAck,
   receiptClears,
   type AckWatch,
@@ -196,6 +201,7 @@ import {
   queryAcks,
   recordAck,
   renderAck,
+  idNamespaceNote,
   renderInbound,
   renderLine,
   renderPeersBoard,
@@ -241,6 +247,165 @@ import {
 // initialised with `??=` so each factory re-run picks up the SAME store.
 const RENEW_INFLIGHT_KEY = Symbol.for("tabichat.renewInflight");
 const AUTO_RENEWED_KEY = Symbol.for("tabichat.autoRenewed");
+
+/**
+ * THE THREE SHAPES A LINE CAN TAKE, named (audit `iid 11`). The row was filed against an emitter that
+ * recorded `error` lines and quieted everything else; reading the file for this leg turned up a third
+ * shape nobody had written down — a failure that is real, consequence-bearing, kept in the durable
+ * file, and deliberately NOT printed where a human types. So the decision is stated once, as data:
+ *
+ *   record-and-present  an error the operator must see AND a post-mortem must be able to grep;
+ *   present-only        a warning or an informative line — the UI, and nothing else (the rule from
+ *                       the 2026-10-24 report about the place a human types);
+ *   record-only         an internal fault: kept, never shown. Whether a given one SHOULD be shown is
+ *                       a decision of its own (report piece 5), so this leg promotes nothing.
+ *
+ * Exported, so a gate can enumerate the arms and what each one touches instead of trusting one call
+ * site's wording — the table is the claim, and `tools/test_diaglog_routing.ts` runs it.
+ */
+export const NOTICE_ARMS = ["record-and-present", "present-only", "record-only"] as const;
+export type NoticeArm = (typeof NOTICE_ARMS)[number];
+
+/** Which half of the surface an arm touches. The ONE place that answers; never re-derived per site. */
+export const noticeSurfaces = (arm: NoticeArm): { record: boolean; present: boolean } =>
+  arm === "record-and-present"
+    ? { record: true, present: true }
+    : arm === "record-only"
+      ? { record: true, present: false }
+      : arm === "present-only"
+        ? { record: false, present: true }
+        // Unreachable through the type, and kept total on purpose: it fails toward KEEPING the line,
+        // so an arm nobody recognised can never drop a record silently.
+        : { record: true, present: true };
+
+/** The two halves a caller supplies; the entry decides which ones run. */
+export type NoticeSurface = {
+  /** the durable half — called with the text, and with a stack where the site has one */
+  record: (text: string, stack?: string) => void;
+  /** the operator half. It is ALLOWED TO THROW (a disposed context does), and the entry catches. */
+  present: (text: string, level: string) => void;
+};
+
+/**
+ * THE ENTRY. `noticeSurfaces` says what an arm is for; this says what happens, in the order that
+ * makes the ordering a property of the code and not a habit of the call site:
+ *
+ *   1. the durable record, if the arm keeps one — ALWAYS FIRST, because the belt below is the reason
+ *      `iid 11` exists: a line that dies with a dead UI leaves nothing to grep afterwards;
+ *   2. the operator's line, if the arm shows one — inside a `try`, and the `catch` writes it to
+ *      stderr. One publish, never a second: the catch is the fallback, not an extra channel.
+ *
+ * Exported, and deliberately injected, so `tools/test_diaglog_routing.ts` can EXECUTE all three arms
+ * against a presenter that works and a presenter that throws. The shipped call sites reach this through
+ * the session-bound `notice` / `notifySafely` inside the factory, so the tested path and the published
+ * path are the same function — which is the half the old text-regex gate could not say.
+ */
+export const emitNotice = (
+  arm: NoticeArm,
+  text: string,
+  surface: NoticeSurface,
+  level = "warning",
+  stack?: string,
+): void => {
+  const half = noticeSurfaces(arm);
+  if (half.record) surface.record(text, stack);
+  if (!half.present) return;
+  try {
+    surface.present(text, arm === "record-and-present" ? "error" : level);
+  } catch {
+    console.error(text);
+  }
+};
+
+/**
+ * THE SIX FAULTS THAT LOSE WORK OR A PROMISE, named (audit `iid 11`, piece 5).
+ *
+ * The ruling on option 3 ("promote six of the fourteen record-only sites, at most once per session per
+ * kind") changed the CHANNEL: not `ui.notify` — that is the place a human types — but the door the seat
+ * itself reads. So a tell here is QUEUED and rides the model-facing send that was already going to
+ * happen, the `agent_settled` held flush, and nothing in this block ever creates a turn of its own.
+ * A lane that never holds a mention is never interrupted by it, and its tells stay in the durable file,
+ * which is where they were always kept.
+ *
+ * Exported at module scope so a gate can ENUMERATE the kinds and EXECUTE the teller with an injected
+ * redactor and budget — the same posture `emitNotice` took in leg 954, and for the same reason: a claim
+ * that is only readable as prose at one call site is a belief, not a control.
+ */
+export const LOSS_KINDS = [
+  "journal-write-failed",
+  "journal-not-prepared",
+  "inbound-handler-threw",
+  "park-overflowed",
+  "inbound-not-parked",
+  "sender-acl-inert",
+] as const;
+export type LossKind = (typeof LOSS_KINDS)[number];
+
+/** Header of the batched tell: what it is, and why it says each kind once. */
+export const lossTellHeader = (count: number): string =>
+  `[tabichat][loss] ${count} fault(s) this session lost work or a promise — one tell per kind, ` +
+  `full text in the durable file`;
+
+export type LossTeller = {
+  /** queue a tell; false when this kind was already told or is already queued (once per session) */
+  tell: (kind: string, text: string) => boolean;
+  /** the batched block, bounded by the budget, WITHOUT committing it — "" when nothing is pending */
+  peek: () => string;
+  /** mark the kinds the last block actually carried as told; a kind a budget cut left out stays
+   * queued and is told by a later settle. Returns how many kinds this call spent. */
+  commit: () => number;
+  pending: () => number;
+};
+
+/**
+ * The teller: a per-session queue, the once-per-kind rule, and the held-flush budget applied to it.
+ * `redact` is injected (the shipped `redactUrl`) because the model channel carries fault text too: the
+ * durable half is redacted inside the sink by `formatDiagLine`, and this half is redacted HERE, so a
+ * future call site cannot forget it either. A block that does not fit says how many kinds stayed in
+ * the file — a tell that cannot ship is never dropped in silence, and the first line always ships,
+ * the same posture `planHeldFlush` takes for one over-cap mention.
+ */
+export const makeLossTeller = (budget: number, redact: (s: string) => string): LossTeller => {
+  const told = new Set<string>();
+  const queue: { kind: string; text: string }[] = [];
+  // Which kinds the last built block actually put on the wire. A block that does not fit says how many
+  // kinds stayed in the file, and those kinds are NOT told — so the count here is what commit() spends,
+  // and an unshipped tail stays queued for the next settle instead of being marked told by a block that
+  // never carried it.
+  let shipped: string[] = [];
+  const block = (items: { kind: string; text: string }[]): string => {
+    if (!items.length) return "";
+    let body = lossTellHeader(items.length);
+    let shown = 0;
+    for (const q of items) {
+      const line = `\n- ${q.kind}: ${redact(q.text)}`;
+      if (shown > 0 && body.length + line.length > budget) break;
+      body += line;
+      shown++;
+    }
+    shipped = items.slice(0, shown).map((q) => q.kind);
+    return shown < items.length
+      ? `${body}\n- ${items.length - shown} more kind(s) stayed in the durable file, not dropped.`
+      : body;
+  };
+  return {
+    tell: (kind, text) => {
+      if (told.has(kind) || queue.some((q) => q.kind === kind)) return false;
+      queue.push({ kind, text });
+      return true;
+    },
+    peek: () => block(queue),
+    commit: () => {
+      for (const k of shipped) told.add(k);
+      const unshipped = queue.filter((q) => !shipped.includes(q.kind));
+      const n = queue.length - unshipped.length;
+      queue.length = 0;
+      queue.push(...unshipped);
+      return n;
+    },
+    pending: () => queue.length,
+  };
+};
 
 export default function (pi: ExtensionAPI) {
   // declared first: the tool descriptions below are built at setup time
@@ -317,6 +482,8 @@ export default function (pi: ExtensionAPI) {
   // the last ten lines THIS lane sent — the tail board's whole payload, kept in memory so the
   // board never has to re-read the journal to answer "what did I just say"
   const outTail: RoomLogRecord[] = [];
+  /** How many publishes the tail — and so one outbox read — can hold. Named so the read can say it. */
+  const OUT_TAIL_MAX = 10;
   const journalAppend = (
     dir: "in" | "out",
     l: { id?: string; nick: string; to?: string; ts: number; message: string },
@@ -334,12 +501,12 @@ export default function (pi: ExtensionAPI) {
     // writer can land on another's bytes. The cap is enforced at boot, in this seat's own file.
     const r = appendRoomLogRecord(ROOMLOG_IO, roomLogTarget.path, rec);
     if (!r.ok) {
-      diag("ERROR", `[tabichat][roomlog] journal write failed: ${r.reason} — room lines are NOT being kept for the next seat`);
+      noticeLost("journal-write-failed", `[tabichat][roomlog] journal write failed: ${r.reason} — room lines are NOT being kept for the next seat`);
       return;
     }
     if (dir === "out") {
       outTail.push(rec);
-      if (outTail.length > 10) outTail.shift();
+      if (outTail.length > OUT_TAIL_MAX) outTail.shift();
     }
   };
 
@@ -370,6 +537,9 @@ export default function (pi: ExtensionAPI) {
   // the coalesced held-flush char budget (mentionq.ts). A malformed or zero value keeps the
   // default: a typo in the environment must never leave a lane shipping nothing.
   const HELD_FLUSH_MAX_CHARS = heldFlushCharBudget(process.env[HELD_FLUSH_MAX_CHARS_ENV]);
+  // One teller per session (iid 11 piece 5). Its budget IS the held-flush budget, so a loss tell can
+  // never make a turn larger than the batch the lane already agreed to receive.
+  const lossTeller = makeLossTeller(HELD_FLUSH_MAX_CHARS, redactUrl);
 
   // --- remote lane administration (PROTOTYPE port, owner order 2026-10-08: "prototype with 1 + 2 + 3";
   //     ported onto current main 2026-10-09 with the owner's "ok"). Three routes — compact, shutdown,
@@ -408,6 +578,63 @@ export default function (pi: ExtensionAPI) {
     // "an empty or junk value is never a guess" rule every other knob in this file follows.
     return Number.isFinite(n) && n >= 0 ? n : ACK_WATCH_DEFAULT_MS;
   })();
+
+  /**
+   * iid 21 — what the sweep has already called a miss, keyed by `ackWatchKey` (the publish's own id,
+   * or its topic when the write has no id and its topic is already unique to it).
+   *
+   * The delivery answer must not live in the inbound hot path: `test_laneadmin.ts` pins the settle
+   * block at four lines and at six lines total, precisely so nobody grows a check onto every line
+   * the room sends, and widening that pin to make room for this fix is the move §2 forbids. So the
+   * echo is left alone — it keeps clearing `ackWatch` exactly as it did — and this records only what
+   * the SWEEP and the cap decided, which is the one moment the system knows "this publish aged out"
+   * and "this publish was dropped unanswered". Without it, an absent publish would be
+   * indistinguishable from a delivered one, because settling and ageing both remove the entry from
+   * the same list.
+   *
+   * Bounded by the same cap the watch list uses: an unbounded set of past misses is a leak dressed as
+   * a memory, and a lane that re-posts clears its own stale verdict at `watchSend`.
+   */
+  const lostKeys = new Set<string>();
+  const noteLost = (key: string): void => {
+    if (!key) return;
+    lostKeys.add(key);
+    while (lostKeys.size > ACK_WATCH_MAX) {
+      const oldest = lostKeys.values().next().value;
+      if (oldest === undefined) break;
+      lostKeys.delete(oldest);
+    }
+  };
+
+  /** How often a waiting publish re-reads the watch list. A read of an in-memory array, not a poll of the wire. */
+  const DELIVERY_POLL_MS = 40;
+
+  /**
+   * iid 21 AC1 — the bounded wait for the answer the watchdog is already going to get.
+   *
+   * Three states are kept apart on purpose, because collapsing any two of them is the bug this row
+   * filed: a publish still watched at the deadline was never confirmed; a publish no longer watched
+   * was confirmed ONLY if the frame that took it off the list was its OWN echo, which after
+   * `settleAck` matches on `ackWatchKey` is the only way its key can leave the list; and a publish
+   * that was never watched at all — watch off, no client, or a socket that is not connected, where
+   * mqtt.js QUEUES the write and that is not a refusal — can be answered nothing, and must not be
+   * reported as either verdict. `off` names WHICH of the three this seat is in, because the sentence
+   * a lane reads must not blame `MQTT_ACK_WATCH_MS=0` on a host whose knob is 3000 (finding 3).
+   */
+  const awaitDelivery = async (topic: string, id = ""): Promise<Delivery> => {
+    const t0 = Date.now();
+    if (!topic) return { state: "not-sent", waitedMs: 0 };
+    if (!ACK_WATCH_MS) return { state: "watch-off", waitedMs: 0, off: "knob" };
+    if (!client) return { state: "watch-off", waitedMs: 0, off: "no-client" };
+    if (!client.connected) return { state: "watch-off", waitedMs: 0, off: "reconnecting" };
+    const key = ackWatchKey({ topic, id });
+    for (;;) {
+      const v = deliveryVerdict(key, ackWatch, lostKeys);
+      if (v !== "watching") return { state: v, waitedMs: Date.now() - t0 };
+      if (Date.now() - t0 >= ACK_WATCH_MS) return { state: "unconfirmed", waitedMs: Date.now() - t0 };
+      await new Promise((r) => setTimeout(r, DELIVERY_POLL_MS));
+    }
+  };
 
   /** The handoff bar: a RESUME file for THIS seat, big enough to count. Same test the forced-handoff
    *  gate applies before it blocks tools — reused, not reinvented. ACT B: the dirs searched are the
@@ -635,6 +862,12 @@ export default function (pi: ExtensionAPI) {
   let lastCtxWarnTokens = -1;
   // Lane breadcrumb state: how the newest turn ended, and when this session started.
   let lastTurn: EndState = "unknown";
+  // leg 907: the upstream-error OBSERVATION, held until the boundary that can report it.
+  // `agent_end` hands the messages but not the retry decision (`AgentEndEvent` has no
+  // `willRetry`, and pi schedules the retry after this emit returns), so the note is built
+  // there and printed at `agent_settled`. Every `agent_end` overwrites it, which is what
+  // makes a clean run after an errored one clear the pending note instead of carrying it.
+  let pendingUpstreamNote: string | null = null;
   let startedAt = 0;
   const EXIT_LOG = process.env.MQTT_EXIT_LOG || EXIT_LOG_DEFAULT;
   // ask_owner was removed here (owner order 2026-10-08). An owner ask is plain text typed in the
@@ -728,14 +961,19 @@ export default function (pi: ExtensionAPI) {
         const honoured = asked && STEER_NICKS.includes(nick);
         // roomPayload owns what goes on the wire, and it omits BOTH optional keys when they are
         // absent, so a post that names nobody and asks no steer is byte-identical to the old one.
-        publishRoom(roomPayload({ nick, message: text, id, ts: Date.now(), to, steer: asked }));
+        const topicUsed = publishRoom(roomPayload({ nick, message: text, id, ts: Date.now(), to, steer: asked }));
+        // iid 21 AC1: the result a lane reads must mean "the broker took it", not "the call returned".
+        // The wait is bounded by the same window the alarm already uses, so this adds no new knob and
+        // no new state about delivery — it hands the existing answer to the one caller that was
+        // invented without it.
+        const delivery = await awaitDelivery(topicUsed, id);
         return {
           content: [
             {
               type: "text",
               // the echo names the FIELD that decides delivery, so a sender never reads the
               // rendered "@<to> " prefix as something the body could have done on its own
-              text: `posted as ${nick} to ${room}: ${text} (id ${id}; recipient field ${to ? `"${to}"` : "unset — body text decides"})${steerNote({ requested: asked, honoured, allow: STEER_NICKS })}`,
+              text: `posted as ${nick} to ${room}: ${text} (id ${id}; recipient field ${to ? `"${to}"` : "unset — body text decides"})${steerNote({ requested: asked, honoured, allow: STEER_NICKS })} — ${deliveryClause(delivery, ACK_WATCH_MS)}`,
             },
           ],
         };
@@ -764,7 +1002,7 @@ export default function (pi: ExtensionAPI) {
         + `a gone seat. Read-only: publishes nothing.`,
       parameters: Type.Object({
         scope: Type.Optional(
-          Type.String({ description: "'room' (default), 'inbox', 'acks', or 'peers'" }),
+          Type.String({ description: "'room' (default), 'inbox', 'acks', 'peers', or 'outbox' (this session's own publishes, with their ids)" }),
         ),
         limit: Type.Optional(Type.Number({ description: "how many lines, default 10 (not used with unseen_only)" })),
         unseen_only: Type.Optional(Type.Boolean({ description: "true = only lines not yet shown to this session" })),
@@ -783,6 +1021,29 @@ export default function (pi: ExtensionAPI) {
             content: [{ type: "text", text: offlineReason("chat_read") }],
           };
         const scope = String(params.scope ?? "room").toLowerCase();
+        if (scope === "outbox") {
+          // iid 21 AC2: the one read that answers "what has this session published, under which id", so a
+          // lane never has to notice a loss by accident. The source is the session's own in-memory
+          // out-tail — the same rows the journal append already builds — because the question this row
+          // asks is about THIS session's publishes, and reading the journal file here would put a second
+          // reader of the replay path in front of the boot-order pins that keep that path single. The
+          // tail is bounded and this read says so, and names the journal for anyone who wants more: a
+          // list of ten that does not say "ten is all this holds" is how a seat concludes it posted
+          // nothing earlier.
+          const tail = [...outTail];
+          const want = Math.min(Math.max(Math.trunc(Number(params.limit ?? 10)) || 10, 1), tail.length || 1);
+          const shown = tail.slice(-want);
+          const lines = outboxView(shown, tail.length);
+          const where = roomLogTarget && roomLogTarget.ok
+            ? `this session's tail (keeps the last ${OUT_TAIL_MAX}); the durable record is the journal at ${roomLogTarget.path}`
+            : `this session's tail (keeps the last ${OUT_TAIL_MAX}) — the journal is OFF on this seat, so nothing older than the tail was ever kept`;
+          const head = shown.length
+            ? `${shown.length} publish(es) listed, newest last — source: ${where}`
+            : `this session has published nothing (${where})`;
+          return {
+            content: [{ type: "text", text: lines.length ? `${lines.join("\n")}\n${head}` : head }],
+          };
+        }
         if (scope === "peers") {
           // the board, not the bare rows: this scope is the one a seat acts on, so it travels with
           // the sentence naming what was measured (R-2717 item 3)
@@ -797,7 +1058,14 @@ export default function (pi: ExtensionAPI) {
             limit: params.limit,
             cap: BUFFER_MAX,
           }).map(renderAck);
-          const asked = params.id ? ` for ${params.id}` : "";
+          // iid 22: the LOOKUP stays the lookup — a lane's own handle is still what it searched for —
+          // but the answer now says WHICH NAMESPACE it searched in. An id no shipped minter builds used
+          // to come back as "no delivery receipts for X", which a lane reads as a lost publish when the
+          // truth is that no publish was ever in that namespace. Silence in one namespace must not read
+          // as failure in another. A three-field id of the minter's own shape gains nothing: the note is
+          // empty for it, so the ordinary echo and the ordinary receipt read exactly as they did.
+          const askedId = params.id ? String(params.id) : "";
+          const asked = askedId ? ` for ${askedId}${idNamespaceNote(askedId)}` : "";
           const none = `no delivery receipts${asked} in this lane's ${BUFFER_MAX}-receipt window; retained boards under ${controlTopic(room)}/ still hold older ones`;
           return {
             content: [{ type: "text", text: rows.length ? rows.join("\n") : none }],
@@ -1063,6 +1331,41 @@ export default function (pi: ExtensionAPI) {
   ) => Promise<void>;
   let sendUser: SendUser = (content, options) => pi.sendUserMessage(content, options);
   /**
+   * The session's binding of `emitNotice`: the two halves, wired to this file's real surfaces. The
+   * durable half is `diag`, which is also the channel that tells the operator ONCE that diagnostics
+   * are being DROPPED (`diagFaultTold`) — so an `error` line whose record write fails now says so,
+   * where before the mirror in `notifySafely` wrote to the sink directly and stayed quiet about it.
+   * That is the failure case only: when the write succeeds, what is printed is what was always printed.
+   *
+   * `record-only` is the arm nineteen-… the shape this leg found: sixteen hand-written records and two
+   * hand-paired bypasses used to decide durability for themselves. They now say which ARM they are on
+   * and nothing else, so the answer cannot differ site from site. What any of them prints, where it
+   * prints it, and whether it reaches the UI are unchanged — promotion of an internal fault to the
+   * line is a decision of its own (report piece 5), not a side effect of a refactor.
+   */
+  const notice = (
+    arm: NoticeArm,
+    text: string,
+    o: { ctx?: ExtensionContext | null; level?: string; stack?: string } = {},
+  ): void =>
+    emitNotice(arm, text, {
+      record: (t, st) => diag("ERROR", t, st),
+      present: (t, l) => {
+        (o.ctx ?? liveCtx()).ui.notify(t, l);
+      },
+    }, o.level, o.stack);
+
+  /**
+   * A record-only fault that also OWES THE SEAT a tell: recorded first (the durable half never
+   * depends on the tell), then queued for the next model-facing send. One tell per kind per session,
+   * so a recurring fault is never a recurring interruption.
+   */
+  const noticeLost = (kind: LossKind, text: string, o: { stack?: string } = {}): void => {
+    notice("record-only", text, o);
+    lossTeller.tell(kind, text);
+  };
+
+  /**
    * Notify WITHOUT ever being a crash vector.
    *
    * `liveCtx()` hands back the session's context, and after a renew or a reload that context is
@@ -1070,29 +1373,23 @@ export default function (pi: ExtensionAPI) {
    * through the emitter as an uncaughtException and ends the seat. That is the #585 family, and the
    * reason this file's own belts exist. So any transport line I print from a SOCKET callback goes
    * through here, because a security notice that kills the lane it is warning is worth nothing.
-   * The message always reaches stderr, where a stale context cannot take it away.
+   *
+   * WHAT ACTUALLY REACHES WHOM. The sentence here used to read "the message always reaches stderr,
+   * where a stale context cannot take it away", and `07b2bbd` made it false: the operator gets one
+   * line on the UI when the UI is reachable, and stderr carries it ONLY when it is not — the `catch`
+   * in `emitNotice` decides that, and it is a fallback, never a second publish. The history of the
+   * duplicate is worth keeping where it was made: this line used to go to the UI AND to
+   * `console.error` on every call, which is how routine internal events ended up printed in the
+   * operator's input area (owner report 2026-10-24, verbatim: "this is written in your harness where
+   * normally the user would type! UNACCEPTABLE!"). The instinct behind it — never lose a warning, the
+   * lesson of the deaf-seat outage — was sound, but "never lose it" is a FALLBACK rule, not a
+   * double-publish rule. An `error` line is additionally kept in the durable diagnostic file BEFORE
+   * the UI is touched, so a seat with a dead UI still leaves a greppable record behind. A `warning` or
+   * `info` line does neither: shown, not kept, and never echoed to the terminal.
    */
-  const notifySafely = (ctx: ExtensionContext | null, text: string, level = "warning") => {
-    // ONE SINK, chosen by whether the UI is reachable. This used to send the line to the UI AND to
-    // `console.error` on every call, which is how routine internal events ended up printed in the
-    // operator's input area — owner report 2026-10-24, verbatim: "this is written in your harness where
-    // normally the user would type! UNACCEPTABLE!" The instinct behind the duplicate was sound (never lose
-    // a warning, the lesson of the deaf-seat outage), but "never lose it" is a FALLBACK rule, not a
-    // double-publish rule. stderr now carries the line only when the UI could not — and the catch is where
-    // that is decided, not below it.
-    //
-    // ERROR LEVEL IS THE EXCEPTION, AND IT IS A RECORD NOT A SECOND PUBLISH (audit `iid 11`, closed by
-    // leg 517 on the same order): when `07b2bbd` made this one-sink, an `error` notice became visible
-    // only transiently and greppable NOWHERE — the one thing a post-mortem needs. So an `error` line
-    // also goes to the durable diagnostic file. That is a different surface from the terminal: the
-    // operator still gets exactly one printed line, and the record outlives the toast.
-    if (level === "error") DIAG.write("ERROR", text);
-    try {
-      (ctx ?? liveCtx()).ui.notify(text, level);
-    } catch {
-      console.error(text);
-    }
-  };
+  const notifySafely = (ctx: ExtensionContext | null, text: string, level = "warning"): void =>
+    notice(level === "error" ? "record-and-present" : "present-only", text, { ctx, level });
+
   // every room line we have heard, newest last — the agent's only view of the room
   const buffer: RoomLine[] = [];
   // the mentions this lane actually received (@nick or @all), newest last. This is the answer to
@@ -1107,8 +1404,10 @@ export default function (pi: ExtensionAPI) {
   // cross-checked with `ctx.isIdle()` at the decision, so a missed event can only ever fall back to
   // the shipped per-mention queue, never stall a held line (see mentionq.ts).
   let runActive = false;
-  // one-shot: the next `agent_end` is our own flush landing, so its "nothing was published"
-  // notice is suppressed exactly once (the lane has not had a turn to publish anything yet).
+  // one-shot, and it expires in the run that set it: the flush's own `agent_end` is suppressed once
+  // when that turn OWES a notice, and a zero-owed `agent_end` spends the flag instead of leaving it
+  // armed (see the guard in the `agent_end` handler below). A flag that survived a notice-free turn
+  // would silence a later turn that had nothing to do with this flush.
   let flushedThisRun = false;
   const heldCount = (): number => held.length;
   // delivery receipts heard on the control topic (P2): who got what, and when
@@ -1166,11 +1465,22 @@ export default function (pi: ExtensionAPI) {
    * by mqtt.js and is not a refusal, so watching it would raise a false alarm; and a publish to a
    * connected socket is only confirmed when it comes back on our own subscription. Overflow is
    * said, never trimmed in silence. Returns nothing; it is a note to the sweeper, not a decision.
+   *
+   * iid 21 finding 1 — `id` is the publish's own message id, and it is what the watch is keyed on.
+   * A room line goes to `chat/<room>`, the topic EVERY lane shares, so a topic-only watch can be
+   * settled by anybody's inbound; the id is the one field that says which publish came back.
    */
-  const watchSend = (topic: string, kind: string) => {
+  const watchSend = (topic: string, kind: string, id = "") => {
     if (!ACK_WATCH_MS || !client || !client.connected || !topic) return;
-    const w = watchAck(ackWatch, topic, kind, Date.now());
+    const key = ackWatchKey({ topic, id });
+    // a fresh attempt clears its own stale verdict, so a re-post is judged on its own echo
+    lostKeys.delete(key);
+    const w = watchAck(ackWatch, topic, kind, Date.now(), id);
     ackWatch = w.pending;
+    // finding 2: the cap dropped OLDER publishes that were never echoed. They left `ackWatch` with no
+    // record, and an absent watch was the face the waiting publish read as delivered — the opposite
+    // of the sentence printed three lines below. Record each one, so both channels answer alike.
+    for (const x of w.evicted) noteLost(ackWatchKey(x));
     if (w.dropped) {
       notifySafely(
         null,
@@ -1182,12 +1492,20 @@ export default function (pi: ExtensionAPI) {
   };
   /** What the alarm calls a room line, so the operator can tie a loss to a post they just made. */
   const ROOM_SEND_KIND = "room line";
-  const publishRoom = (payload: Record<string, unknown>) => {
-    if (!client || !room) return;
+  const publishRoom = (payload: Record<string, unknown>): string => {
+    if (!client || !room) return "";
+    // iid 21 finding 1 — the id THIS payload carries is what its own echo will carry back, so it is
+    // the key the watch is registered under. Read from the payload rather than passed in, because
+    // every room publish already mints its id here (`msgId(nick, ++msgSeq, BOOT)`), and a second
+    // id-space would be a second answer to the same question.
+    const sendId = typeof payload.id === "string" ? payload.id : "";
     // leg 800, ONE tail for both publish branches: journal this send, keep the board tail, and —
     // only with the flag — publish the retained board. Kept out of the branch shape so the #10
     // gate's "registers on the topic it ACTUALLY used" structure stays byte-recognisable.
     const afterRoomSend = () => {
+      // iid 29 — the ONE room-publish counter, on the one tail both publish branches call. A room
+      // write that got this far went to the socket, so this is the fact the end-of-turn notice needs.
+      publishedThisTurn++;
       journalAppend("out", {
         id: typeof payload.id === "string" ? payload.id : "",
         nick: typeof payload.nick === "string" ? payload.nick : nick,
@@ -1201,10 +1519,8 @@ export default function (pi: ExtensionAPI) {
       if (!HIST_BOARD) return;
       const ht = histTopic(room, nick);
       if (!ht) {
-        diag("ERROR",
-          `[tabichat][hist] MQTT_HIST_BOARD=1 but nick "${nick}" has no topic-leaf-safe form; the ` +
-            `tail board was NOT published — an empty leaf aims at a trailing-separator topic nobody reads.`,
-        );
+        notice("record-only", `[tabichat][hist] MQTT_HIST_BOARD=1 but nick "${nick}" has no topic-leaf-safe form; the ` +
+            `tail board was NOT published — an empty leaf aims at a trailing-separator topic nobody reads.`);
         return;
       }
       client!.publish(
@@ -1226,15 +1542,14 @@ export default function (pi: ExtensionAPI) {
         // FILE, not the terminal: this is true of EVERY publish once the setting is wrong, so printing
         // it at the operator is the flood this leg exists to end. The fault itself is real (the
         // per-sender ACL silently does not apply) — see the report's follow-on note.
-        diag("ERROR",
-          `[tabichat] ${SENDER_TOPIC_ENV}=1 but nick "${nick}" has no topic-leaf-safe form; ` +
-            `posted to the flat room topic instead, so the per-sender ACL does NOT apply to this line.`,
-        );
+        noticeLost("sender-acl-inert", `[tabichat] ${SENDER_TOPIC_ENV}=1 but nick "${nick}" has no topic-leaf-safe form; ` +
+            `posted to the flat room topic instead, so the per-sender ACL does NOT apply to this line.`);
       } else {
         client.publish(t, JSON.stringify(payload));
-        watchSend(t, ROOM_SEND_KIND);
+        watchSend(t, ROOM_SEND_KIND, sendId);
         afterRoomSend();
-        return;
+        // iid 21: the topic ACTUALLY used is returned, because that is the topic the echo lands on.
+        return t;
       }
     }
     client.publish(`chat/${room}`, JSON.stringify(payload));
@@ -1242,8 +1557,10 @@ export default function (pi: ExtensionAPI) {
     // a phase-2 ACL applied before clients migrate makes every seat "publish into a void and report
     // no error" — this is that report. Nothing else on the client side can see it: the publish call
     // succeeds, the socket stays open, the broker says nothing.
-    watchSend(`chat/${room}`, ROOM_SEND_KIND);
+    // iid 21 finding 1: the flat topic is shared, so the watch carries the publish's own id.
+    watchSend(`chat/${room}`, ROOM_SEND_KIND, sendId);
     afterRoomSend();
+    return `chat/${room}`;
   };
   /** Publish to the control topic — machinery, never shown as chat. */
   const publishCtl = (payload: unknown) => {
@@ -1323,6 +1640,10 @@ export default function (pi: ExtensionAPI) {
     if (!client || !client.connected) return;
     const { live, lost } = expireAcks(ackWatch, Date.now(), ACK_WATCH_MS);
     ackWatch = live;
+    // iid 21: write down what aged out, so the waiting publish can tell a recorded miss from a
+    // delivered one. The notify below stays exactly as it was — it is the bystanding seat's channel,
+    // and the defect was that the PUBLISHING seat had no channel of its own, not that this one existed.
+    for (const x of lost) noteLost(ackWatchKey(x));
     if (!lost.length) return;
     notifySafely(null, `[tabichat][ack-watch] ${ackLostLine(lost, Date.now())}`, "error");
   };
@@ -1359,6 +1680,15 @@ export default function (pi: ExtensionAPI) {
   // set when a mention was injected into this lane: its turn owes no room post,
   // and the lane is told that once the turn ends (P1)
   let owedTurns = 0;
+  /**
+   * iid 29 — how many room publishes THIS TURN handed bytes to the socket. `owedTurns` alone could
+   * not say whether the seat spoke: it is written by the inbound arm and cleared by the notice, and
+   * no publish path ever touched it, so "nothing was published" was a sentence the file never
+   * measured. Bumped at `publishRoom`'s own tail (both branches), reset at `agent_start` so a
+   * between-turn advisory cannot spend a later turn's silence. Counting it does not quiet the
+   * notice on any path where the seat really did stay in the terminal.
+   */
+  let publishedThisTurn = 0;
 
   pi.on("session_start", async (_event, ctx) => {
     // #585 FIRST ACT, before every guard below: the handle is refreshed on every session start that
@@ -1478,10 +1808,9 @@ export default function (pi: ExtensionAPI) {
     // recorded for the renew policy. Nothing is guessed, nothing is retried elsewhere.
     if (brokerRefusal !== "") {
       ctx.ui.setStatus("broker", "NO BROKER");
-      ctx.ui.notify(brokerRefusal, "error");
-      // The refusal is already at the UI above; this is the RECORD (iid 11: an error line must be
-      // greppable after the toast clears), not a second printed line.
-      diag("ERROR", brokerRefusal);
+      // ONE CALL, not a hand-pair (iid 11): the record lands before the toast, and the two halves
+      // cannot be pulled apart by an edit that touches one of them.
+      notifySafely(ctx, brokerRefusal, "error");
       return;
     }
     room = String(pi.getFlag("room") ?? "") || process.env.MQTT_ROOM || "";
@@ -1509,16 +1838,16 @@ export default function (pi: ExtensionAPI) {
         try {
           ROOMLOG_IO.ensure(roomLogTarget.path);
         } catch (e) {
-          diag("ERROR", `[tabichat][roomlog] could not prepare ${roomLogTarget.path}: ${e instanceof Error ? e.message : String(e)}`);
+          noticeLost("journal-not-prepared", `[tabichat][roomlog] could not prepare ${roomLogTarget.path}: ${e instanceof Error ? e.message : String(e)}`);
         }
         const tr = trimRoomLog(ROOMLOG_IO, roomLogTarget.path, roomLogCap);
         if (tr.ok && tr.trimmed > 0)
           diag("INFO", `[tabichat][roomlog] journal at ${roomLogTarget.path} was ${tr.trimmed} line(s) past its ${roomLogCap}-line cap: oldest dropped at boot, newest kept — said, not silent`);
         if (!tr.ok)
-          diag("ERROR", `[tabichat][roomlog] boot trim failed: ${tr.reason}`);
+          notice("record-only", `[tabichat][roomlog] boot trim failed: ${tr.reason}`);
         const t = loadRoomLogTail(ROOMLOG_IO, roomLogTarget.path, replayN);
         if (t.malformed > 0)
-          diag("ERROR", `[tabichat][roomlog] ${t.malformed} unreadable line(s) in ${roomLogTarget.path} — skipped in replay, the rest stands`);
+          notice("record-only", `[tabichat][roomlog] ${t.malformed} unreadable line(s) in ${roomLogTarget.path} — skipped in replay, the rest stands`);
         let added = 0;
         for (const rec of t.records) {
           const seen = noteRoomId(seenRoomIds, rec.id);
@@ -1720,9 +2049,9 @@ export default function (pi: ExtensionAPI) {
         // The detail worth keeping is WHICH error on WHICH topic. TABICHAT_ERR_STACK=1 restores the
         // full trace — into the FILE now, which is where a trace belongs and was always where a person
         // reads one (leg 517; the gate in diaglog.ts is the same single `stackOn` switch).
-        diag("ERROR",
+        noticeLost("inbound-handler-threw",
           `[tabichat] inbound line dropped, handler threw: ${errOneLine(e)} (topic ${topic})`,
-          e instanceof Error ? e.stack ?? String(e) : String(e),
+          { stack: e instanceof Error ? e.stack ?? String(e) : String(e) },
         );
         // tabichat#4 — THE ALARM STAYS, verbatim and on the same two channels it is on today. What is
         // added is a SECOND sentence, and it says what happened to the line rather than leaving the
@@ -1739,16 +2068,12 @@ export default function (pi: ExtensionAPI) {
           );
         }
         if (p.dropped)
-          diag("ERROR",
-            `[tabichat] inbound park OVERFLOWED — ${p.dropped} oldest parked line(s) discarded beyond ` +
+          noticeLost("park-overflowed", `[tabichat] inbound park OVERFLOWED — ${p.dropped} oldest parked line(s) discarded beyond ` +
               `the ${INBOUND_PARK_MAX}-line cap. Those lines are genuinely lost; the fresh seat was ` +
-              `never going to catch up this far.`,
-          );
+              `never going to catch up this far.`);
         if (!stale && !handedOff)
-          diag("ERROR",
-            `[tabichat] not parked: this is not a pi session-context invalidation, so replaying it ` +
-              `into a fresh session would mask a handler bug. The line IS lost — fix the throw.`,
-          );
+          noticeLost("inbound-not-parked", `[tabichat] not parked: this is not a pi session-context invalidation, so replaying it ` +
+              `into a fresh session would mask a handler bug. The line IS lost — fix the throw.`);
       }
     });
     function handleInbound(topic: string, payload: Buffer): void {
@@ -1777,6 +2102,12 @@ export default function (pi: ExtensionAPI) {
       // is the normal case, never a miss, so this cannot alarm on peer noise. It runs BEFORE the
       // control branch below because that branch RETURNS for control traffic, and a receipt for our
       // own message arrives on `_ctl/...` — settling after it would never settle anything that matters.
+      // iid 21 finding 1 — a frame carrying THIS publish's own id settles it first, and a frame
+      // carrying somebody else's cannot. The block below keeps the topic settle #10 was written for
+      // (a `_ctl/<id>` child's topic is unique to its publish, so the topic is the same fact), and its
+      // shape stays exactly as pinned: the id comparison lives in `settleAck`'s own predicate, on
+      // `ackWatchKey`, not in a wider hot-path block. A payload with no id settles nothing by id.
+      if (ackWatch.length && msg.id) ackWatch = settleAck(ackWatch, msg.id).pending;
       if (ackWatch.length) {
         const st = settleAck(ackWatch, topic);
         ackWatch = st.pending;
@@ -1816,7 +2147,7 @@ export default function (pi: ExtensionAPI) {
         const leaf = nickFromHistTopic(topic, room);
         if (!leaf) return;
         if (typeof msg.nick === "string" && msg.nick.trim() !== "" && topicLeaf(msg.nick) !== leaf) {
-          diag("ERROR", `[tabichat][hist] board line dropped, authorship conflict: topic names "${leaf}", payload nick "${msg.nick}". Nothing was merged.`);
+          notice("record-only", `[tabichat][hist] board line dropped, authorship conflict: topic names "${leaf}", payload nick "${msg.nick}". Nothing was merged.`);
           return;
         }
         if (leaf === topicLeaf(nick)) return; // our own board echoing back: those lines are already live here
@@ -1851,7 +2182,7 @@ export default function (pi: ExtensionAPI) {
       // A disagreement is DROPPED AND SAID, never re-labelled quietly.
       const av = authorVerdict(topic, room, msg.nick ?? "");
       if (!av.ok) {
-        diag("ERROR", `[tabichat] line dropped, authorship conflict: ${av.why}. Nothing was delivered.`);
+        notice("record-only", `[tabichat] line dropped, authorship conflict: ${av.why}. Nothing was delivered.`);
         return;
       }
       if (av.mismatch) notifySafely(liveCtx(), `[tabichat] authorship note: ${av.why}`, "warning");
@@ -2005,9 +2336,9 @@ export default function (pi: ExtensionAPI) {
         try {
           handleInbound(b.topic, Buffer.from(b.payload));
         } catch (e) {
-          diag("ERROR",
+          notice("record-only",
             `[tabichat] parked line replay threw: ${errOneLine(e)} (topic ${b.topic}) — dropped, not re-parked`,
-            e instanceof Error ? e.stack ?? String(e) : String(e),
+            { stack: e instanceof Error ? e.stack ?? String(e) : String(e) },
           );
         }
       }
@@ -2050,7 +2381,12 @@ export default function (pi: ExtensionAPI) {
   // A turn that answered a mention ends without anything reaching the room (P1).
   // Say so here, once, so a lane is never fooled into thinking it has spoken.
   pi.on("agent_end", async (_event, ctx) => {
-    if (!owedTurns) return;
+    if (!owedTurns) {
+      // Nobody was waiting on this turn, so this is not the turn our flush set the flag for. Spend
+      // the flag here rather than carry it to one that is owed: returning armed was L-1.
+      flushedThisRun = false;
+      return;
+    }
     // our own held flush is what ended this settle; the lane has not had a turn to publish in,
     // so the "nothing was published" notice would be a lie. Suppress exactly once.
     if (flushedThisRun) {
@@ -2058,6 +2394,11 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     owedTurns = 0;
+    // iid 29: the notice states a fact about publication, so publication is what decides it. A turn
+    // that reached the socket is not the turn this sentence is true of; a turn that published nothing
+    // still prints it — that half is asserted in tools/test_owed_notice.ts, and silencing the notice
+    // by default would be the weaken-the-check class.
+    if (publishedThisTurn) return;
     ctx.ui.notify(
       "[tabichat] turn finished — nothing was published: your reply stayed in this terminal. Call chat_post if the room needs it.",
       "info",
@@ -2067,6 +2408,9 @@ export default function (pi: ExtensionAPI) {
   // OPTION B gate input. The run begins here; `agent_settled` below ends it.
   pi.on("agent_start", async () => {
     runActive = true;
+    // iid 29 — the turn's publish budget starts here, so a publish that belongs to an earlier turn
+    // (or to a between-turn advisory) cannot answer for this one.
+    publishedThisTurn = 0;
   });
 
   // OPTION B drain, COALESCED (the fix asked for: "build held-flush"). `agent_settled` is the event
@@ -2126,9 +2470,28 @@ export default function (pi: ExtensionAPI) {
     // the lane is no longer running, so the next mention is a turn, not a hold. Cleared BEFORE the
     // early return below: a settle with nothing held must still end the run state.
     runActive = false;
-    if (!held.length) return;
+    // The loss tell (iid 11 piece 5) is measured BEFORE the plan, so it takes room out of the same
+    // budget instead of adding to the turn: a held line that no longer fits stays held — cut by
+    // nothing, dropped by nothing.
+    const lossBlock = lossTeller.peek();
+    // THE GUARANTEE: a seat is told it lost work even when nobody talked to it. The tell is a duty of
+    // its own, so a quiet room ships it alone rather than leaving it queued until some later send
+    // happens to carry it. The price is the extra turn this send starts; the size of the price is the
+    // number of kinds, because each kind is told once per session.
+    if (!held.length) {
+      if (!lossBlock) return;
+      sendUser(lossBlock, { expandPromptTemplates: false });
+      // our own send is what ended this run, so the owed-turn notice is suppressed here for the same
+      // reason it is suppressed on the held path below: the lane never had a turn to publish in.
+      flushedThisRun = true;
+      // committed only once the text was handed over, so a send that never happened cannot mark a kind
+      // as told and lose the tell for the rest of the session.
+      lossTeller.commit();
+      return;
+    }
     const { deliver } = takeHeld(held);
-    const { send, rehold } = planHeldFlush(deliver, HELD_FLUSH_MAX_LINES, HELD_FLUSH_MAX_CHARS);
+    const heldBudget = Math.max(1, HELD_FLUSH_MAX_CHARS - (lossBlock ? lossBlock.length + 2 : 0));
+    const { send, rehold } = planHeldFlush(deliver, HELD_FLUSH_MAX_LINES, heldBudget);
     held.splice(0, held.length, ...rehold);
     // label the drained control lines BEFORE the batch is built, so the shipped coalesce assertion
     // (`heldBatchBody(send)`, one message from the whole list) stays literally true.
@@ -2140,9 +2503,12 @@ export default function (pi: ExtensionAPI) {
     // counts the lines IN THIS MESSAGE, not the size of the group it was drained from.
     // expandPromptTemplates is false so a held line that begins with "/" cannot be dispatched as an
     // extension command (pi's own deferred re-call already does this; stated so it stays true).
-    sendUser(`${heldHeader(send.length)}\n\n${heldBatchBody(send)}`, {
+    sendUser(`${lossBlock}${lossBlock ? "\n\n" : ""}${heldHeader(send.length)}\n\n${heldBatchBody(send)}`, {
       expandPromptTemplates: false,
     });
+    // committed only once the text was handed over, so a send that never happened cannot mark a kind
+    // as told and lose the tell for the rest of the session.
+    lossTeller.commit();
   });
 
   // Fresh-session advisory, two independent rules, one post per turn:
@@ -2188,9 +2554,7 @@ export default function (pi: ExtensionAPI) {
         // Nothing is writable at all. Say it on stderr AND in the notify below, and still hand the lane
         // a path to write to: a forced handoff with nowhere to go must not become a silent no-op.
         chosen = RESUME_SCRATCH;
-        diag("ERROR",
-          `[tabichat][ctx] no RESUME dir was usable — falling back to ${RESUME_SCRATCH}, which is tmpfs`,
-        );
+        notice("record-only", `[tabichat][ctx] no RESUME dir was usable — falling back to ${RESUME_SCRATCH}, which is tmpfs`);
       }
       resumeDirLive = chosen;
       if (chosen === RESUME_SCRATCH)
@@ -2223,6 +2587,10 @@ export default function (pi: ExtensionAPI) {
       floorPct: CTX_FORCE,
       renewedThisBoot: AUTO_RENEWED.has(nick),
       resumeWritten: handoffOnDisk(),
+      // The seat's own nick, so this door runs the same handoff audit the remote gate runs (iid 17).
+      // `resumeWritten` only says a file exists; naming the seat is what lets the audit read the newest
+      // one for THIS lane and judge its content, its age, and — where the launcher declares one — its leg.
+      nick: nick,
     });
     if (arv.ok) {
       AUTO_RENEWED.add(nick);
@@ -2293,10 +2661,10 @@ export default function (pi: ExtensionAPI) {
       forced = false;
       gaveUp = true;
       const line = giveUpLine(nick, Math.floor(CTX_FORCE), resumeFile);
-      ctx.ui.notify(`[tabichat] ${line}`, "error");
-      // iid 11: an `error`-level line must be greppable after the toast clears, and this one is a
-      // direct ui.notify (it does not pass through notifySafely's mirror), so it is recorded here.
-      diag("ERROR", `[tabichat] ${line}`);
+      // The same entry as the broker refusal above, for the same reason (iid 11): the record is laid
+      // down first and the toast second, in one call, and the ordering is the belt — a give-up line
+      // that a disposed context swallowed is the worst kind of silence.
+      notifySafely(ctx, `[tabichat] ${line}`, "error");
       if (client && room) {
         publishRoom({ nick, message: line, id: msgId(nick, ++msgSeq, BOOT), ts: Date.now() });
       }
@@ -2305,22 +2673,47 @@ export default function (pi: ExtensionAPI) {
     return { block: true, reason: forceBlockNote(resumeFile) };
   });
 
-  // A provider error ends the turn, is not auto-retried for this class of text, and
-  // leaves the process alive and quiet — which looks exactly like a lane that stopped
-  // working. Put it in the footer so the difference is visible without poking it, and
-  // say it once in this terminal. Nothing here goes to the room.
+  // A provider error ends a run and leaves the process alive and quiet, which looks exactly
+  // like a lane that stopped working. This handler is the OBSERVATION only (leg 907). pi hands
+  // the messages here but not the retry outcome: `AgentEndEvent` carries no `willRetry` field
+  // (pi annotates only its own session-listener copy in `agent-session.js`), and the retry
+  // decision runs in `_handlePostAgentRun()` AFTER this emit returns. So nothing user-visible
+  // prints from here — the handler below at `agent_settled` carries the notice, the boundary
+  // that promises no automatic retry, compaction or queued continuation will run.
   //
-  // Owner ruling of 2026-10-25 (Q8): a tabichat-originated system message carries the product
-  // tag AT THE FRONT, names UPSTREAM as the cause, and states the effect on tabichat — and it
-  // does not restate the provider's payload, which pi already prints. Both halves are carried by
-  // buildNote, so the footer and this toast cannot drift into two different shapes: neither site
-  // adds or moves a tag. This reverses the trailing-tag form shipped on 2026-10-25 (leg 537);
-  // see test_notice_prefix.ts for the emit-site lock.
-  pi.on("agent_end", async (event, ctx) => {
+  // What deliberately STAYS at agent_end (leg 907 AC4): `lastTurn = endStateOf(msgs)` and the
+  // exit breadcrumb beside it are per-run facts, and this is the boundary that receives the
+  // run's messages. Nothing here goes to the room.
+  //
+  // The 2026-10-25 Q8 ruling is unchanged and now reads at the emit site below: the
+  // product tag AT THE FRONT, UPSTREAM named as the cause, and no restatement of the
+  // provider's payload, which pi already prints. Both halves live in buildNote, so the footer
+  // and the toast cannot drift into two shapes: neither site adds or moves a tag. This reverses
+  // the trailing-tag form shipped on 2026-10-25 (leg 537); see test_notice_prefix.ts for the
+  // emit-site lock.
+  pi.on("agent_end", async (event) => {
     const msgs = ((event as { messages?: unknown }).messages ?? []) as EndMessage[];
     lastTurn = endStateOf(msgs);
-    const note = upstreamErrorNote(msgs);
-    if (!note) {
+    pendingUpstreamNote = upstreamErrorNote(msgs);
+  });
+
+  // leg 907 — the notice's boundary. `agent_settled` is pi's final, notification-only event:
+  // "Fired after an agent run has fully settled and no automatic retry, compaction, or queued
+  // continuation will run" (AgentSettledEvent, types.d.ts). That is the only point where a seat
+  // may say anything about retries, and all it may say is what settle guarantees: nothing more
+  // is coming. Whether pi retried before settling is not observable from an extension, so the
+  // line does not claim it, and this handler does not re-implement pi-ai's classifier.
+  //
+  // A SEPARATE registration, beside the held-mention drain above rather than inside it: that
+  // handler returns early when nothing is held, and a notice must not inherit the drain's state
+  // or its ordering. This one therefore runs for every settle — clean, aborted, or errored.
+  pi.on("agent_settled", async (event, ctx) => {
+    const note = pendingUpstreamNote;
+    pendingUpstreamNote = null;
+    // An `aborted` settle is a human interrupt, not an upstream fault (the same rule that makes
+    // upstreamErrorNote return null for an aborted stopReason, kept across the move).
+    const aborted = Boolean((event as { aborted?: unknown }).aborted);
+    if (!note || aborted) {
       ctx.ui.setStatus("upstream", undefined);
       return;
     }
@@ -2502,6 +2895,14 @@ export default function (pi: ExtensionAPI) {
               (err) => (err ? reject(err) : resolve()),
             );
           });
+          // iid 29 (leg 998, C-2) — this hand-off IS a room line: `chat/<room>`, `to:"all"`, `steer:true`,
+          // minted by this seat, and it reaches the socket on its own callback rather than through
+          // `publishRoom`, so the counter that decides the end-of-turn notice has to be moved by it too.
+          // Without it the notice kept one known bypass: a lead whose turn produced only the hold was told
+          // "nothing was published" after publishing to every lane. Counted AFTER the await, so a publish the
+          // socket rejected (the `catch` below) is NOT counted — the same rule as `publishRoom`'s tail, which
+          // sits after its publish call and never before it.
+          publishedThisTurn++;
           ctx.ui.notify(`[tabichat][renew] lead hold published (steered, to=all) before the session change`, "info");
         } catch (e) {
           // Loud, and the renew still proceeds: a lead whose socket is gone cannot notify anybody, but
@@ -2568,7 +2969,7 @@ export default function (pi: ExtensionAPI) {
         const staleHandleLine =
           "[tabichat][renew] WARNING: session replaced but withSession did not fire — the live context handle is STALE. " +
           "Inbound room lines are caught and dropped rather than crashing the seat; restart this lane.";
-        diag("ERROR", staleHandleLine);
+        notice("record-only", staleHandleLine);
         console.error(staleHandleLine);
       }
     },

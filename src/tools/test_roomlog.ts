@@ -264,8 +264,10 @@ check("seen ids from replay land in the id ledger (live redelivery cannot double
 check("unseen reads filter hist lines out — history is never news", idx.includes('got.lines.filter((l) => !l.hist)'), true);
 check("the board is on EXACTLY \"1\", not mere presence of the variable", idx.includes('process.env.MQTT_HIST_BOARD === "1"'), true);
 check("board publishes are gated by the flag", idx.includes("if (HIST_BOARD)"), true);
+// leg 954: this refusal is a RECORD-ONLY notice (kept, never shown), so the cell follows the arm
+// rather than the old hand-written call — same claim, one less thing a future edit can decouple.
 check("an empty board leaf refuses and says so instead of misrouting",
-  /if \(!ht\) \{\s*\n\s*diag\("ERROR",\s*\n\s*`\[tabichat\]\[hist\] MQTT_HIST_BOARD=1/.test(idx), true);
+  /if \(!ht\) \{\s*\n\s*notice\("record-only",\s*\n?\s*`\[tabichat\]\[hist\] MQTT_HIST_BOARD=1/.test(idx), true);
 const histBranch = idx.indexOf('if (topic.startsWith(`chat/${room}/hist/`))');
 const avSite = idx.indexOf("const av = authorVerdict(topic, room");
 check("the board branch is handled BEFORE the room-line path and RETURNS", histBranch > 0 && histBranch < avSite, true);
