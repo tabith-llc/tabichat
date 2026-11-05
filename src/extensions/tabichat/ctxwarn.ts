@@ -202,8 +202,8 @@ export const pickResumeHandoff = (
 export const LEG_ENV = "MQTT_LEG";
 
 /**
- * The leg the seat declares, digits only, "" when it declares none. Tolerant of `MQTT_LEG=959`,
- * `leg-959` and `Leg: 959` alike because a launcher is hand-written; garbage yields "" (no declared
+ * The leg the seat declares, digits only, "" when it declares none. Tolerant of `MQTT_LEG=123`,
+ * `leg-123` and `Leg: 123` alike because a launcher is hand-written; garbage yields "" (no declared
  * leg) rather than a wrong number, which is the direction that cannot mis-refuse a good sheet.
  */
 export const currentLeg = (env: Record<string, string | undefined> = process.env): string => {
