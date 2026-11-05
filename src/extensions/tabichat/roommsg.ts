@@ -398,7 +398,7 @@ export const renderLine = (l: RoomLine): string =>
  * re-dispatches it had never received. A mention used to arrive as `[chat:<nick>] <text>`
  * with nothing to pin it to, so a claim about what the room sent was unfalsifiable inside the
  * lane: the only message ids a lane ever saw were the ones its own posts printed, and the ids
- * invented in that incident copied exactly that shape (`anna-1-a84e80`). The tag carries the
+ * invented in that incident copied exactly that shape (`<nick>-1-<6 hex>`). The tag carries the
  * same id and the same stamp `chat_read` shows for that line, so `scope=inbox` can confirm or
  * deny it in one call. An id-less line (an older client) says `id=none` rather than hiding it.
  */
