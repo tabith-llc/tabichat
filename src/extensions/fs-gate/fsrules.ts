@@ -5,9 +5,9 @@
 /**
  * fs-gate rules — pure logic, no UI, no pi types.
  *
- * Owner policy 2026-10-07 (option 2): anything outside the working directory is ALLOWED unless it is
- * explicitly prohibited. Three outcomes remain: refused silently (denylist), always asked (confirm-only:
- * key-shaped files and the gate's own state), allowed silently (everything else). index.ts does the asking.
+ * Anything outside the working directory is ALLOWED unless it is explicitly prohibited. Three outcomes
+ * remain: refused silently (denylist), always asked (confirm-only: key-shaped files and the gate's own
+ * state), allowed silently (everything else). index.ts does the asking.
  */
 
 /** Tools that name a path directly. */
@@ -192,8 +192,8 @@ export interface RuleHit {
 
 /** Static rules only: working-directory containment, deny, confirm-only, default allow. No memory.
  *
- *  THE DEFAULT IS ALLOW, NOT ASK — option 2, "allow all directory access that isn't explicitly
- *  prohibited", chosen because the gate itself had become the thing slowing the human down. So:
+ *  THE DEFAULT IS ALLOW, NOT ASK — allow all directory access that isn't explicitly prohibited,
+ *  because a gate that prompts on everything becomes the thing slowing the human down. So:
  *  outside the working directory is ALLOWED by default. The denylist stays absolute (that IS the
  *  explicit prohibition), and the confirm-only list still prompts one last time for key-shaped files
  *  (.env, *.pem, *.key, credentials*, models.json, the gate's own files) — that half is a deliberate
@@ -204,15 +204,14 @@ export function classify(path: string, cwd: string, cfg: FsGateConfig, home: str
 	if (denied) return { decision: "deny", rule: `denylist ${denied}`, remember: false };
 	const asked = matches(cfg.alwaysAsk, path, home);
 	if (asked) return { decision: "ask", rule: `confirm-only ${asked}`, remember: false };
-	return { decision: "allow", rule: "default allow (owner policy 2026-10-07)", remember: false };
+	return { decision: "allow", rule: "default allow (outside the working directory, not on the deny or confirm-only list)", remember: false };
 }
 
 /**
- * A path the shell would expand and we cannot (owner friction, 2026-10-07: a lane writing
- * `/tmp/tabichat/note-$N.md` was STOPPED and put to the owner, which the owner called
- * frustrating — verbatim: "this is frustrating the fuck out of me"). The old rule asked on every
- * unresolvable token no matter where it pointed, which contradicts the owner policy of the same
- * day: allow everything that is not explicitly prohibited.
+ * A path the shell would expand and we cannot, like `/tmp/tabichat/note-$N.md`. The old rule asked on
+ * every unresolvable token no matter where it pointed, which contradicts the policy this file
+ * implements: allow everything that is not explicitly prohibited. A prompt the human cannot answer —
+ * because nobody knows where the token resolves — is friction with no protection behind it.
  *
  * So the expression is read as far as it can be. The literal pieces are matched against the
  * rulebook with each variable replaced by a single-character placeholder, which keeps both
@@ -245,7 +244,7 @@ export function classifyUnresolved(raw: string, cwd: string, cfg: FsGateConfig, 
 		return { decision: "ask", rule: "unresolved path expression (file type not visible)", remember: false };
 	const dir = lexical(head.replace(/\/[^/]*$/, ""), cwd, home);
 	if (contains(cwd, dir)) return { decision: "allow", rule: "working directory", remember: false };
-	return { decision: "allow", rule: "default allow (owner policy 2026-10-07; unresolved expression)", remember: false };
+	return { decision: "allow", rule: "default allow (unresolved expression; literal parts outside the working directory, not on the deny or confirm-only list)", remember: false };
 }
 
 /** Owner memory (session/always grants) covers ONLY the plain outside-working-directory ask. Deny and
@@ -261,8 +260,8 @@ export function dirOf(p: string): string {
 }
 
 /** The directory an "allow this directory" answer would grant, or undefined when no such answer is safe
- *  to offer — `/`, `/home`, and the home directory cover the tree. Owner incident 2026-10-07: a prompt
- *  whose labels never named the grant let "/" be approved by accident. */
+ *  to offer — `/`, `/home`, and the home directory cover the tree. A prompt whose labels do not name
+ *  the grant is one where `/` can be approved by accident, so the labels must name it. */
 export function grantDir(p: string, home: string): string | undefined {
 	const d = dirOf(p);
 	const h = home.replace(/\/+$/, "") || "/";
@@ -291,7 +290,7 @@ const HOME_EXPR = /\$\{?(?:HOME|USERPROFILE)\}?/;
 // Note on scope: an earlier form also flagged any `$`-token containing a slash, which
 // made `awk '{print $1/2}'` look like a path outside the workspace. A positional or
 // field parameter is not a path; only an explicit home expansion is. Fuzzed over 25
-// shell fragments on 2026-10-05 to find exactly this class.
+// shell fragments to find exactly this class.
 const LEAD = /^(?:[0-9]*[<>]|&)+/;
 const TRAIL = /[,;:)\]}"']+$/;
 
@@ -308,9 +307,9 @@ const TRAIL = /[,;:)\]}"']+$/;
  * Retained cells: `awk '{print $1/2}'`, `grep -c 'a/b' file.txt`,
  * `date +%Y/%m/%d` yield nothing; `cat /etc/shadow` still yields the path.
  *
- * Two more false-operand classes were retired the same day, on the owner's word after a `sed`
- * expression produced yet another bare-`/` prompt (owner, verbatim: "the agent isn't really trying
- * to access /, it's just a sed command shows a bare / so the whole thing gets [broken]"):
+ * Two more false-operand classes were retired the same way, after a `sed` expression produced yet
+ * another bare-`/` prompt: the agent is not trying to access `/`, the command merely shows a bare `/`
+ * and the whole call gets broken:
  *
  * - **Backslash-escaped whitespace stays inside its token.** The shell does not split there; the old
  *   splitter did. `sed -e s/a\ /b/` became `s/a\` plus `/b/`, and that second half begins with a
@@ -321,7 +320,7 @@ const TRAIL = /[,;:)\]}"']+$/;
  *
  * Accepted trade-off, stated plainly: a slash-only operand is now invisible to this detector, so
  * `chmod 777 /` and `echo x >/` name no path and prompt nothing. Nothing is given up against the
- * owner policy in force (2026-10-07, option 2), which already classifies a bare `/` outside the
+ * policy in force here, which already classifies a bare `/` outside the
  * working directory as `default allow`. The protections that remain - the absolute denylist and the
  * key-shaped confirm-only list - match on path SHAPES and are untouched by either change.
  */

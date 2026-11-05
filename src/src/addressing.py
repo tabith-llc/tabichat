@@ -9,8 +9,8 @@ whole-token discipline — so a lane and a human cannot read one room line as ad
 Pure by design (no paho, no broker), which is the only way the human side of this rule is checkable:
 ``python3 tools/test_addressing.py`` runs on a box where MQTT is absent.
 
-THE RULE (owner request 2026-10-16, verbatim: "only when addressed to \\"@all\\" is the message to be
-broadcasted. a message body including \\"@all\\" does not get broadcasted to all"):
+THE RULE (broadcast means the recipient FIELD says "@all", never the body text: a message is sent to
+all only when it is addressed to "@all", and a message body that includes "@all" is not broadcast):
 
   1. FIELD-FIRST. A room payload carrying a ``to`` field is delivered by that field alone. A token
      quoted in the prose — the all-lanes token included — decides nothing while a field is set.
@@ -26,8 +26,8 @@ naming the room means "inject", because a broadcast is a dispatch. For a human c
 injection — every room line prints — so the field only drives the "[for you]" nudge and the
 receipt, and a broadcast field does NOT make the human's nick ack every room-wide notice. That is
 today's behavior exactly (the clients never matched a body ``@all`` either), and changing it would
-put receipts from the human's own nick on the board for traffic he never answered. If the owner
-wants a broadcast to nudge him, that is a one-line change here and a separate word from him.
+put receipts from the human's own nick on the board for traffic he never answered. If a broadcast
+should nudge the human, that is a one-line change here and a separate decision.
 
 Why tokens and not substrings: the original check was ``"@all" in text``, so "@allen" and "@allow"
 woke the whole room and "@worker10" woke "@worker1". A NAME character is what a room nick can hold —

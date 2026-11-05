@@ -7,7 +7,7 @@
 
     cd src && .venv/bin/python tools/test_wrap_rows.py      (exit 1 on any failure)
 
-WHY THIS FILE WAS REBUILT (leg 506, 2026-10-24). It used to import `chat_cli`, and it could not:
+WHY THIS FILE WAS REBUILT. It used to import `chat_cli`, and it could not:
 it named FOUR symbols that exist in no client at all — `clear_screen`, `frame_rows`, `_CLEAR`,
 `CLEAR_SEQ` — so `python3 tools/test_wrap_rows.py` died at the import line with rc 1 at base
 `1b69e32`, and `deploy-tabichat.sh`'s GATES array never mentioned this file, which is why a whole
@@ -117,12 +117,12 @@ def run_clear(command):
 
 
 # --- positive: a clean line keeps the shape the send path built --------------
-row = tb._wrap_display_rows(room_line("dust", "@ultra test send"), WIDE)
+row = tb._wrap_display_rows(room_line("lane16", "@lane10 test send"), WIDE)
 check("a clean line is one row", len(row), 1)
-check("clean line visible text", visible(row[0]), "21:18:47 dust: @ultra test send")
+check("clean line visible text", visible(row[0]), "21:18:47 lane16: @lane10 test send")
 # The two cells that used to be byte-shape assertions on chat_cli's wrapper. tabichat's wrapper
 # flushes a pending space AFTER re-opening the next colour, so the raw bytes read
-# `\x1b[0m\x1b[38;5;75m dust` where chat_cli emitted `\x1b[0m \x1b[38;5;75mdust`. The VISIBLE text —
+# `\x1b[0m\x1b[38;5;75m lane16` where chat_cli emitted `\x1b[0m \x1b[38;5;75mlane16`. The VISIBLE text —
 # which is the invariant, and the only thing a terminal shows — is identical in both. Assert the
 # invariant, not one file's incidental byte order: exactly one space, no space before the colon.
 check("exactly one space between stamp and nick", re.search(r"\S\s{2,}\S", visible(row[0])) is None, True)
@@ -130,10 +130,10 @@ check("no space before the colon", " :" in visible(row[0]), False)
 check("the nick is coloured", f"{tb.BLUE}" in row[0], True)
 
 # --- positive: a mention mid-body keeps its own single space -----------------
-mid = f"{tb.AMBER}21:18:47{RESET_KEEP} {tb.BLUE}ultra{RESET_KEEP}: {tb.MENTION}@dust{RESET_KEEP} report ready"
+mid = f"{tb.AMBER}21:18:47{RESET_KEEP} {tb.BLUE}lane10{RESET_KEEP}: {tb.MENTION}@lane16{RESET_KEEP} report ready"
 mid_rows = tb._wrap_display_rows(mid, WIDE)
 check("mid-body mention is one row", len(mid_rows), 1)
-check("mid-body mention spacing", visible(mid_rows[0]), "21:18:47 ultra: @dust report ready")
+check("mid-body mention spacing", visible(mid_rows[0]), "21:18:47 lane10: @lane16 report ready")
 
 # --- negative half: spaces the sender really sent are NOT eaten -------------
 check("a real double space survives", visible(tb._wrap_display_rows("a  b", WIDE)[0]), "a  b")
@@ -142,19 +142,19 @@ check("a leading space opens no row", visible(tb._wrap_display_rows("   lead in"
 check("a trailing space closes no row", visible(tb._wrap_display_rows("trail it   ", WIDE)[0]), "trail it")
 check(
     "a body that starts with spaces keeps them after the colon",
-    visible(tb._wrap_display_rows(room_line("dust", "  indented"), WIDE)[0]),
-    "21:18:47 dust:   indented",
+    visible(tb._wrap_display_rows(room_line("lane16", "  indented"), WIDE)[0]),
+    "21:18:47 lane16:   indented",
 )
 
 # --- negative half: an empty body gains no space either ---------------------
 check(
     "empty body, no space before colon",
-    visible(tb._wrap_display_rows(f"{tb.AMBER}21:18:47{RESET_KEEP} {tb.BLUE}dust{RESET_KEEP}:", WIDE)[0]),
-    "21:18:47 dust:",
+    visible(tb._wrap_display_rows(f"{tb.AMBER}21:18:47{RESET_KEEP} {tb.BLUE}lane16{RESET_KEEP}:", WIDE)[0]),
+    "21:18:47 lane16:",
 )
 
 # --- wrapping still behaves: width honoured, colour re-opened, no gaps ------
-rows = tb._wrap_display_rows(room_line("flash5", "word " * 39 + "end"), NARROW)
+rows = tb._wrap_display_rows(room_line("lane5", "word " * 39 + "end"), NARROW)
 check("long line wraps", len(rows) > 1, True)
 check("every row fits the width", all(len(visible(r)) <= NARROW for r in rows), True)
 check("no row opens with a space", any(visible(r).startswith(" ") for r in rows), False)
@@ -162,7 +162,7 @@ check("wrapping lost no words", sum(visible(r).count("word") for r in rows), 39)
 check("a body inside no colour invents none", rows[1].startswith(tb.BLUE), False)
 
 # A body that IS inside a colour must carry that colour onto its continuations.
-coloured = f"{tb.AMBER}21:18:47{RESET_KEEP} {tb.BLUE}flash5{RESET_KEEP}: {tb.MENTION}" + "word " * 39 + "end" + RESET_KEEP
+coloured = f"{tb.AMBER}21:18:47{RESET_KEEP} {tb.BLUE}lane5{RESET_KEEP}: {tb.MENTION}" + "word " * 39 + "end" + RESET_KEEP
 crows = tb._wrap_display_rows(coloured, NARROW)
 check("a coloured body wraps too", len(crows) > 1, True)
 check("continuation rows re-open the colour", all(r.startswith(tb.MENTION) for r in crows[1:]), True)
@@ -193,7 +193,7 @@ check("a coloured break loses no character", sum(visible(r).count("z") for r in 
 
 # --- rows are made at PAINT time, not when the line arrived ------------------
 reset(cap=5000)
-long_entry = room_line("dust", "word " * 60 + "end")
+long_entry = room_line("lane16", "word " * 60 + "end")
 tb.note(long_entry)
 check("note() keeps one entry per message", len(tb.ENTRIES), 1)
 check("note() stores it UNWRAPPED", tb.ENTRIES[0], long_entry)
@@ -212,7 +212,7 @@ check(
 # this does not spend rows it does not need to.
 check(
     "a short line in a wide terminal is one row",
-    len(tb._wrap_display_rows(tb._render_entry(room_line("dust", "short note"), WIDE), WIDE)),
+    len(tb._wrap_display_rows(tb._render_entry(room_line("lane16", "short note"), WIDE), WIDE)),
     1,
 )
 

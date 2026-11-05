@@ -4,7 +4,7 @@
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 // Addressing rules for the tabichat room: what makes a line land in a lane's context.
 //
-// TWO RULES, ONE PREDICATE (owner request 2026-10-16, verbatim intent: broadcasting is a
+// TWO RULES, ONE PREDICATE (broadcasting is a
 // property of the RECIPIENT FIELD, and body text is inert):
 //
 //   1. FIELD-FIRST. A room payload that carries a `to` field is delivered by that field alone.

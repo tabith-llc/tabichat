@@ -3,12 +3,10 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * DIAGNOSTIC SINK (leg 517, owner order 2026-10-24, verbatim: "can we not figure out how to keep
- * errors out of the place the owner types?").
+ * DIAGNOSTIC SINK: machine-readable errors stay out of the place a human types.
  *
  * A lane's terminal is where a human types. `console.error` is not a log, it is an interruption, and
- * #585 and `07b2bbd` proved the class survives the instance: fix one emitter and the other nineteen
- * keep printing. This module is the ONE destination machine-readable diagnostics are written to, so
+ * The class survives the instance: fix one emitter and the rest keep printing. This module is the ONE destination machine-readable diagnostics are written to, so
  * the answer to "where did that line go" is a file a person can grep, not a scrollback a renew has
  * already thrown away.
  *

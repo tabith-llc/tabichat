@@ -27,7 +27,7 @@
  * (`NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN`, checked first), and the old line could not tell the
  * two apart because it never asked. So the notice states only what the settle boundary guarantees.
  *
- * Owner ruling 2026-10-25 (release-gating for 0.1.0): pi already prints the provider's own
+ * For 0.1.0: pi already prints the provider's own
  * words and ends the turn on them, so repeating them here only makes the product look like
  * the thing that broke. The notice names UPSTREAM as the cause and carries the status code
  * plus what to do; it carries no provider prose.
@@ -52,8 +52,8 @@ export type EndMessage = {
  * is pi's to show, not ours to repeat.
  *
  * The tag lives HERE, not at the call site, on purpose: the footer and the toast both read
- * this string, so they cannot drift apart into two different shapes. Owner ruling of
- * 2026-10-25 (Q8): a tabichat-originated system message carries `[tabichat]` AT THE FRONT,
+ * this string, so they cannot drift apart into two different shapes. The shape is:
+ * a tabichat-originated system message carries `[tabichat]` AT THE FRONT,
  * names UPSTREAM as the cause, and states the effect on tabichat. The effect is now
  * only what a settle is promised: that no automatic retry is coming.
  */

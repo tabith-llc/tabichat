@@ -5,12 +5,10 @@
 # file in the repository root. SPDX-License-Identifier: BUSL-1.1
 """tabichat — the human's room CLI, WITH SCROLLBACK.
 
-ONE ROOM CLIENT, AND IT IS THIS FILE. There used to be a second one, `chat_cli.py`: the owner ruled
-it a release blocker and had it retired on 2026-10-24 (verbatim: "i cannot release tabichat with a
-`chat_cli.py` that DOES NOT WORK", and "we will NOT lose functionality from this. if it requires
-moving logic from `chat_cli.py` to `tabichat_cli.py` SO BE IT"), which supersedes his earlier ruling
-of 2026-10-09 ("leave chat_cli.py as-is. create a new chat client call tabichat ... to live
-alongside the regular chat_cli.py"). The one thing that client did that this one did not — a clear
+ONE ROOM CLIENT, AND IT IS THIS FILE. There used to be a second one, `chat_cli.py`. It was retired:
+a release cannot ship a room client that does not work, and nothing was left behind — every piece of
+functionality that client had and this one lacked moved here, which supersedes the earlier plan of
+keeping the two side by side. The one thing that client did that this one did not — a clear
 that blanks the screen and keeps the message history — is here now, as `/clear screen`.
 
 WHAT THIS ONE DOES, and why the retired one could not:
@@ -49,7 +47,7 @@ COMMANDS
     /help                   this list
     /quit                   leave (presence offline) and exit
 
-MARKDOWN-LITE, and the deliberate limit (owner asked whether markdown was "worth it"): the room
+MARKDOWN-LITE, and the deliberate limit (whether markdown is worth it at all is a real question): the room
 stays BYTE-FOR-BYTE PLAIN TEXT on the wire — no markup is ever sent, and the agent-side cap rule
 ("plain text only in the room") is untouched. Rendering happens only in this human client, and
 only three shapes: a fenced ``` block is shown without reflowing it, `code` is tinted, **bold**
@@ -169,7 +167,7 @@ ANSI_RE = re.compile(r"(\033\[[0-9;]*m)")
 
 # A full-screen client repaints in place, so the terminal's own scrollback never fills up — and a
 # stale copy of an old frame left in it is noise. BOTH clears therefore erase the scrollback too
-# (xterm's ED=3), the behaviour the owner's own chat_cli WIP test asked for. It is written by the
+# (xterm's ED=3), the behaviour the earlier `chat_cli` WIP test asked for. It is written by the
 # renderer on the clear itself, not only at teardown: HELP promises the erase, so the wire must
 # show it (measured at dev 1b69e32: CLEAR_SEQ was only emitted when the renderer loop ended).
 CLEAR_SEQ = "\x1b[3J"
@@ -545,7 +543,7 @@ def render_frame(total, avail, size, matrix, scroll, unread=0, line=""):
     `line` is the text being typed RIGHT NOW. It belongs in the frame: the first version of this
     function wrote the prompt and forgot the line buffer, so every keystroke vanished from the
     screen — a client that repaints 10 times a second, reads every key, and shows none of them.
-    The owner caught it by typing into it; no unit check would have, which is why the pty probe now
+    A person typing into it caught that; no unit check would have, which is why the pty probe now
     types and asserts the echo.
     """
     lo, hi = scroll_window(total, avail, scroll)
@@ -770,7 +768,7 @@ def on_message(client, userdata, msg):
             return
         ONLINE[sender] = ("online", time.time())
         message = data.get("message", "")
-        # FIELD-FIRST, TEXT-FALLBACK (owner request 2026-10-16, addressing.py): a payload carrying a
+        # FIELD-FIRST, TEXT-FALLBACK (see addressing.py): a payload carrying a
         # recipient field is addressed by that field alone, so an @nick quoted in the prose no longer
         # makes this terminal shout or ack a line that was never meant for it. A fieldless line (a
         # human's bare type, any sender that predates the field) keeps the whole-body scan.
@@ -1067,7 +1065,7 @@ def cmd_names():
         f"{ts()} {len(rows) + 1} in {TOPIC}: {BLUE}{SELF}{RESET} online, "
         + (", ".join(rows) if rows else "no other peer reported")
     )
-    # R-2717 item 3: this is a board of BEATS. The empty case used to read as an empty room, and a
+    # This is a board of BEATS. The empty case used to read as an empty room, and a
     # coordinator acted on it, so the surface now says what it measured every time it answers.
     note(f"{ts()}   {PEERS_INSTRUMENT}")
     if not rows:
@@ -1245,7 +1243,7 @@ def main(argv=None):
         SELF = clean(args.nick)
     # "must be set" — never guessed: --host for this run, or the site file, or the env. Nothing
     # configured is a REFUSAL with an exit code, printed before the TUI is touched — a client that
-    # starts silent and then cannot connect is the mystery refusal the owner's customers would read
+    # starts silent and then cannot connect is the mystery refusal a customer would read
     # as a broken product.
     if args.host or args.port:
         try:

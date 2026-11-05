@@ -3,7 +3,7 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * Remote lane administration (PROTOTYPE, owner order 2026-10-08: "prototype with 1 + 2 + 3!").
+ * Remote lane administration.
  *
  * Three routes the owner asked for, from least to most invasive:
  *   compact   a room-side request shrinks this lane's context in place   (ctx.compact())
@@ -18,18 +18,17 @@
  * pi's gate (agent-session.ts:2067 in 1.3.0) runs extension commands when that flag is set, and
  * _tryExecuteExtensionCommand builds createCommandContext(), the context that carries newSession().
  * The flag DEFAULTS TO FALSE, which is the entire reason the old reading saw nothing: nobody ever
- * passed it. Proof ran on this box against the built 1.3.0 dist and the mechanism is written out in
- * wave30-specs-20261017/wren-pi-remote-renew-capability-s135.md (s135 finding, owner "do it" 2026-10-18).
+ * passed it. Proof ran against the built 1.3.0 dist.
  *
  * THERE IS NO AUTHORITY GUARD ON THAT PATH — _tryExecuteExtensionCommand never reads `source`,
  * trust, or mode. So the only authority standing between a control-topic publish and a lane losing
  * its session is OURS: the recipient field, the allowlist, and the RESUME bar in adminVerdict. That
- * is precisely why Leg A (the recipient field) had to land before this half could.
+ * is precisely why the recipient field had to land before this half could.
  *
- * AND ONE COST PAID IN FULL ON 2026-10-18: dispatching this command REPLACES THE SESSION, and a
+ * AND ONE COST PAID IN FULL: dispatching this command REPLACES THE SESSION, and a
  * replaced session does not re-fire session_start, so every context the extension had been holding
- * went stale behind it. worker1 died on the next inbound line (assertActive -> uncaughtException ->
- * pi exits). The renew handler now re-arms the live-context handle through newSession's withSession
+ * goes stale behind it. A seat then dies on the next inbound line (assertActive -> uncaughtException
+ * -> pi exits). The renew handler now re-arms the live-context handle through newSession's withSession
  * callback and the inbound handler is wrapped in a try/catch, so a context mistake cannot be a crash
  * vector a second time. A remote renew is a session-ending act: that is what the RESUME bar is for.
  *
@@ -41,7 +40,7 @@
  * Everything that decides anything lives in this file as pure functions so the gate
  * (tools/test_laneadmin.ts) can hold both halves of every truth table without a terminal.
  *
- * RECIPIENT FIELD (s136, Leg A — the ordering the s135 finding argued for): an admin request
+ * RECIPIENT FIELD: an admin request
  * is judged by its `to` FIELD, by the same whole-token predicate the room uses (mention.ts).
  * A lane acts only when that field names it, or names the room (`all`). Two refusals, and the
  * difference is deliberate:
@@ -51,8 +50,8 @@
  *     target that produces silence is a dispatch lost with no trace.
  *   - a field naming somebody else -> REFUSE AND STAY SILENT. This lane is a bystander; nine
  *     terminals printing "not addressed to me" for one request is the noise the recipient
- *     field exists to end (owner order s114: an address written into prose routes nothing —
- *     the FIELD is the only thing that decides).
+ *     field exists to end: an address written into prose routes nothing —
+ *     the FIELD is the only thing that decides.
  * Why this lands BEFORE remote renew: `AdminMsg` had no target field, so the moment renew could
  * actually complete, one publish would have ended every session on the box. Fan-out is now an
  * explicit `to: "all"`, never an accident.
@@ -62,7 +61,7 @@
  */
 
 import { addressedTo, hasAddress } from "./mention.ts";
-// ACT A loud place (c). One direction only: ctxwarn.ts imports NOTHING (tools/test_ctxwarn.ts runs it
+// One direction only: ctxwarn.ts imports NOTHING (tools/test_ctxwarn.ts runs it
 // standalone), and laneadmin.ts is imported by ctxwarn's own callers, so this edge cannot cycle.
 import {
   currentLeg,
@@ -95,8 +94,7 @@ export const ADMIN_FLAGS: Record<AdminAction, string> = {
 };
 
 /**
- * THE SELF-RENEW KNOB (ticket row 2, R1; owner order 2026-10-18, verbatim: "that ticket needs to
- * include YOU BEING ABLE TO SELF RENEW PROPERLY! THE LAST TIME FAILED").
+ * THE SELF-RENEW KNOB: a lane must be able to renew ITSELF, and the earlier shape of this did not.
  *
  * A SEPARATE knob from `LANE_ADMIN_RENEW`, deliberately: that one arms the renew ROUTE (any
  * requester on the allowlist), this one widens it to a request a lane addresses to ITSELF. Both
@@ -202,7 +200,7 @@ export type HandoffAudit =
  * IT MAY NOT REFUSE ON AN INSTRUMENT FAULT, and that is the load-bearing clause. No dirs, an
  * unreadable dir, no sheet for this nick, or a head that will not read, all return `audited: false`:
  * the caller keeps the verdict it already had and says the new bar did not run. Refusing a good sheet
- * because this function could not see it is the false-negative class ACT A and ACT B exist to keep
+ * because this function could not see it is the false-negative class the admission rules exist to keep
  * clear, and it is the expensive direction — a lane that renews with a weak sheet is recoverable, a
  * lane stranded because a gate had a blind spot loses its state outright.
  *
@@ -307,7 +305,7 @@ export const adminVerdict = (opts: {
   idle: boolean;
   resumeWritten: boolean;
   /**
-   * ACT A loud place (c): the dirs this seat actually searched for a handoff, in search order. Optional
+   * The dirs this seat actually searched for a handoff, in search order. Optional
    * and defaulted, so every existing caller and every existing cell reads the OLD sentence unchanged;
    * only a caller that HAS the dirs (index.ts → `resumeSearchDirs()`) gets the informative one.
    */
@@ -331,15 +329,15 @@ export const adminVerdict = (opts: {
   }
   const by = (opts.by ?? "").trim();
   if (!by) return { ok: false, speak: true, reason: "the request carries no sender" };
-  // THE SELF BRANCH (row 2, R1). `by === self` used to be a blanket refusal; the lead's own
-  // `lane_admin.mjs lead-agent lead-agent renew` died here while the tool printed `published`. It is now a
+  // THE SELF BRANCH. `by === self` used to be a blanket refusal; a self-addressed renew died here
+  // while the tool printed `published`. It is now a
   // narrow door, and everything a lane could lose is still guarded: renew ONLY (a self-addressed
   // compact or shutdown returns the OLD refusal, byte for byte), its own opt-in flag ON, the
   // renew ROUTE flag still required, and the RESUME bar below still runs for the session-ending
   // case. The allowlist is deliberately NOT consulted on this path: it exists to judge an
   // OUTSIDE sender, and a worker lane is not on the steer floor — requiring it here would make
   // the door work only for the lead, the owner, and the nicks in MQTT_STEER_NICKS, which is not
-  // the owner's "you should be able to".
+  // not what the knob is for.
   let selfRequested = false;
   if (by === opts.self) {
     const asked = (opts.action ?? "").trim();
@@ -347,9 +345,9 @@ export const adminVerdict = (opts: {
       return { ok: false, speak: true, reason: `${opts.self} cannot administer its own lane by room message` };
     }
     if (!selfRenewEnabled(opts.env)) {
-      // R1's other acceptance half: a refusal must NAME THE WORKING ALTERNATIVE. Silent inertia
+      // A refusal must NAME THE WORKING ALTERNATIVE. Silent inertia
       // is what cost the lead seat a session it believed it had renewed.
-      // AND R2's "the asker must be told WHOM": the honoured floor is this seat's own env, so this
+      // AND the asker must be told WHOM: the honoured floor is this seat's own env, so this
       // refusal is the only place a trapped lane can read it. The sibling stranger-refusal below
       // already prints the same list, so naming it here discloses nothing new — it just stops
       // sending the lane to "a lane on the steer allowlist" with no name attached. An empty floor
@@ -369,11 +367,11 @@ export const adminVerdict = (opts: {
     return { ok: false, speak: true, reason: `${by} is not on the admin allowlist (${opts.allow.join(", ") || "empty"})` };
     // WHAT THIS CHECK IS, AND IS NOT: `allow` is the steer floor (lead + owner + MQTT_STEER_NICKS),
     // and `by` comes straight off an unauthenticated payload -- the broker accepts anonymous CONNECT
-    // and authenticates NO sender, so any LAN peer can write by:"lead-agent" here exactly as it can for a
+    // and authenticates NO sender, so any LAN peer can write any `by` here exactly as it can for a
     // room post. This is therefore a CONVENTION check, not an identity check: it stops a mistaken
     // lane, not a forged request. The refusal wording says "not on the allowlist" rather than
-    // "not authorized" for that reason. Identity requires broker auth --
-    // tabith/features/tabichat-mqtt-broker-auth.md (row mqauth-20261009), ruled HELD 2026-10-09.
+    // "not authorized" for that reason. Identity requires broker auth, which this repo does not ship
+    // yet.
     // Until that lands, LANE_ADMIN_SHUTDOWN stays off, because this is the only thing between a
     // self-asserted name and ctx.shutdown() ending a working lane. The self branch above is narrow
     // for the same reason: it can only renew, only with its own flag on, and only past the RESUME
@@ -417,7 +415,7 @@ export const adminVerdict = (opts: {
   //
   // `startedAtMs` is deliberately NOT passed: freshness is the caller's floor (BOOT_AT_MS) and this
   // gate cannot see it, so re-checking it against this run's clock would invent refusals for exactly
-  // the pre-renew sheets ACT B says must be admitted.
+  // the pre-renew sheets the admission rule says must be admitted.
   if ((act === "shutdown" || act === "renew") && searched.length) {
     const audited = auditHandoff({ nick: opts.self, env: opts.env, dirs: searched });
     if (audited.audited && !audited.ok) return { ok: false, speak: true, reason: audited.reason };
@@ -429,8 +427,8 @@ export const adminVerdict = (opts: {
  * tabichat#5 — SUPERSESSION OF CONTROL LINES. A lane that reads a hold line and then a lift line
  * must be able to tell which is CURRENT when they arrive out of order, and today it cannot: room
  * lines are ordered by ARRIVAL, so a hold published at 08:37 that shows up hours after the 08:58
- * lift reads as the newest instruction in the room. Specimen 1 (s150) obeyed exactly
- * that; specimen 2 (s146) saw one cancel line land ~20×.
+ * lift reads as the newest instruction in the room. Two runs showed it: one obeyed exactly
+ * that; the other saw one cancel line land ~20×.
  *
  * THE HANDLE, AND WHY THIS ONE. Two shapes were open on the row: a monotonic per-sender sequence,
  * or an explicit `lifts <id>` pair. BOTH fail here, and for the same reason — the publishers of a
@@ -443,9 +441,9 @@ export const adminVerdict = (opts: {
  * its `ts` — so the ledger orders by STAMP, and the handle is the pair (channel, stamp).
  *
  * THE CHANNEL IS THE SUBJECT OF THE ORDER, NOT ITS AUTHOR. `comms:<target>` names whose comms are
- * held, so a hold from `lead-agent` and a lift from `owner` land on ONE ledger and order against each
+ * held, so a hold from the lead and a lift from `owner` land on ONE ledger and order against each
  * other. This is the whole design decision and it is deliberate: a guard that only ordered
- * same-sender lines was the named failure mode, and it would have caught neither specimen.
+ * same-sender lines was the named failure mode, and it would have caught neither case.
  *
  * WHAT THIS DOES NOT PROTECT AGAINST, stated because a guard that is not told is a guard people
  * lean on wrongly:
@@ -602,7 +600,7 @@ export const takeParked = <T>(park: readonly T[]): T[] => [...park];
  * iid 20 — ONE broker client per process. The handle has to live where the NEXT run can find it, for
  * the same reason `INBOUND_PARK_KEY` does: the factory body re-runs on a session replacement, so a
  * closure binding dies with the run that set it and the incoming run cannot reach the socket its
- * predecessor left connected. Measured on one unchanged seat (leg 871): four established sockets in
+ * predecessor left connected. Measured on one unchanged seat: four established sockets in
  * one pi process with four live `message` handlers, so a single room line was handled four times and
  * every dead handler parked its own copy of it.
  */
@@ -645,7 +643,7 @@ export const CLIENT_EVENTS = ["connect", "error", "message"] as const;
  * a socket mqtt.js would not close — unhooking is the half that stops the duplication, and naming it is
  * the half that stops the silence.
  *
- * THE STALLED-CLOSE HOLE, measured at leg 890's renewal: the socket survived even though this helper ran
+ * THE STALLED-CLOSE HOLE, measured on a real renewal: the socket survived even though this helper ran
  * and unhooked everything. The reason is above — `end()` returns `this` immediately when
  * `disconnecting` is already set, which is what a graceful close at shutdown leaves behind — so the force
  * never reaches `_cleanUp` and the stream is never destroyed. The listeners are gone, so a stalled client
@@ -696,7 +694,7 @@ export const endPriorClient = <T extends ClosableClient>(
 };
 
 /**
- * iid 20, leg 889 Cell B — ONE measurement line, no behaviour in it.
+ * iid 20 — ONE measurement line, no behaviour in it.
  *
  * The renewal read came back 1 → 2 sockets with zero `[tabichat][client]` rows, which cannot be
  * told apart from the console: an empty store at teardown is BOTH what a working shutdown-first
@@ -754,7 +752,7 @@ export const renewDispatchFailed = (err: string): string =>
   `renew dispatch FAILED (${err}) — nothing was renewed. ${RENEW_COMMAND} is registered by this same extension, so this is a broken command path, not a refusal.`;
 
 /**
- * THE WAKE HALF (s136 Leg D — bought by worker1's renew of 2026-10-18).
+ * THE WAKE HALF, bought by a real renew.
  *
  * What the wire proved, and what it did NOT: a remote renew reached the lane, passed the verdict
  * gate, dispatched /renew, and the lane came back as a NEW session. That is the whole of it.
@@ -762,7 +760,7 @@ export const renewDispatchFailed = (err: string): string =>
  * fresh seat's screen ("no prior context"; that literal is pi's own banner, it is in no file of
  * ours, which I checked by grep across the live extension dir, this repo's src, and the installed
  * 1.3.0 tree). The RESUME file is the only thing that carries context across a renew, and NOTHING
- * made the replacement session read it: worker1 sat at a fresh prompt with its own handoff already
+ * made the replacement session read it: the seat sat at a fresh prompt with its own handoff already
  * on disk. A renew that kills the old seat and wakes an unread one has destroyed a lane, not
  * renewed it.
  *
@@ -775,7 +773,7 @@ export const renewDispatchFailed = (err: string): string =>
  * session is already live and addressable, so there is no window to miss and no sender to rely on.
  *
  * WAKE IS NOT RESUME. The line tells the seat to read its handoff and then HOLD for a dispatch.
- * The owner's no-lane-self-starts law (s105) is not lifted by handing a lane its own notes, so the
+ * The no-lane-self-starts rule is not lifted by handing a lane its own notes, so the
  * text must never read as authorisation to pick up an old leg.
  */
 /**
@@ -830,7 +828,7 @@ export const wakeDirective = (path: string | null, leadNick = "", legNote = ""):
   // Two roles, one line, because the FIRST act of a renewed seat differs by what is waiting on it.
   // A worker reads its notes and holds. A LEAD announces itself again FIRST — lanes may be holding
   // finished verdicts addressed to a nick that was gone a moment ago, and a verdict filed by nobody
-  // is a closed leg with a report on disk (the booked s108 failure). Both forms end in the same
+  // is a closed leg with a report on disk — a failure this office has produced on the record. Both forms end in the same
   // clause, and that clause is the point: WAKE IS NOT RESUME.
   if (leadNick.trim() !== "") {
     const restore =
@@ -856,8 +854,8 @@ export const wakeDirective = (path: string | null, leadNick = "", legNote = ""):
 };
 
 /**
- * One line for a lane's terminal, and NEVER a stack trace (s136, owner report on worker1's renew:
- * "at Socket.ondata (node:internal/streams/readable:1009:22)" was sitting in the harness as a text
+ * One line for a lane's terminal, and NEVER a stack trace:
+ * "at Socket.ondata (node:internal/streams/readable:1009:22)" once sat in the harness as a text
  * artifact).
  *
  * Where it came from: the inbound belt in index.ts printed `e.stack`, and pi renders stderr as
@@ -893,8 +891,7 @@ export const errOneLine = (e: unknown): string => {
 };
 
 /**
- * SITE-WIDE AUTO-RENEW (s136 Leg E, owner request 2026-10-18: "we need a way to configure this
- * option site-wide, auto-renew bool arg").
+ * SITE-WIDE AUTO-RENEW: one knob the operator can set for every seat on the box.
  *
  * WHY A FILE AND NOT ONLY AN ENV LINE. `LANE_ADMIN_RENEW` in the launcher is per-seat, and a box
  * with eighteen seats has eighteen chances to disagree about a policy. The owner asked for a knob
@@ -905,8 +902,7 @@ export const errOneLine = (e: unknown): string => {
  *   1. the pi flag           --auto-renew / --no-auto-renew   (one launch, typed or scripted)
  *   2. the env               LANE_AUTO_RENEW                  (one seat, the launcher's form)
  *   3. the site file         autoRenew                        (every seat that reads it)
- *   4. the default           ON   (owner order 2026-10-24: "make autorenew default to true for
- *                                  tabichat")
+ *   4. the default           ON
  * Layers 1-3 still answer BEFORE the default, and an explicit OFF at any of them (--no-auto-renew,
  * LANE_AUTO_RENEW=0, {"autoRenew": false}) is still heard: the owner's order moved the FLOOR, it did
  * not remove the CEILING.
@@ -998,7 +994,7 @@ export type AutoRenewVerdict = { ok: true } | { ok: false; reason: string };
 /**
  * tabichat#3 AC1 — may this seat dispatch a renew RIGHT NOW, given one may already be in flight?
  *
- * A SECOND concurrent replacement is the fork itself. Measured on the two-seat fixture (s146):
+ * A SECOND concurrent replacement is the fork itself. Measured on a two-seat fixture:
  * every control message arrives TWICE per lane (the seat subscribes to `_ctl` AND `_ctl/#`, and
  * mosquitto delivers one copy per matching subscription — `sport/#` also matches `sport`, MQTT
  * 3.1.1 §4.7), and each copy is adjudicated independently. On a cheap test seat the second copy
@@ -1076,8 +1072,8 @@ export const autoRenewVerdict = (opts: {
  *
  * Why: the shipped version of this lived inline in index.ts's `withSession`, so the strongest thing
  * tools/test_laneadmin.ts could say about it was "the call is in the file" — a pattern match, not a
- * behavior proof. That is the gap this repo has been bitten by before (the 2026-10-07 `ctx is not
- * defined` incident: a perfectly tested module that nothing ever called). So the decision and the
+ * behavior proof. That is the gap this repo has been bitten by before (a `ctx is not
+ * defined` fault: a perfectly tested module that nothing ever called). So the decision and the
  * delivery live HERE, and the caller injects only what only a live session can provide: the
  * replacement context, the filesystem probe, and where to speak. The gate then runs the real
  * function against a fake `next` and asserts what the renewed seat actually receives — including the
@@ -1086,7 +1082,7 @@ export const autoRenewVerdict = (opts: {
  * CONTRACT, and it is the whole reason this is safe to call inside a session-replacement callback:
  * **it never throws.** A wake line that cannot be delivered is bad news, not a crash. If this
  * escaped, the throw would land inside `newSession({ withSession })` and turn a cosmetic miss into
- * a dead seat — the exact failure class Leg C was booked for.
+ * a dead seat — the exact failure class the context re-arm exists to prevent.
  */
 export type RenewTarget = {
   sendUserMessage: (content: string, options?: { deliverAs?: string }) => Promise<void>;
@@ -1100,7 +1096,7 @@ export const wakeRenewedSeat = async (
     resumeCandidates: () => Array<{ path: string; bytes: number | null }>;
     minBytes: number;
     /**
-     * F2 FIX (a) — the nick+freshness fallback scan, supplied by the caller. The exact-name probe
+     * The nick+freshness fallback scan, supplied by the caller. The exact-name probe
      * above keys on BOOT, and a renew mints a new BOOT (and a lane may name its handoff from its
      * session id, not from the notify text), so an exact-name miss is NOT "no handoff". When the
      * fast path misses, the pointer asks this and believes it. Optional so existing callers and
@@ -1118,9 +1114,9 @@ export const wakeRenewedSeat = async (
 ): Promise<{ sent: boolean; path: string | null; error?: string }> => {
   try {
     let path = wakePathFor(deps.resumeCandidates(), deps.minBytes);
-    // F2 FIX (a): an exact-name miss used to be the whole answer, and the renewed seat was told
-    // "NO RESUME file was found" while its handoff sat on disk (the guinea run, 12:48Z — the file
-    // was 3.5 min old). The nick+freshness scan is the same predicate the gate already trusts
+    // An exact-name miss used to be the whole answer, and the renewed seat was told
+    // "NO RESUME file was found" while its handoff sat on disk (the first live run of this path).
+    // The nick+freshness scan is the same predicate the gate already trusts
     // (index.ts:resumeScan); the pointer must not be dumber than the gate. A fallback that throws
     // cannot eat the wake line either — the outer catch still speaks, but a scan error alone must
     // not, so the fallback is guarded here and degrades to the old null answer.
@@ -1157,13 +1153,13 @@ export const wakeRenewedSeat = async (
  * index.ts handoffOnDisk walks, so the gate and the pointer cannot disagree about which dir is
  * "mine"). No candidate clears the bar -> null -> the no-handoff half of wakeDirective.
  *
- * THE KNOWN HOLE, and what closed it. This function measures BYTES, and worker1's 359-byte sheet once
+ * THE KNOWN HOLE, and what closed it. This function measures BYTES, and a 359-byte sheet once
  * cleared a 200-byte bar with a sentence whose own last line confessed it was padding. That hole is no
- * longer open on purpose: leg 959 (tabichat#17) put the payload and leg bar in `auditHandoff`, and the
+ * longer open on purpose: tabichat#17 put the payload and leg bar in `auditHandoff`, and the
  * renew/shutdown door runs it. What is DELIBERATE is the split — `wakePathFor` stays a byte-and-name
  * matcher, because this is the POINTER: telling a seat where its own sheet lives is information, not
- * permission, and a pointer that refuses to look at a real file is the false-negative class ACT A and
- * ACT B exist to clear. The gate asks whether the sheet is fit to lose a session on; the pointer only
+ * permission, and a pointer that refuses to look at a real file is the false-negative class the
+ * admission rules exist to clear. The gate asks whether the sheet is fit to lose a session on; the pointer only
  * says where it is, and now also which leg it claims (`wakeLegNote`) so the seat can judge the match.
  */
 export const wakePathFor = (
@@ -1177,7 +1173,7 @@ export const wakePathFor = (
 };
 
 /**
- * F2 (s269) — the FULL wake-pointer decision, pure, so both halves run headless: exact boot-tag
+ * The FULL wake-pointer decision, pure, so both halves run headless: exact boot-tag
  * hit first (`wakePathFor` over the caller's candidates), and on a miss the nick+freshness scan
  * under the floor the CALLER carries in (the renewing session's start — never a re-minted one).
  * `pickResumeHandoff` answers with a NAME; the wake line needs a PATH, so the caller supplies the
@@ -1199,10 +1195,10 @@ export const wakePickPath = (
 };
 
 /**
- * THE LEAD HOLD (s136 Leg H, owner "update as needed" 2026-10-18).
+ * THE LEAD HOLD.
  *
- * A lead seat that replaces its own session without telling the room first reproduces the booked
- * s108 failure automatically: lanes finish real work, address the lead nick, and the verdict lands
+ * A lead seat that replaces its own session without telling the room first reproduces a
+ * failure this office has produced on the record: lanes finish real work, address the lead nick, and the verdict lands
  * nowhere. The requirement already existed as a promise in a seat contract (the refresh protocol's
  * step 1), and this office has broken promises of exactly that kind on the record — so it moves
  * into the mechanism that performs the renew.
@@ -1211,7 +1207,7 @@ export const wakePickPath = (
  * typing /renew, a remote admin request, and auto-renew at the floor all end in the same command
  * handler, so one insertion covers all three doors. A worker seat renewing publishes NOTHING to the
  * room — one lane's restart is not a fleet event, and every room line lands in every lane's context
- * and is paid for thirteen times over (owner order, s114).
+ * and is paid for thirteen times over.
  *
  * Both blank cases refuse: an empty self cannot be a lead, and an empty LEAD_NICK must not make some
  * random seat start broadcasting room-wide holds. That is the same blank-fallback discipline
@@ -1230,13 +1226,12 @@ export const leadHoldLine = (nick: string): string =>
   `Work does NOT stop: keep executing and keep landing reports.`;
 
 /**
- * THE OUTCOME, PUT ON THE WIRE (ticket row 2, R3: "the outcome must be observable by the ASKER").
+ * THE OUTCOME, PUT ON THE WIRE: the outcome must be observable by the ASKER.
  *
  * What the requester had before this: `lane_admin.mjs` printed `published lane-admin renew ...`
  * and exited 0 whatever happened, because publishing to a topic is the only thing it can see. The
- * lead's s137 specimen is the cost — a self-addressed renew refused at the guard above, the tool
- * reporting success, and the lead planning on a refresh that had not happened (RESUME-wren-015434
- * §9 warns the next body not to trust that line). "Published" was TRUE; "renewed" was a claim the
+ * cost is a self-addressed renew refused at the guard above, the tool
+ * reporting success, and the requester planning on a refresh that had not happened. "Published" was TRUE; "renewed" was a claim the
  * publisher had no evidence for. So the lane that JUDGES the request now answers it, on the same
  * control channel the request rode, with one of exactly three words:
  *
@@ -1245,11 +1240,11 @@ export const leadHoldLine = (nick: string): string =>
  *   refused  this lane is the addressee and it said no, with the verdict's own reason
  *
  * What it is NOT: proof the session actually changed. That observable is the boot tag on the
- * target's next post and its wake line (R4, proven by the lead seat on worker1 at 15:45 the same day), and
+ * target's next post and its wake line (proven on a real renew), and
  * no ack can substitute for it — which is why the tool prints ARMED/RUN and never the word DONE.
  *
  * Bystander lanes publish NOTHING, by the same rule that keeps them silent in the terminal: one
- * targeted request must not make nine terminals talk (Leg A). The seat that answers is the one the
+ * targeted request must not make nine terminals talk. The seat that answers is the one the
  * recipient field named, or every lane when it named nobody — and in that fieldless case the text
  * is identical on all of them, so last-retained-wins loses nothing.
  */
@@ -1331,7 +1326,7 @@ export const adminResultTopic = (room: string, by: string, id: string): string =
  * wide and correlates by the payload's `id`, exactly as it always did:
  * `chat/<room>/_ctl/+/admin/<id>`. `+` is one level, so it matches a responder leaf and nothing
  * deeper; the read side is covered by the same `pattern read chat/<room>/_ctl/#` grant either phase
- * already emits, which is why this subscription works before AND after the ACL pass (leg 496 §7).
+ * already emits, which is why this subscription works before AND after the ACL pass.
  */
 export const adminResultWild = (room: string, id: string): string => {
   const leaf = sanitizeAckId(id);
@@ -1342,7 +1337,7 @@ export const adminResultWild = (room: string, id: string): string => {
  * The process exit code the requester's shell gets. Kept here, next to the payload, so the gate
  * can prove the rc semantics instead of reading them off a print:
  *
- *   0  armed / run — the addressee took it (NOT proof the session changed; see R4 above)
+ *   0  armed / run — the addressee took it (NOT proof the session changed; see the note above)
  *   1  refused     — the addressee said no, and said why
  *   3  unknown     — nothing answered inside the window (the tool's own code; this map never
  *                    invents 0 for a missing answer, which is the exact bug being fixed)

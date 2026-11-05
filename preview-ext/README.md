@@ -4,7 +4,7 @@
 `src/extensions/tabichat/` stays the authority for what actually loads.
 
 **Why it may DIFFER from the shipped copy, deliberately:** this is a dated snapshot, so after any
-extension change its bytes legitimately lag (measured at s270: `index.ts` md5s differ between the
+extension change its bytes legitimately lag (measured on a dated snapshot: `index.ts` md5s differ between the
 two trees). Nobody should "fix" the md5s into agreement as a side errand — that is drift, not decay.
 
 **What keeps the duplication honest:** `src/tools/test_broker.ts` §4a carries the
@@ -19,6 +19,5 @@ named place drift shows up, exactly as the cell's own comment says.
 cells — the gate reads these files, so a blind deletion breaks the suite.
 
 **node_modules is not, and never was, part of the preview.** It was tracked once as a symlink into
-a foreign home path and was removed at s270 (leg 536); `node_modules/` is now gitignored here.
-
-Booked by the builder lane at leg 536 (owner go: "YES! staff before public"), 2026-10-25.
+a foreign home path; `node_modules/` is now gitignored here, and the directory is not part of what
+the release carries.

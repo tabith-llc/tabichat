@@ -81,7 +81,7 @@ check("matches ext glob negative", matches(["**/*.pem"], "/srv/tls/server.pub", 
 check("inside cwd is allowed", classify("/work/venue1/src/a.py", CWD, cfg, HOME).decision, "allow");
 check("tmp is allowed silently", classify("/tmp/opencode/x.out", CWD, cfg, HOME).decision, "allow");
 check("outside cwd is allowed by default now", classify("/media/u/other/repo/f.py", CWD, cfg, HOME).decision, "allow");
-check("default allow names its policy", classify("/media/u/other/repo/f.py", CWD, cfg, HOME).rule, "default allow (owner policy 2026-10-07)");
+check("default allow names its policy", classify("/media/u/other/repo/f.py", CWD, cfg, HOME).rule, "default allow (outside the working directory, not on the deny or confirm-only list)");
 check("default allow is not rememberable (nothing to remember)", classify("/media/u/other/repo/f.py", CWD, cfg, HOME).remember, false);
 check("bare root is allowed by default (the old false-prompt class)", classify("/", CWD, cfg, HOME).decision, "allow");
 check("ssh keys are refused, not asked", classify(`${HOME}/.ssh/id_ed25519`, CWD, cfg, HOME).decision, "deny");
@@ -134,8 +134,8 @@ check("detector flags unresolvable expansion", commandPaths("cat $HOME/private/x
 check("detector keeps mid-path dotdot", toks("rm /work/venue1/../venue2/f"), ["/work/venue2/f"]);
 check("detector sees nothing in an interpreter one-liner (known limit)", toks("python3 -c open('/etc/shadow').read()"), []);
 
-// Regression from a real lane report (2026-10-05): a lane reported a prompt naming a
-// bare `/` after commands like these. Reproduced here so the claim is testable — none of
+// Regression from a real lane report: a lane got a prompt naming a bare `/` after commands like
+// these. Reproduced here so the claim is testable — none of
 // them may yield an outside-cwd path, so none of them can legitimately prompt.
 const f1 = "ls -l --time-style=+%m-%d_%H:%M:%S /tmp/tabichat/a.md; md5sum /tmp/tabichat/a.md; grep -n '431\\|dep-cadence' /tmp/tabichat/a.md";
 const f2 = "cd /media/u/data/tabith && ls info/ 2>/dev/null; grep -rn 'LASTEXITCODE' info/ *.md 2>/dev/null";
@@ -164,7 +164,7 @@ check("quoted awk programs are not path operands", toks("awk '{print $1/2}' f.md
 check("quoted printf formats are not path operands", toks("awk '{printf \"%d\\t%s\\n\", NR, $0}' f.md"), []);
 check("time formats are not path operands", toks("date +%Y/%m/%d; ls --time-style=+%m/%d/%Y"), []);
 
-// --- patch 1 (2026-10-07): memory covered ONLY the plain outside ask. The 2026-10-07 owner reversal
+// --- patch 1: memory covered ONLY the plain outside ask. The default-allow change later
 // removed that hit from classify(); memoryCovers keeps its semantics for any ask that DOES carry
 // remember:true, and stays false for every deny / confirm-only / allow shape. ---
 check("memoryCovers: synthetic rememberable ask is covered", memoryCovers({ decision: "ask", rule: "outside working directory", remember: true }), true);
@@ -189,13 +189,13 @@ check("dirOf root stays root", dirOf("/"), "/");
 check("quoted echo label with slash yields nothing", toks('echo "=== FS GATE / STATE ==="'), []);
 check("single-quoted label with slash yields nothing", toks("echo 'section / next'"), []);
 
-// --- 2026-10-07 unresolved path expressions (owner friction, verbatim: "this is frustrating the fuck
-// out of me" over a prompt on `/tmp/tabichat/note-$N.md`). The expression is read as far as it can be:
-// the rulebook is applied to the literal pieces, and only an unknowable root, a hidden file type, or a
-// shape the rulebook names still comes to the owner.
+// --- unresolved path expressions. A prompt on `/tmp/tabichat/note-$N.md` stopped a lane mid-task and
+// nobody could answer it, because nothing knows where `$N` resolves. The expression is read as far as
+// it can be: the rulebook is applied to the literal pieces, and only an unknowable root, a hidden file
+// type, or a shape the rulebook names still asks the human.
 const un = (raw: string) => classifyUnresolved(raw, CWD, cfg, HOME);
 check("unresolved: the owner's own shape is silent", un("/tmp/tabichat/note-$N.md").decision, "allow");
-check("...and it is the policy rule, not a hole", un("/tmp/tabichat/note-$N.md").rule.includes("default allow"), true);
+check("...and it is the policy rule, not a hole", un("/tmp/tabichat/note-$N.md").rule, "default allow (unresolved expression; literal parts outside the working directory, not on the deny or confirm-only list)");
 check("unresolved: a script name outside cwd is silent", un("/tmp/tabichat/run-$N.sh").decision, "allow");
 check("unresolved: a variable that opens the path still asks", un("$DIR/notes.md").decision, "ask");
 check("...and says the root is unknown", un("$DIR/notes.md").rule, "unresolved path expression (unknown root)");
@@ -204,7 +204,7 @@ check("unresolved: a hidden file type still asks", un("/srv/tls/$F").decision, "
 check("...and says the type is not visible", un("/srv/tls/$F").rule, "unresolved path expression (file type not visible)");
 check("unresolved: a hidden extension asks", un("/srv/tls/key.$EXT").rule, "unresolved path expression (file type not visible)");
 check("NEGATIVE HALF - denylist wins over an expression", un(`${HOME}/.ssh/id_$K`).decision, "deny");
-check("...and names the denylist rule", un(`${HOME}/.ssh/id_$K`).rule.startsWith("denylist"), true);
+check("...and names the denylist rule", un(`${HOME}/.ssh/id_$K`).rule, `denylist ${HOME}/.ssh`);
 check("NEGATIVE HALF - denylist wins with the id partly visible", un(`${HOME}/.ssh/id_ed25519$K`).decision, "deny");
 check("NEGATIVE HALF - confirm-only wins over an expression", un(`${HOME}/secrets/server.pem`).rule, "confirm-only **/*.pem");
 check("NEGATIVE HALF - models.json is known even behind $HOME", un("$HOME/.pi/agent/models.json").rule, "confirm-only **/models.json");

@@ -27,11 +27,12 @@
 # WHY THIS FILE WAS REWRITTEN, and the class of bug it answers.
 #
 # The version this replaces decoded each line with the external decoder command and ended the line
-# `decoded=$(… | <decoder> -r -p) || exit 0`. That decoder is NOT installed on idaho. So the
+# `decoded=$(… | <decoder> -r -p) || exit 0`. That decoder is not installed on the box that ran
+# it. So the
 # substitution failed, `|| exit 0` fired, and **the guard passed every commit on this box without
 # comparing anything** — silently, and it printed one stderr line (`pre-commit: … xxd: not found`)
-# that nobody read because the commit landed anyway. Measured on this seat's own two commits on
-# 2026-10-18: they went through it. That is a security control that fails OPEN, which this project
+# that nobody read because the commit landed anyway. Both commits on that box went through it.
+# That is a security control that fails OPEN, which this project
 # has ruled against twice, and the fix is to make the check real — never to widen or silence it.
 #
 # THREE fail-opens were removed. All three mattered:
@@ -75,7 +76,7 @@ die() {
 # Three states, one line each, decided from the CONFIG and not from a remembered path:
 #   value names this repo's `.githooks`  → this is the documented posture; git consults this file.
 #                                          That same value stops git consulting the LEGACY
-#                                          $(git-dir)/hooks/pre-commit, so from leg 782 the guard
+#                                          $(git-dir)/hooks/pre-commit, so the guard
 #                                          chains any executable prior hook found there AFTER its own
 #                                          checks and propagates its exit status (iid 16 req 2/4).
 #   value names another directory whose `pre-commit` invokes this one → a deliberate chain (the
@@ -89,7 +90,7 @@ die() {
 #                                          deliberately: `TABICHAT_GUARD_PROCEED=1`, honoured for this
 #                                          refusal alone. The shipped answer refused unconditionally,
 #                                          which left an informed user no route except --no-verify
-#                                          (iid 16 req 1, R-2717 item 2). The secret comparison runs
+#                                          (iid 16 req 1). The secret comparison runs
 #                                          under the prefix exactly as it does without it.
 #                                          Narrow by construction: this branch can only fire when something
 #                                          reached this hook anyway (a direct `sh .githooks/pre-commit`, or a
@@ -97,7 +98,7 @@ die() {
 #                                          chains it, git never runs this file and a hook cannot report its
 #                                          own absence — that state belongs to src/tools/check_guard_armed.sh.
 #
-# PROCEED — the escape, and its exact limit (iid 16 req 1, R-2717 item 2).
+# PROCEED — the escape, and its exact limit (iid 16 req 1).
 # The refusal above was unconditional, so a customer who had been told what he was approving still had
 # exactly one move: re-point `core.hooksPath` by hand. That is not "refuse unless told to proceed"; that
 # is refuse, period. So `TABICHAT_GUARD_PROCEED=1` is now heard — for THIS refusal and nothing else:
@@ -175,7 +176,7 @@ if [ -n "$hp" ] && [ -n "$top" ]; then
     else
         # The documented enable state: core.hooksPath points AT this directory. That value also
         # stops git consulting $(git-dir)/hooks/pre-commit — hooksPath replaces the whole set — and
-        # until leg 782 nothing here named the prior hook that replacement displaced (iid 16 req 2).
+        # nothing here used to name the prior hook that replacement displaced (iid 16 req 2).
         # Mark the state; the chain runs at the success paths, AFTER this guard's own checks.
         enabled_here=1
     fi
@@ -192,7 +193,7 @@ FORBIDDEN="$(dirname "$0")/forbidden-strings.hex"
 GDIR="${GIT_DIR:-$(git rev-parse --git-dir 2>/dev/null)}"
 [ -n "$GDIR" ] || die "cannot determine the git directory to hold a scratch pattern file"
 
-# Chain the displaced prior hook (iid 16 req 2/4, leg 782). Only in the documented enable state,
+# Chain the displaced prior hook (iid 16 req 2/4). Only in the documented enable state,
 # only when an EXECUTABLE hook actually exists at the legacy path (a non-executable sample is not a
 # hook git would have run), and only ONCE per commit: the env marker means that if the prior hook
 # itself invokes this guard, the re-entry runs its checks but does not chain again.

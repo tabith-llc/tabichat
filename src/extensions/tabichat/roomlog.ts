@@ -3,7 +3,7 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * THE ROOM JOURNAL (leg 800, owner order 2026-10-30).
+ * THE ROOM JOURNAL.
  *
  * Room lines publish WITHOUT the MQTT retain flag while receipts and presence ARE retained, so a
  * late subscriber is handed the paperwork of the conversation and never the conversation itself.
@@ -12,8 +12,8 @@
  * module puts one participant's view of the room on disk, and hands the newest lines back to the
  * next session BEFORE the socket's first live line — as history, marked as history, never as news.
  *
- * ONE JOURNAL PER SEAT PER ROOM (leg 804, D2): the default key is (home, room, nick-leaf). Eleven
- * lanes under one uid sharing one file lost 93 journaled lines in flash2's measurement while every
+ * ONE JOURNAL PER SEAT PER ROOM: the default key is (home, room, nick-leaf). Eleven
+ * lanes under one uid sharing one file lost 93 journaled lines in one measurement while every
  * writer returned ok — and the write path was read-whole → rewrite-whole per line, which loses
  * concurrent writers even before naming. The hot path is now APPEND-ONLY (O_APPEND); the line cap
  * is enforced by a boot-time trim of that seat's own file, the single-writer moment.
@@ -83,7 +83,7 @@ const onTmpfs = (p: string): boolean => ROOMLOG_TMPFS_PREFIXES.some((t) => p ===
 /**
  * PRECEDENCE, highest first: `MQTT_ROOMLOG` -> site-config `"roomLog"` -> the default under the
  * resolved home (`<home>/.pi/agent/tabichat-roomlog/<room>/<nick>.jsonl` — ONE FILE PER SEAT PER
- * ROOM, leg 804 D2). Both rejection halves are
+ * ROOM). Both rejection halves are
  * diaglog's: an explicit `off` is an answer, a garbage value is refused and never defaulted.
  * `isInGitTree` is injected (a real boot walks the parent directories for a `.git` entry); when it
  * answers true the target is REFUSED — a journal in a repo is a file that can be committed, and it
@@ -147,7 +147,7 @@ export const resolveRoomLogTarget = (
       deliberate: false,
       reason: `the room name "${room}" has no file-leaf-safe form; set ${ROOMLOG_ENV} to an explicit path`,
     };
-  // the nick is part of the KEY (leg 804 D2): the SAME sanitiser as msgTopic/histTopic — one filter,
+  // the nick is part of the KEY: the SAME sanitiser as msgTopic/histTopic — one filter,
   // never a second — and the same empty-leaf refusal. A journal without a seat component is the
   // shared-file defect back, so a default with no usable nick is REFUSED, not silently shared.
   const nickLeaf = topicLeaf(nickRaw);
@@ -231,7 +231,7 @@ export type RoomLogIo = {
 const splitRecords = (content: string): string[] => content.split("\n").filter((l) => l.trim() !== "");
 
 /**
- * Append one record — the HOT PATH, append-only BY CONSTRUCTION (leg 804 D2): a read-whole →
+ * Append one record — the HOT PATH, append-only BY CONSTRUCTION: a read-whole →
  * rewrite-whole cycle with no lock lost concurrent writers silently (measured at a0471508:
  * 160 intended, 68 on disk, every writer returned ok). One O_APPEND write cannot overwrite a
  * neighbour, and the per-seat file means there is no neighbour on the hot path anyway. The cap is
@@ -251,7 +251,7 @@ export const appendRoomLogRecord = (
 };
 
 /**
- * The boot trim (the A1.4 cap, moved off the hot path by leg 804): if the file has grown past the
+ * The boot trim (the line cap, moved off the hot path): if the file has grown past the
  * cap, keep the newest `maxLines` and RETURN the drop count so the wiring reports it — a silent
  * trim is the silent-drop class this module exists to end. Under the cap nothing is touched.
  */

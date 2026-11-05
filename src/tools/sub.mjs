@@ -6,8 +6,8 @@
 //
 // The message handler is registered ONCE, at top level. Registering it inside the `connect`
 // handler added a fresh handler on every reconnect, so one message printed once per handler —
-// same text, same timestamp, N copies. That is the duplicate-room-line defect the owner reported
-// on 2026-10-07; the lanes never had it, because the extension registers its handler outside
+// same text, same timestamp, N copies — the duplicate-room-line class, reported from a real run.
+// The lanes never had it, because the extension registers its handler outside
 // `connect`. Payload ids are additionally deduped through the same helper the lanes use, so a
 // replayed or retained copy cannot print twice either.
 import mqtt from "mqtt";

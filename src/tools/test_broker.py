@@ -3,14 +3,14 @@
 # Licensed under the Business Source License 1.1 (the "License"); you may not use this file
 # except in compliance with the License. You may obtain a copy of the License at the LICENSE
 # file in the repository root. SPDX-License-Identifier: BUSL-1.1
-"""Truth table for the BROKER LOCATION in the python room clients (s138d, site-agnostic).
+"""Truth table for the BROKER LOCATION in the python room clients (site-agnostic).
 
     python3 src/tools/test_broker.py        (exit 1 on any failure)
 
 The same ruling the TypeScript side runs, on this side of the repo:
 
-    owner, 2026-10-18: "tabichat repo needs to be made site agnostic. 1. no default, must be set."
-    owner, same evening: "the mqtt url can be set in a config, not hardcoded. 1. ok"
+    The requirement, stated twice: the repo must be site agnostic — no default broker, it must be set;
+    and the MQTT URL can be read from a config rather than hardcoded.
 
 Order under test: this-run address (--host / /connect) -> site file "mqttUrl" -> MQTT_URL ->
 MQTT_HOST(+MQTT_PORT) -> REFUSE naming the config path searched and every variable name. There is
@@ -18,7 +18,7 @@ no step that guesses a host, and a layer that holds a broken value refuses inste
 through silently.
 
 HALF THE VALUE HERE IS THE TREE SCAN at the bottom (check_venue_scan): "we removed the default" and
-"we removed the address" are different claims and the owner ruled on both. The banned host name is
+"we removed the address" are different claims and the two were decided apart. The banned host name is
 HEX-ENCODED so this file cannot contain the plaintext it guards — same trick as
 .githooks/forbidden-strings.hex, and it is why the scan also reads this file.
 """
@@ -75,7 +75,7 @@ PATH = "/srv/venue/tabichat.json"
 CONFIG_URL = "mqtt://config.example:1883"
 ENV_URL = "mqtt://env.example:1883"
 
-# --- 0. HERMETICITY (s140 finding: this file was NOT hermetic, and it read 17 FAIL on a box that
+# --- 0. HERMETICITY (a finding: this file was NOT hermetic, and it read 17 FAIL on a box that
 # carries the configuration the product recommends) ------------------------------------------------
 # `resolve_broker()` defaults to `dict(os.environ)`; when a caller passes an env dict that holds no
 # TABICHAT_CONFIG, `site_config_path()` resolves `~/.pi/agent/tabichat.json` and the SITE layer
@@ -232,7 +232,7 @@ check("the refusal text is built from the path the caller actually searched", PA
 
 # --- 4. SOURCE SHAPE: the clients really call the resolver, and no default is left ----------
 SRC = os.path.join(os.path.dirname(__file__), "..", "src")
-# `chat_cli.py` left this list with the file (tabichat#10 / leg 506). The loop below `open()`s every
+# `chat_cli.py` left this list with the file (tabichat#10). The loop below `open()`s every
 # name, so a deleted client here is a FileNotFoundError, not a skip — and deploy-tabichat.sh dies on
 # a red test_broker.py, so the order mattered: this line changes before the file is removed.
 clients = ["tabichat_cli.py", "mqtt_tool.py"]

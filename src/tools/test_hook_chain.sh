@@ -17,14 +17,14 @@
 # HOW THE HOST IS SIMULATED, and why nothing here can touch the box. Every git call, the enabler, and
 # the arm check all run with GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM pointed at files inside this
 # harness's scratch directory, and with cwd INSIDE the fixture clone. The real ~/.gitconfig — which on
-# this host holds core.hooksPath=/tabith/githooks — is never read and never written, and no hook path
+# a configured host holds a core.hooksPath of its own — is never read and never written, and no hook path
 # of any real venue is re-aimed by anything below. That second point is not style: the first draft of
 # this file ran the enabler from the harness's own cwd, so every face answered for the venue the
 # harness happened to sit in. The `en` helper below is the correction, and it is the reason the cells
 # can be trusted.
 #
-# The "incumbent global guard" is a fixture this file writes. It enforces the same rule R-2609 gives
-# the real one — author AND committer must be Tabith LLC <info@tabith.com> — and it prints HOST-RAN /
+# The "incumbent global guard" is a fixture this file writes. It enforces the same rule the deployed
+# guard gives the real one — author AND committer must be Tabith LLC <info@tabith.com> — and prints HOST-RAN /
 # HOST-REFUSED so a cell can tell that guard's decision from any other non-zero status.
 #
 # NO REAL SECRET IS USED. Each fixture clone gets a one-row pattern list whose plaintext is the
@@ -73,7 +73,7 @@ arm() { # arm <clone> — the shipped arm check, same discipline
 }
 count() { gc "$1" rev-list --count HEAD | tr -d ' \n'; }
 
-# ---- the fixture host guard, in a directory of its own, as R-2609 installs the real one -------
+# ---- the fixture host guard, in a directory of its own, as the deployed guard installs the real one --
 GH="$SCR/githooks"
 write_host_guard() { # rebuilt by one face on purpose (the refusal cell removes it)
     mkdir -p "$GH"

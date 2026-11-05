@@ -41,7 +41,7 @@ def peer_state(seen, now_epoch, stale_s=STALE_S):
     one whole allowance ahead of us cannot be timed at all — it is a clock we cannot trust, not a
     beat we can rank. It used to read online here (and on the roommsg.ts face) for as long as the
     skew kept the age negative, which is how a seat whose process was gone stayed live on a liveness
-    board. It reads `stale` now: heard something, cannot rank it (R-2717 item 3).
+    board. It reads `stale` now: heard something, cannot rank it.
     """
     if not seen:
         return "offline"

@@ -10,7 +10,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 //   export LEAD_MODEL=opencode/qwen3.8-flash
 //   export WORKER_V1_MODEL=opencode/qwen3.8-flash
 //   export WORKER_V2_MODEL=openrouter/qwen/qwen3.8-flash
-//   export ULTRA_MODEL=oregon/Qwen3.8-Flash-Next-Dynamic-oQ5e-BF16-PLE-mtp
+//   export ULTRA_MODEL=openrouter/qwen/qwen3.8-flash
 // THINKING LEVEL: the level pinned in VIRTUALS below is the default, and it
 // is what route() dispatches. Override it per role with <ROLE>_THINKING (the
 // same stem as that role's model var), e.g.
@@ -29,17 +29,16 @@ const DEFAULT_CTX_WINDOW = 262144;
 const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 type ThinkingLevel = (typeof LEVELS)[number];
 const VIRTUALS = [
-  // CANONICAL lead tier. Renamed 2026-10-09 (owner ok) from `lead-agent`, because that id collided
-  // with the tabichat extension's fallback lead NICK of the same spelling -- four surfaces, one
-  // string, and a seat told to "fix the dead nick" could edit this tier instead and break nothing
-  // loudly. See TERMS.md in the tabith workspace, which is not in this repo. The id carries the
-  // which is the honest thing for a name to say.
+  // CANONICAL lead tier. The id carries the thinking level it pins, which is the honest thing for
+  // a name to say. It was renamed off `lead-agent`, because that spelling collided with the
+  // tabichat extension's fallback lead NICK -- four surfaces, one string, and a seat told to "fix
+  // the dead nick" could edit this tier instead and break nothing loudly.
   { id: "lead-xhigh", env: "LEAD_MODEL", level: "xhigh" },
   // LEGACY alias, kept WORKING so no seat, alias or hand-typed launch that still says
   // `tabith/lead-agent` strands -- a rename that bricks a running fleet is worse than a duplicate
   // /model row. Same env stem, so LEAD_THINKING / LEAD_CTX_WINDOW behave identically here.
-  // Remove only once nothing launches it any more (grep ~/.bashrc, tabichat-aliases.sh, seat
-  // contracts; the collision-check script reports surface (2) each run).
+  // Remove only once nothing launches it any more: check the operator's shell config, the launch
+  // aliases, and the seat contracts; the collision check reports that surface each run.
   { id: "lead-agent", env: "LEAD_MODEL", level: "xhigh" },
   { id: "worker-v1", env: "WORKER_V1_MODEL", level: "medium" },
   { id: "worker-v2", env: "WORKER_V2_MODEL", level: "high" },

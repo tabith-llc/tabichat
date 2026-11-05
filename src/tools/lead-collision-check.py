@@ -32,15 +32,15 @@ import sys
 
 EXT = os.path.expanduser("~/.pi/agent/extensions")
 BASHRC = os.path.expanduser("~/.bashrc")
-DOCUMENTED_FALLBACK = "lead-agent"     # site-neutral default: TERMS.md, row 1
+DOCUMENTED_FALLBACK = "lead-agent"     # the shipped default in ctxwarn.ts, quoted as a value
 
-# The tabith workspace root, RESOLVED AT RUNTIME. It used to be the hardcoded montana path
-# "/media/dust/dust-ext1/tabith", which is absent on idaho — read() then swallowed the OSError,
-# seat_holders printed <missing> with NO drift, and --strict still exited 0: a green verdict
-# from an instrument inspecting nothing. Candidates are ordered host-neutrally; both live
-# faces (idaho /tabith and the montana copy) resolve, and a root that exists but yields no
-# readable launcher is LOUD (see seat_holders + the drift in main).
-TABITH_CANDIDATES = ("/tabith", "/media/dust/dust-ext1/tabith")
+# The workspace root, RESOLVED AT RUNTIME. It used to be one hardcoded mount path that is
+# absent on other hosts — read() then swallowed the OSError, seat_holders printed <missing>
+# with NO drift, and --strict still exited 0: a green verdict from an instrument inspecting
+# nothing. The candidate list carries the one root this layout names; a host whose workspace
+# lives elsewhere sets TABITH_ROOT, which is a DECLARATION and is never silently overridden.
+# A root that exists but yields no readable launcher is LOUD (see seat_holders + the drift in main).
+TABITH_CANDIDATES = ("/tabith",)
 
 
 def tabith_root():
@@ -87,23 +87,22 @@ def surface_bashrc():
 
 
 LEAD_ROLE_SUFFIX = "/agents/lead"   # the lead seat is resolved by ROLE, never by a hardcoded
-                                     # nick — a seat rename must not need an edit here (leg 539).
+                                     # nick — a seat rename must not need an edit here.
 
 
 def seat_holders():
     """Which role dir the LEAD launcher actually boots, and the nick it sets.
 
-    Returns (holders, root): holders is a list of (path, role_dir, nick, model) — the idaho
-    face names its file `tabichat-aliases-idaho.sh` and the montana face `tabichat-aliases.sh`,
-    and BOTH parse because a holder printed from a stale face is exactly the silent-stale class
-    this leg exists to kill. `holders == []` means the launcher surface was NOT inspected —
+    Returns (holders, root): holders is a list of (path, role_dir, nick, model). A root may
+    hold `tabichat-aliases.sh`, `tabichat-aliases-<face>.sh`, or both, and BOTH parse, because a
+    holder printed from a stale face is exactly the silent-stale class this census exists to kill. `holders == []` means the launcher surface was NOT inspected —
     main() turns that into a named drift and a non-zero --strict exit, so 'no drift' is
     unreachable while the read failed.
 
     The seat is matched by ROLE (its `_tabith_seat` first argument ends in `/agents/lead`) and
-    NOT by name: the launcher function name is captured, so a renamed lead seat still resolves
-    (leg 539 AC). Three launcher shapes parse — the plain `name() { _tabith_seat ... }`, the
-    `( export ...; _tabith_seat ... )` subshell-wrapped form the live idaho seat uses, and a
+    NOT by name: the launcher function name is captured, so a renamed lead seat still resolves.
+    Three launcher shapes parse — the plain `name() { _tabith_seat ... }`, the
+    `( export ...; _tabith_seat ... )` subshell-wrapped form a live seat uses, and a
     `VAR=value _tabith_seat ...` prefix form — all kept to the header's own line so a multi-line
     function body can never reach the seat fields.
     """
@@ -152,8 +151,8 @@ def main():
         if root is None:
             env_root = os.environ.get("TABITH_ROOT")
             where = (f"TABITH_ROOT={env_root!r} is set but is not a directory" if env_root else
-                     "no TABITH root exists (TABITH_ROOT unset, and neither /tabith nor "
-                     "/media/dust/dust-ext1/tabith is a directory)")
+                     "no TABITH root exists (TABITH_ROOT is unset and /tabith is not a "
+                     "directory — set TABITH_ROOT on a host whose workspace is mounted elsewhere)")
         else:
             where = f"no readable tabichat-aliases*.sh at {root}"
         drift.append(
@@ -164,7 +163,7 @@ def main():
         drift.append(f"surface (1) no longer falls back to {DOCUMENTED_FALLBACK!r} -- TERMS.md is stale or routing moved")
     if not leadnick:
         drift.append("~/.bashrc sets no MQTT_LEAD_NICK export: a bare `pi --tabichat` launch routes alarms to the fallback")
-    # SURFACE (2), post-rename (2026-10-09): the CANONICAL tier is `lead-xhigh` and `lead-agent`
+    # SURFACE (2), post-rename (): the CANONICAL tier is `lead-xhigh` and `lead-agent`
     # survives only as a LEGACY ALIAS. Both must be present: canonical missing = the rename did not
     # land; alias missing = something still launching `tabith/lead-agent` is now bricked.
     ids = [i[0] for i in tiers]

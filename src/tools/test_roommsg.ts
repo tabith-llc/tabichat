@@ -106,11 +106,11 @@ check("space runs collapse", foldToOneLine("too    many     spaces"), "too many 
 check("tabs collapse", foldToOneLine("a\t\tb"), "a b");
 check("whitespace-only becomes empty (refused upstream)", foldToOneLine("  \n\t "), "");
 check("empty stays empty", foldToOneLine(""), "");
-check("{me} expands then folds", expandMe("hi\n{me} here", "ultra"), "hi ultra here");
+check("{me} expands then folds", expandMe("hi\n{me} here", "lane10"), "hi lane10 here");
 check(
   "{me} in a one-line message still works",
-  expandMe("{me} ready", "ultra"),
-  "ultra ready",
+  expandMe("{me} ready", "lane10"),
+  "lane10 ready",
 );
 
 // --- P2: ids, control topic, acks ------------------------------------------
@@ -118,19 +118,19 @@ check(
 // session of a lane (index.ts), so an id built from nick+seq alone is handed to TWO
 // different messages, and receipts are filed by id — so a lookup reports a delivery that
 // belongs to the lane's earlier message. Observed live: two receipts 8h44m apart for one
-// id (flash1-11), one of them from a message the reader had never seen.
-check("message id carries nick, seq and boot", msgId("ultra", 7, "a1b2c3"), "ultra-7-a1b2c3");
+// id (lane1-11), one of them from a message the reader had never seen.
+check("message id carries nick, seq and boot", msgId("lane10", 7, "a1b2c3"), "lane10-7-a1b2c3");
 // arity is the guard: a third parameter with a default value would let a call site go on
 // minting ids without a boot tag, which is the bug wearing a new signature
 check("msgId demands three arguments", msgId.length, 3);
 check(
   "ids differ per seq within one boot",
-  msgId("ultra", 7, "a1b2c3") !== msgId("ultra", 8, "a1b2c3"),
+  msgId("lane10", 7, "a1b2c3") !== msgId("lane10", 8, "a1b2c3"),
   true,
 );
 check(
   "one seq in two boots cannot collide (a restarted lane)",
-  msgId("flash1", 11, "a1b2c3") !== msgId("flash1", 11, "d4e5f6"),
+  msgId("lane1", 11, "a1b2c3") !== msgId("lane1", 11, "d4e5f6"),
   true,
 );
 check("boot tag is fixed-width hex, drawn deterministically", bootTag(() => 0), "000000");
@@ -139,28 +139,28 @@ check("boot tag uses the whole draw", bootTag(() => 0.5), "080000");
 // 0x100000; padded it still lands inside six chars.
 check("the largest draw still fits six chars", bootTag(() => 0.9999999), "0fffff");
 check(
-  // shape (ii), leg 496: the board entry lives under the ACKNOWLEDGING lane, so the same id written
+  // shape (ii): the board entry lives under the ACKNOWLEDGING lane, so the same id written
   // by two lanes occupies two topics and neither can overwrite the other.
   "receipt board topic takes a boot-tagged id unchanged, under the acknowledger's leaf",
-  ackTopic("tabith", "ultra", "ultra-7-a1b2c3"),
-  "chat/tabith/_ctl/ultra/ultra-7-a1b2c3",
+  ackTopic("tabith", "lane10", "lane10-7-a1b2c3"),
+  "chat/tabith/_ctl/lane10/lane10-7-a1b2c3",
 );
 {
   // THE COLLISION THAT THE OLD SHAPE HAD, measured rather than asserted: one id, two writers. Under
   // `_ctl/<id>` both writers addressed the SAME topic, so MQTT's one-retained-payload-per-topic rule
-  // meant the second ack erased the first and a late joiner could be told "only flash3 got it".
-  const a = ackTopic("tabith", "flash3", "lead-agent-17");
-  const b = ackTopic("tabith", "clerk", "lead-agent-17");
+  // meant the second ack erased the first and a late joiner could be told "only lane3 got it".
+  const a = ackTopic("tabith", "lane3", "lead-agent-17");
+  const b = ackTopic("tabith", "lane14", "lead-agent-17");
   check("two lanes acking ONE id get TWO different topics (the collapse is gone)", a !== b, true);
   check("and neither topic is the old forgery-addressable flat child", [a, b].some((t) => t === "chat/tabith/_ctl/lead-agent-17"), false);
 }
 {
   // both halves: two boots of one seq, receipts from two lanes. Neither receipt may be
   // read as the other's, and neither may replace the other.
-  const morning = msgId("flash1", 11, "a1b2c3");
-  const tonight = msgId("flash1", 11, "d4e5f6");
-  let log = recordAck([], ackPayload(morning, "dust", "flash1", 1000), 50);
-  log = recordAck(log, ackPayload(tonight, "lead-agent", "flash1", 2000), 50);
+  const morning = msgId("lane1", 11, "a1b2c3");
+  const tonight = msgId("lane1", 11, "d4e5f6");
+  let log = recordAck([], ackPayload(morning, "lane16", "lane1", 1000), 50);
+  log = recordAck(log, ackPayload(tonight, "lead-agent", "lane1", 2000), 50);
   check("receipts of two boots both stay on the board", log.length, 2);
   check(
     "lookup by one boot's id returns only that message's receipts",
@@ -171,13 +171,13 @@ check(
   // double arrival would read as a different message and dedupe would die
   check(
     "same inputs mint the same id (no hidden per-call state)",
-    msgId("flash1", 11, "a1b2c3"),
+    msgId("lane1", 11, "a1b2c3"),
     morning,
   );
   // dedupe still holds on a tagged id: the flat topic and the retained board hand the same
   // receipt over twice, and that must read as ONE delivery (recordAck's documented case)
-  let twice = recordAck([], ackPayload(tonight, "dust", "flash1", 3000), 50);
-  twice = recordAck(twice, ackPayload(tonight, "dust", "flash1", 3500), 50);
+  let twice = recordAck([], ackPayload(tonight, "lane16", "lane1", 3000), 50);
+  twice = recordAck(twice, ackPayload(tonight, "lane16", "lane1", 3500), 50);
   check("a tagged id's double arrival still collapses to one receipt", twice.length, 1);
   check(
     "a tagged id's double arrival keeps the newer stamp",
@@ -186,7 +186,7 @@ check(
   );
   check(
     "the id|lane query form still resolves a tagged id",
-    queryAcks(twice, { id: `${tonight}|dust`, limit: 10 }).length,
+    queryAcks(twice, { id: `${tonight}|lane16`, limit: 10 }).length,
     1,
   );
   check(
@@ -212,24 +212,24 @@ check(
   controlTopic("tabith") !== "chat/tabith",
   true,
 );
-const ack = ackPayload("flash1-3", "ultra", "flash1", 1000);
-check("ack shape", ack, { kind: "ack", id: "flash1-3", to: "flash1", by: "ultra", ts: 1000 });
+const ack = ackPayload("lane1-3", "lane10", "lane1", 1000);
+check("ack shape", ack, { kind: "ack", id: "lane1-3", to: "lane1", by: "lane10", ts: 1000 });
 check("well-formed ack is accepted", isAck(ack), true);
-check("ack missing id is rejected", isAck({ kind: "ack", by: "ultra" }), false);
+check("ack missing id is rejected", isAck({ kind: "ack", by: "lane10" }), false);
 check("wrong kind is rejected", isAck({ kind: "chat", id: "x", by: "y" }), false);
 check("null is rejected", isAck(null), false);
 
 // --- P5: per-nick presence, liveness ---------------------------------------
-check("per-nick presence topic", presenceTopic("tabith", "flash1"), "chat/tabith/presence/flash1");
+check("per-nick presence topic", presenceTopic("tabith", "lane1"), "chat/tabith/presence/lane1");
 check(
   "two nicks get two retained records",
-  presenceTopic("tabith", "flash1") !== presenceTopic("tabith", "flash2"),
+  presenceTopic("tabith", "lane1") !== presenceTopic("tabith", "lane2"),
   true,
 );
 check("wildcard covers the per-nick form", presenceWild("tabith"), "chat/tabith/presence/#");
 check(
   "per-nick topic is inside the wildcard (and not equal to the legacy topic)",
-  presenceTopic("tabith", "flash1").startsWith(legacyPresenceTopic("tabith") + "/"),
+  presenceTopic("tabith", "lane1").startsWith(legacyPresenceTopic("tabith") + "/"),
   true,
 );
 
@@ -264,7 +264,7 @@ check(
   "offline",
 );
 check("a peer clock slightly ahead reads online", peerState(seen("online", now + 30_000), now), "online");
-// THE FIDELITY PAIR (R-2717 item 3, the s305 lesson). The stamp is the PEER'S clock and the age is
+// THE FIDELITY PAIR — the instrument must name what it measured. The stamp is the PEER'S clock and the age is
 // taken against OURS, so a record further ahead than one whole allowance is not a beat that can be
 // timed — it is a clock this seat cannot rank. It used to read `online`, permanently, for as long as
 // the skew held the age negative: a seat whose process was gone stayed live on the peers board and
@@ -298,8 +298,8 @@ check(
 check("an unstamped row says unstamped, never an age", peerAge(seen("online", 0), now), "no stamp");
 check(
   "the listing carries the skew, not a clamped zero",
-  renderPeers([["flash7", seen("online", now + 600_000)]] as [string, PeerSeen][], now, "ultra"),
-  ["? flash7 stale ahead 10m00s"],
+  renderPeers([["lane7", seen("online", now + 600_000)]] as [string, PeerSeen][], now, "lane10"),
+  ["? lane7 stale ahead 10m00s"],
 );
 check("age label seconds", ageLabel(42_000), "42s");
 check("age label minutes", ageLabel(192_000), "3m12s");
@@ -307,27 +307,27 @@ check("age label hours", ageLabel(7_500_000), "2h05m");
 check("age label never goes negative", ageLabel(-5_000), "0s");
 const listing = renderPeers(
   [
-    ["ultra", seen("online", now)],
-    ["flash1", seen("online", now - 10_000)],
-    ["flash2", seen("online", now - 400_000)],
-    ["flash3", seen("offline", now - 1_000)],
+    ["lane10", seen("online", now)],
+    ["lane1", seen("online", now - 10_000)],
+    ["lane2", seen("online", now - 400_000)],
+    ["lane3", seen("offline", now - 1_000)],
   ] as [string, PeerSeen][],
   now,
-  "ultra",
+  "lane10",
 );
-check("self is left out of the listing", listing.some((l) => l.includes("ultra")), false);
+check("self is left out of the listing", listing.some((l) => l.includes("lane10")), false);
 check(
   "an unstamped peer says so instead of inventing an age",
-  renderPeers([["flash9", seen("online", 0)]] as [string, PeerSeen][], now, "ultra"),
-  ["? flash9 stale no stamp"],
+  renderPeers([["lane9", seen("online", 0)]] as [string, PeerSeen][], now, "lane10"),
+  ["? lane9 stale no stamp"],
 );
 check(
   "listing lines read <mark> <nick> <state> <age>",
   listing.map((l) => l.split(" ").slice(1, 3)),
   [
-    ["flash1", "online"],
-    ["flash2", "stale"],
-    ["flash3", "offline"],
+    ["lane1", "online"],
+    ["lane2", "stale"],
+    ["lane3", "offline"],
   ],
 );
 check(
@@ -341,22 +341,22 @@ check(
   ["*", "?", "-"],
 );
 
-// --- presence fidelity: the surface names its own instrument (R-2717 item 3) ----------------
+// --- presence fidelity: the surface names its own instrument ------------------------------
 // The rows alone read as a census of the room, and a census is a claim about processes. Nothing here
 // looks at a process: the reading is the last beat THIS seat heard, ranked against THIS seat's clock.
 // The board now prints that sentence with the rows — and on the empty face, which is the one that was
 // acted on twice.
 const board = renderPeersBoard(
   [
-    ["ultra", seen("online", now)],
-    ["flash1", seen("online", now - 10_000)],
-    ["flash2", seen("online", now - 400_000)],
+    ["lane10", seen("online", now)],
+    ["lane1", seen("online", now - 10_000)],
+    ["lane2", seen("online", now - 400_000)],
   ] as [string, PeerSeen][],
   now,
-  "ultra",
-  "dust-6",
+  "lane10",
+  "lane16-6",
 );
-check("the board still renders every peer row", board.includes("* flash1 online 10s"), true);
+check("the board still renders every peer row", board.includes("* lane1 online 10s"), true);
 check(
   "and it states the instrument, verbatim, beside the rows",
   board.split("\n").some((l) => l === PEERS_INSTRUMENT),
@@ -370,16 +370,16 @@ check(
 check("the board counts its rows and says how many were stamped", board.includes("rows: 2 (stamped: 2; unstamped: 0)"), true);
 check(
   "PAIRED — an unstamped record is counted as unstamped, not silently ranked as life",
-  renderPeersBoard([["flash9", seen("online", 0)]] as [string, PeerSeen][], now, "ultra", "dust-6").includes(
+  renderPeersBoard([["lane9", seen("online", 0)]] as [string, PeerSeen][], now, "lane10", "lane16-6").includes(
     "rows: 1 (stamped: 0; unstamped: 1)",
   ),
   true,
 );
-const empty = renderPeersBoard([["ultra", seen("online", now)]] as [string, PeerSeen][], now, "ultra", "dust-6");
+const empty = renderPeersBoard([["lane10", seen("online", now)]] as [string, PeerSeen][], now, "lane10", "lane16-6");
 check(
   "THE FACE THAT COST TWO LANES: an empty board says it heard nothing, and never that the room is empty",
   [
-    empty.includes("no other peer heard of in dust-6"),
+    empty.includes("no other peer heard of in lane16-6"),
     empty.includes("this seat's subscription, not about the room"),
     empty.includes(PEERS_INSTRUMENT),
   ],
@@ -390,92 +390,92 @@ check(
 check("timestamp renders HH:MM:SS", /^\d{2}:\d{2}:\d{2}$/.test(tsLabel(now)), true);
 check(
   "rendered line carries the time and the nick",
-  renderLine({ nick: "flash1", message: "hello", ts: now }),
-  `[${tsLabel(now)} chat:flash1] hello`,
+  renderLine({ nick: "lane1", message: "hello", ts: now }),
+  `[${tsLabel(now)} chat:lane1] hello`,
 );
-// --- the RECIPIENT FIELD on the rendered line (owner request 2026-10-16) -----------------------
+// --- the RECIPIENT FIELD on the rendered line ------------------------------------------
 // A line that carries a field must show it, so chat_read reports the real addressee instead of
 // letting a lane infer one from prose. It renders as `to=<value>`, NEVER as `@<value>`: the `@`
 // form is the body token this change makes inert, and a broadcast must not read as one here.
 check(
   "a field-bearing line shows its addressee",
-  renderLine({ nick: "wren", message: "@wren go", ts: now, to: "flash1" }),
-  `[${tsLabel(now)} chat:wren to=flash1] @wren go`,
+  renderLine({ nick: "lane11", message: "@lane11 go", ts: now, to: "lane1" }),
+  `[${tsLabel(now)} chat:lane11 to=lane1] @lane11 go`,
 );
 
 // --- the recipient FIELD across the wire: publish -> JSON -> receive, no broker involved -------
 // This is the only way to prove the field actually SURVIVES the transport instead of merely being
 // named at a call site: a key dropped by the publisher, or read off the wrong name by the receiver,
 // fails here. The reader set is the room; the line quotes addresses in prose on purpose.
-const WIRE_TEXT = "verdict for @wren: 3 direct @flash5, 4 @all in my inbox";
+const WIRE_TEXT = "verdict for @lane11: 3 direct @lane5, 4 @all in my inbox";
 const wireOf = (to: string | undefined): Record<string, unknown> =>
-  JSON.parse(JSON.stringify(roomPayload({ nick: "librarian", message: WIRE_TEXT, id: "librarian-9-abcd12", ts: now, ...(to ? { to } : {}) })));
+  JSON.parse(JSON.stringify(roomPayload({ nick: "lane15", message: WIRE_TEXT, id: "lane15-9-abcd12", ts: now, ...(to ? { to } : {}) })));
 const wireReads = (payload: Record<string, unknown>, reader: string): boolean =>
   receives(recipientField(payload.to as string | undefined), payload.message as string, reader);
 
-check("the publisher writes the field when an addressee was named", wireOf("wren").to, "wren");
+check("the publisher writes the field when an addressee was named", wireOf("lane11").to, "lane11");
 check("NEGATIVE HALF — no addressee means no field key at all", "to" in wireOf(undefined), false);
 check(
   "...and a fieldless payload is byte-identical to the shape older senders wrote",
   JSON.stringify(wireOf(undefined)),
-  JSON.stringify({ nick: "librarian", message: WIRE_TEXT, id: "librarian-9-abcd12", ts: now }),
+  JSON.stringify({ nick: "lane15", message: WIRE_TEXT, id: "lane15-9-abcd12", ts: now }),
 );
-check("across the wire the field still addresses only its own reader", wireReads(wireOf("wren"), "wren"), true);
+check("across the wire the field still addresses only its own reader", wireReads(wireOf("lane11"), "lane11"), true);
 check(
   "THE DEFECT HALF — a seat quoted in that same body receives nothing across the wire",
-  wireReads(wireOf("wren"), "courier"),
+  wireReads(wireOf("lane11"), "lane12"),
   false,
 );
 check(
   "...nor the seat whose nick sits in the prose with no field naming it",
-  wireReads(wireOf("wren"), "flash5"),
+  wireReads(wireOf("lane11"), "lane5"),
   false,
 );
-check("a room-wide field still reaches every reader across the wire", wireReads(wireOf("all"), "courier"), true);
+check("a room-wide field still reaches every reader across the wire", wireReads(wireOf("all"), "lane12"), true);
 check(
   "DOCUMENTED LIMITATION HALF — a fieldless line decides by its body, so the quoted broadcast still reaches everyone",
-  wireReads(wireOf(undefined), "courier"),
+  wireReads(wireOf(undefined), "lane12"),
   true,
 );
 check(
   "...and that is exactly why the publisher must set the field: the same line WITH a field is inert prose",
-  wireReads(wireOf("wren"), "courier"),
+  wireReads(wireOf("lane11"), "lane12"),
   false,
 );
 check(
   "...and a real broadcast typed with no field reaches everyone, as it always did",
-  wireReads(JSON.parse(JSON.stringify(roomPayload({ nick: "wren", message: "@all hold comms", id: "wren-1-abcd12", ts: now }))), "courier"),
+  wireReads(JSON.parse(JSON.stringify(roomPayload({ nick: "lane11", message: "@all hold comms", id: "lane11-1-abcd12", ts: now }))), "lane12"),
   true,
 );
 check(
   "the steer flag and the field are independent keys, both optional",
-  JSON.stringify(wireOf("wren")).includes("steer"),
+  JSON.stringify(wireOf("lane11")).includes("steer"),
   false,
 );
 check(
   "...and a steer asked for lands beside the field",
-  JSON.parse(JSON.stringify(roomPayload({ nick: "wren", message: "x", id: "wren-2-abcd12", ts: now, to: "flash1", steer: true }))).steer,
+  JSON.parse(JSON.stringify(roomPayload({ nick: "lane11", message: "x", id: "lane11-2-abcd12", ts: now, to: "lane1", steer: true }))).steer,
   true,
 );
 check(
   "NEGATIVE HALF — a fieldless line renders exactly as before (no invented addressee)",
-  renderLine({ nick: "wren", message: "@flash1 go", ts: now }),
-  `[${tsLabel(now)} chat:wren] @flash1 go`,
+  renderLine({ nick: "lane11", message: "@lane1 go", ts: now }),
+  `[${tsLabel(now)} chat:lane11] @lane1 go`,
 );
 check(
   "...and a blank field renders as no field at all",
-  renderLine({ nick: "wren", message: "hi", ts: now, to: "  " }),
-  `[${tsLabel(now)} chat:wren] hi`,
+  renderLine({ nick: "lane11", message: "hi", ts: now, to: "  " }),
+  `[${tsLabel(now)} chat:lane11] hi`,
 );
 check(
   "the broadcast field is shown as a field, not as a body token",
-  renderLine({ nick: "wren", message: "hold", ts: now, to: "all" }).includes(" to=all"),
+  renderLine({ nick: "lane11", message: "hold", ts: now, to: "all" }).includes(" to=all"),
   true,
 );
 check(
   "the inbox line carries the field too, after the provenance tag",
-  renderInbound({ nick: "wren", message: "@wren go", ts: now, id: "wren-2-0eff46", to: "flash1" }),
-  `[chat:wren id=wren-2-0eff46 @${tsLabel(now)} to=flash1] @wren go`,
+  renderInbound({ nick: "lane11", message: "@lane11 go", ts: now, id: "lane11-2-0eff46", to: "lane1" }),
+  `[chat:lane11 id=lane11-2-0eff46 @${tsLabel(now)} to=lane1] @lane11 go`,
 );
 const buf = ["a", "b", "c"];
 const first = takeUnseen(buf, 0);
@@ -486,10 +486,10 @@ check("a cursor past the end yields nothing, not the world", takeUnseen(buf, 99)
 check("a negative cursor is clamped, not sliced from the end", takeUnseen(buf, -1).lines, ["a", "b", "c"]);
 check("the cursor still advances when nothing was new", takeUnseen(buf, 99).cursor, 3);
 
-// --- LEG 804 D1: the unseen boundary is a MONOTONIC STAMP, not an index into a shifting window ---
+// --- the unseen boundary is a MONOTONIC STAMP, not an index into a shifting window ------------
 // The defect (peer review 803, lead-verified on the OFFICIAL dev face with no journal at all):
 // `cursor = buffer.length` is an absolute index; once `shift()` fires every later line lands BELOW
-// the stored cursor and `unseen_only` is deaf FOREVER. Leg 800 made saturation the boot default
+// the stored cursor and `unseen_only` is deaf FOREVER. a prior leg made saturation the boot default
 // (replay 50 == BUFFER_MAX 50), so it bit every busy seat every session. The fix is `pushRoomLine`
 // stamping arrival numbers that never move, and `takeUnseen` comparing stamps, not positions.
 {
@@ -499,7 +499,7 @@ check("the cursor still advances when nothing was new", takeUnseen(buf, 99).curs
   let cursor = lastSeq(win); // a reader caught up at saturation: cursor 50, buffer 50
   let surfaced = 0;
   for (let j = 1; j <= 5; j++) {
-    pushRoomLine(win, { nick: "wren", message: `live ${j}`, ts: 9000 + j }, CAP);
+    pushRoomLine(win, { nick: "lane11", message: `live ${j}`, ts: 9000 + j }, CAP);
     const g = takeUnseen(win, cursor);
     cursor = g.cursor;
     surfaced += g.lines.length;
@@ -516,7 +516,7 @@ check("the cursor still advances when nothing was new", takeUnseen(buf, 99).curs
   let histLeak = 0;
   let liveCursor = bootCursor;
   for (let j = 1; j <= 5; j++) {
-    pushRoomLine(rb, { nick: "wren", message: `live ${j}`, ts: 9000 + j, id: `l${j}` }, CAP);
+    pushRoomLine(rb, { nick: "lane11", message: `live ${j}`, ts: 9000 + j, id: `l${j}` }, CAP);
     const g = takeUnseen(rb, liveCursor);
     liveCursor = g.cursor;
     histLeak += g.lines.filter((l) => l.hist).length;
@@ -532,7 +532,7 @@ check("the cursor still advances when nothing was new", takeUnseen(buf, 99).curs
   let lc = legacy.length;
   let lsurfaced = 0;
   for (let j = 1; j <= 5; j++) {
-    legacy.push({ nick: "wren", message: `live ${j}` });
+    legacy.push({ nick: "lane11", message: `live ${j}` });
     if (legacy.length > CAP) legacy.shift();
     const g = takeUnseen(legacy, lc);
     lc = g.cursor;
@@ -554,8 +554,8 @@ check("sanitize removes topic wildcards", sanitizeAckId("a/#b"), "a_b");
 check("sanitize collapses a run of unsafe chars to one separator", sanitizeAckId("a  b"), "a_b");
 check("sanitize removes dotdot", sanitizeAckId("../x"), "x");
 check("sanitize blanks to empty", sanitizeAckId("   "), "");
-check("ackTopic shape", ackTopic("tabith", "wren", "lead-agent-17"), "chat/tabith/_ctl/wren/lead-agent-17");
-check("ackTopic refuses an unusable id", ackTopic("tabith", "wren", "  "), "");
+check("ackTopic shape", ackTopic("tabith", "lane11", "lead-agent-17"), "chat/tabith/_ctl/lane11/lead-agent-17");
+check("ackTopic refuses an unusable id", ackTopic("tabith", "lane11", "  "), "");
 // The NEW level is the writer's nick, and it is attacker-influenced only in the sense that it comes
 // from MQTT_NICK at boot — still sanitised, because a nick that smuggles a level would aim the write
 // somewhere the per-nick grant does not cover (or somewhere it does not own).
@@ -568,7 +568,7 @@ check("NEGATIVE THAT WOULD BE A SECURITY REGRESSION: a blank nick must NOT silen
 //  - "a/#" collapses to `a`, so the topic keeps ONE level and the wildcard is gone;
 //  - a bare "#" or "+" sanitises to EMPTY, and empty means NO topic at all — a nick that would
 //    wildcard the control tree produces an unwritable address, which is the refusal we want.
-// The `../..` case is NOT a traversal: the dots are stripped, leaving `flash3`. That lands on another
+// The `../..` case is NOT a traversal: the dots are stripped, leaving `lane3`. That lands on another
 // lane's leaf, which the BROKER then refuses because the write grant is per-nick — so this cell
 // asserts the sanitiser's job (one level, no wildcard), and the grant is what test_ack_watch_broker.ts
 // proves. Stating the division out loud, because a reader could otherwise take this cell to mean
@@ -577,18 +577,18 @@ check("a nick carrying separators collapses to one safe leaf", ackTopic("tabith"
 check("a bare wildcard nick yields NO topic (it cannot wildcard the control tree)", ackTopic("tabith", "#", "x"), "");
 check("and neither does a single-level wildcard nick", ackTopic("tabith", "+", "x"), "");
 check("dotdot is stripped, not treated as traversal (the broker's grant is the boundary, not this)",
-  ackTopic("tabith", "../../flash3", "x"), "chat/tabith/_ctl/flash3/x");
+  ackTopic("tabith", "../../lane3", "x"), "chat/tabith/_ctl/lane3/x");
 check("a nick with spaces collapses to a single leaf", ackTopic("tabith", "a b/c", "x"), "chat/tabith/_ctl/a_b_c/x");
-check("ackKey pairs message and lane", ackKey({ id: "lead-agent-17", by: "flash3" }), "lead-agent-17|flash3");
+check("ackKey pairs message and lane", ackKey({ id: "lead-agent-17", by: "lane3" }), "lead-agent-17|lane3");
 
-const flat = A("lead-agent-17", "flash3", "lead-agent", 1000);
-const replayed = A("lead-agent-17", "flash3", "lead-agent", 1500);
-const other = A("lead-agent-17", "flash1", "lead-agent", 1100);
+const flat = A("lead-agent-17", "lane3", "lead-agent", 1000);
+const replayed = A("lead-agent-17", "lane3", "lead-agent", 1500);
+const other = A("lead-agent-17", "lane1", "lead-agent", 1100);
 check("same receipt twice collapses to one", recordAck([], flat).concat([]).length, 1);
 check("flat then retained stays one", recordAck(recordAck([], flat), replayed).length, 1);
 check("collapse keeps the newer stamp", recordAck(recordAck([], flat), replayed)[0].ts, 1500);
 check("a different lane is a different receipt", recordAck(recordAck([], flat), other).length, 2);
-const five = [1, 2, 3, 4, 5].reduce((log, n) => recordAck(log, A(`m-${n}`, "flash3", "lead", n * 100), 3), [] as Ack[]);
+const five = [1, 2, 3, 4, 5].reduce((log, n) => recordAck(log, A(`m-${n}`, "lane3", "lead", n * 100), 3), [] as Ack[]);
 check("bounded log drops the oldest", five.length, 3);
 check("bounded log keeps the newest", five[2].id, "m-5");
 check("bounded log drops the newest-oldest", five[0].id, "m-3");
@@ -597,19 +597,19 @@ check("query newest last", queryAcks(five, { limit: 2, nowMs: 1000 }).map((a) =>
 check("query by id finds it", queryAcks(five, { id: "m-4", nowMs: 1000 }).map((a) => a.id), ["m-4"]);
 check("query by id answers empty for a receipt the cap dropped", queryAcks(five, { id: "m-1", nowMs: 1000 }).length, 0);
 check("query by id rejects a miss", queryAcks(five, { id: "m-9", nowMs: 1000 }).length, 0);
-check("query by id|nick finds it", queryAcks(recordAck([], other), { id: "lead-agent-17|flash1", nowMs: 1000 }).length, 1);
-check("query by id|nick rejects the wrong lane", queryAcks(recordAck([], other), { id: "lead-agent-17|flash9", nowMs: 1000 }).length, 0);
+check("query by id|nick finds it", queryAcks(recordAck([], other), { id: "lead-agent-17|lane1", nowMs: 1000 }).length, 1);
+check("query by id|nick rejects the wrong lane", queryAcks(recordAck([], other), { id: "lead-agent-17|lane9", nowMs: 1000 }).length, 0);
 const nowT = 1_700_000_000_000;
-const spread: Ack[] = [A("s-old", "flash3", "lead", nowT - 5 * 60_000), A("s-mid", "flash3", "lead", nowT - 2 * 60_000), A("s-new", "flash3", "lead", nowT - 30_000)];
+const spread: Ack[] = [A("s-old", "lane3", "lead", nowT - 5 * 60_000), A("s-mid", "lane3", "lead", nowT - 2 * 60_000), A("s-new", "lane3", "lead", nowT - 30_000)];
 check("query window keeps the recent, drops the stale", queryAcks(spread, { sinceMin: 3, nowMs: nowT }).map((a) => a.id), ["s-mid", "s-new"]);
 check("query window to one minute keeps only the newest", queryAcks(spread, { sinceMin: 1, nowMs: nowT }).map((a) => a.id), ["s-new"]);
 check("query window with everything old answers empty", queryAcks(spread, { sinceMin: 1, nowMs: nowT + 60 * 60_000 }).length, 0);
 check("query limit is clamped to the cap", queryAcks(five, { limit: 99, cap: 3, nowMs: 1000 }).length, 3);
-check("receipt renders one line", renderAck(flat).endsWith(" ack] flash3 received lead-agent-17 (sent by lead-agent)"), true);
+check("receipt renders one line", renderAck(flat).endsWith(" ack] lane3 received lead-agent-17 (sent by lead-agent)"), true);
 check("receipt line has no newline", renderAck(flat).includes("\n"), false);
 
-// --- 2026-10-07 duplicate room lines (owner order, verbatim: "i want these things to not appear in
-// the room"). A message that arrives more than once must render once, in a lane and in a tap.
+// --- duplicate room lines: a message that arrives more than once must render once, in a
+// lane and in a tap.
 check("first sight of an id is not a duplicate", noteRoomId([], "lead-agent-3-0bb40d").dup, false);
 check("...and it enters the ledger", noteRoomId([], "lead-agent-3-0bb40d").seen, ["lead-agent-3-0bb40d"]);
 check("second sight of the same id IS a duplicate", noteRoomId(["lead-agent-3-0bb40d"], "lead-agent-3-0bb40d").dup, true);
@@ -628,27 +628,27 @@ check("the caller's array is never mutated", (() => { const base = ["a"]; const 
 // NOTE for whoever re-pairs these next: the literal 1500s in the recordAck cells above ("replayed",
 // "collapse keeps the newer stamp") are EPOCH-STYLE TIMESTAMPS, not the cap — they are not this rule.
 const longText = (n: number) => "x".repeat(n);
-check("cap default is the owner's number", postMax(undefined), 2500);
+check("cap default is the shipped number", postMax(undefined), 2500);
 check("cap override parses", postMax("400"), 400);
 check("cap junk keeps the default", postMax("banana"), 2500);
-check("cap 0 means no cap", postLengthVerdict(longText(9000), "flash1", "dust", postMax("0")).ok, true);
-check("cap negative means no cap", postLengthVerdict(longText(9000), "flash1", "dust", -1).ok, true);
-check("agent post under the cap is accepted", postLengthVerdict(longText(2499), "flash1", "dust", 2500).ok, true);
-check("agent post AT the cap is accepted (boundary)", postLengthVerdict(longText(2500), "flash1", "dust", 2500).ok, true);
-check("agent post one over the cap is refused", postLengthVerdict(longText(2501), "flash1", "dust", 2500).ok, false);
-check("...and the refusal reports length and cap", postLengthVerdict(longText(2600), "lead-agent", "dust", 2500), { ok: false, len: 2600, max: 2500 });
-check("NEGATIVE HALF — the owner posts unlimited", postLengthVerdict(longText(50000), "dust", "dust", 2500).ok, true);
-check("a lane named like the owner is not exempt by accident", postLengthVerdict(longText(2501), "dusty", "dust", postMax(undefined)).ok, false);
-check("no owner nick configured means nobody is exempt", postLengthVerdict(longText(2501), "dust", "", postMax(undefined)).ok, false);
+check("cap 0 means no cap", postLengthVerdict(longText(9000), "lane1", "lane16", postMax("0")).ok, true);
+check("cap negative means no cap", postLengthVerdict(longText(9000), "lane1", "lane16", -1).ok, true);
+check("agent post under the cap is accepted", postLengthVerdict(longText(2499), "lane1", "lane16", 2500).ok, true);
+check("agent post AT the cap is accepted (boundary)", postLengthVerdict(longText(2500), "lane1", "lane16", 2500).ok, true);
+check("agent post one over the cap is refused", postLengthVerdict(longText(2501), "lane1", "lane16", 2500).ok, false);
+check("...and the refusal reports length and cap", postLengthVerdict(longText(2600), "lead-agent", "lane16", 2500), { ok: false, len: 2600, max: 2500 });
+check("NEGATIVE HALF — the owner posts unlimited", postLengthVerdict(longText(50000), "lane16", "lane16", 2500).ok, true);
+check("a lane named like the owner is not exempt by accident", postLengthVerdict(longText(2501), "lane16y", "lane16", postMax(undefined)).ok, false);
+check("no owner nick configured means nobody is exempt", postLengthVerdict(longText(2501), "lane16", "", postMax(undefined)).ok, false);
 check("the refusal names the file as the place for long text", postTooLongNote(2600, 2500).includes("report file"), true);
 check("the refusal says nothing was published", postTooLongNote(2600, 2500).includes("nothing was published"), true);
-// Wording law (canary ultra, 2026-10-08): the old text read "2684 characters over the 2500 cap", which a
+// Wording law (canary lane10, ): the old text read "2684 characters over the 2500 cap", which a
 // lane reads as 2,684 characters OVER the limit. The note must state the total, the excess, and the cap as
 // three distinct facts so no lane has to guess which number is which.
 check("the refusal states the total, not as if it were the excess", postTooLongNote(2600, 2500).includes("2600 characters, 100 over the 2500 cap"), true);
 check("the refusal never says 'N characters over the M cap' with N as the total", /\d+ characters over the/.test(postTooLongNote(2600, 2500)), false);
 
-// --- 2026-10-08 provenance on inbound lines. A lane published six re-dispatches it had never
+// --- provenance on inbound lines. A lane published six re-dispatches it had never
 // received, and nothing inside that lane could refute it: the only message ids a lane ever saw
 // were the ones its own posts printed, and the invented ids copied exactly that shape. Every
 // inbound line now carries the same id and stamp chat_read will show for it.
@@ -661,32 +661,32 @@ const leadLine: RoomLine = {
 };
 check("the tag carries the message id", lineTag("lead-agent-2-0eff46", stamp).includes("id=lead-agent-2-0eff46"), true);
 check("...and the same stamp chat_read shows for that line", lineTag("lead-agent-2-0eff46", stamp), ` id=lead-agent-2-0eff46 @${tsLabel(stamp)}`);
-// --- iid 22, the namespace half (leg 954). An id is the only handle a lane has for delivery, so a
+// --- iid 22, the namespace half. An id is the only handle a lane has for delivery, so a
 // string in a shape no shipped minter builds must not read as a lost publish: it has to say which
 // namespace it is in. AC3's paired negative is the FIRST cell here — the ordinary three-field id the
 // product really mints prints exactly what it printed before, with no note beside it.
 check("iid 22 the minter's own output parses as the minter's namespace (the guard cannot widen it)",
-  idNamespace("wren-2-0eff46"), "msgid");
+  idNamespace("lane11-2-0eff46"), "msgid");
 check("...and so does one whose nick contains a dash (the shape is read from the right) (negative-control risk the naive split would fail)",
   idNamespace("lead-agent-12-0eff46"), "msgid");
 check("...and an id-less line still says id=none and gains NO note (an absence is not a foreign id)",
   lineTag(undefined, stamp), ` id=none @${tsLabel(stamp)}`);
 check("...and a blank one too", lineTag("   ", stamp), ` id=none @${tsLabel(stamp)}`);
 check("iid 22 the admin channel's id parses as the ADMIN namespace, never as a room publish",
-  idNamespace("wren-admin-m3k1zq-1a2b3c"), "admin");
+  idNamespace("lane11-admin-m3k1zq-1a2b3c"), "admin");
 check("...and a lane is TOLD which namespace it is looking at",
-  idNamespaceNote("wren-admin-m3k1zq-1a2b3c").includes("admin-channel namespace"), true);
+  idNamespaceNote("lane11-admin-m3k1zq-1a2b3c").includes("admin-channel namespace"), true);
 check("iid 22 the reported shape — two fields, the second an epoch-ms — is UNMINTED, said out loud",
-  idNamespace("ultra-1762147481813"), "unminted");
+  idNamespace("lane10-1762147481813"), "unminted");
 check("...and the note names the consequence, not just the shape",
-  idNamespaceNote("ultra-1762147481813").includes("no shipped minter builds this id"), true);
+  idNamespaceNote("lane10-1762147481813").includes("no shipped minter builds this id"), true);
 check("...and it lands in the inbound tag, where a lane actually reads it",
-  lineTag("ultra-1762147481813", stamp),
-  ` id=ultra-1762147481813 [no shipped minter builds this id; a lookup here answers nothing about a publish] @${tsLabel(stamp)}`);
+  lineTag("lane10-1762147481813", stamp),
+  ` id=lane10-1762147481813 [no shipped minter builds this id; a lookup here answers nothing about a publish] @${tsLabel(stamp)}`);
 check("NEGATIVE: a six-hex boot tag of the WRONG width is unminted, not coerced",
-  idNamespace("wren-2-0eff4"), "unminted");
-check("NEGATIVE: a non-numeric middle field is unminted (so `wren-admin-…` cannot also read as msgid)",
-  idNamespace("wren-xx-0eff46"), "unminted");
+  idNamespace("lane11-2-0eff4"), "unminted");
+check("NEGATIVE: a non-numeric middle field is unminted (so `lane11-admin-…` cannot also read as msgid)",
+  idNamespace("lane11-xx-0eff46"), "unminted");
 // where the attribution actually lands: derived from the shipped files, not remembered — the count is
 // PRINTED in the cell name and never hardcoded as a target, because a hand-carried site count rots.
 const shippedIndex = readFileSync(join(import.meta.dir, "..", "extensions", "tabichat", "index.ts"), "utf8");
@@ -701,7 +701,7 @@ check("...and the receipt query is one of them (the query is where a foreign id 
 check("NEGATIVE: the query still SEARCHES the id it was given — attribution is not a refusal to look",
   /queryAcks\(acks, \{\s*id: params\.id \? String\(params\.id\) : undefined,/.test(shippedIndex), true);
 check("NEGATIVE: the msgid of one lane is not made valid-looking by the guard — msgId output and the parse agree on every seq",
-  [0, 1, 47, 9999].every((n) => idNamespace(msgId("wren", n, "0eff46")) === "msgid"), true);
+  [0, 1, 47, 9999].every((n) => idNamespace(msgId("lane11", n, "0eff46")) === "msgid"), true);
 
 check("a blank id says id=none too", lineTag("   ", stamp), ` id=none @${tsLabel(stamp)}`);
 check(
@@ -718,14 +718,14 @@ check(
 // --- the tally: the count a lane used to assert from memory, now computed from the wire
 check("one mention tallies as one", inboxTally([leadLine]), "lead-agent x1");
 check("a real repeat (distinct ids) tallies as two", inboxTally([leadLine, { ...leadLine, id: "lead-agent-3-0eff46" }]), "lead-agent x2");
-check("senders are counted separately", inboxTally([leadLine, { nick: "dust", message: "@anna stop", ts: stamp, id: "dust-1-aaaaaa" }]), "lead-agent x1, dust x1");
+check("senders are counted separately", inboxTally([leadLine, { nick: "lane16", message: "@anna stop", ts: stamp, id: "lane16-1-aaaaaa" }]), "lead-agent x1, lane16 x1");
 check("NEGATIVE HALF — an empty inbox tallies as nothing, never as a guess", inboxTally([]), "");
 
 // --- the injection law: a lane does not need to see all chat
 // messages in the room (the ones it missed since its last turn). it needs only the
 // change message addressed to @its-nick or @all, and that is the rule. Both halves: an addressed line is injected,
 // an unaddressed line is never injected, and the old flood header is gone from the tree.
-const unaddressed: RoomLine = { nick: "flash1", message: "@lead-agent report landed", ts: stamp, id: "flash1-1-0a1d1f" };
+const unaddressed: RoomLine = { nick: "lane1", message: "@lead-agent report landed", ts: stamp, id: "lane1-1-0a1d1f" };
 check("an addressed line is injected", planInbound({ mentioned: true, head: "", line: leadLine }).kind, "inject");
 check(
   "...as its own provenance line and nothing else",
@@ -763,23 +763,23 @@ check(
 //     `msg/a/b` and `msg/` are not senders.
 // ---------------------------------------------------------------------------
 console.log("\n== shape B: per-sender topics ==");
-check("msgTopic builds the sender leaf", msgTopic("tabith", "wren"), "chat/tabith/msg/wren");
+check("msgTopic builds the sender leaf", msgTopic("tabith", "lane11"), "chat/tabith/msg/lane11");
 check("msgWild reads every sender", msgWild("tabith"), "chat/tabith/msg/+");
 check("a nick with a separator in it cannot forge a topic level", msgTopic("tabith", "a/b"), "chat/tabith/msg/ab");
 check("a nick of nothing topic-safe yields empty, not a mis-routed publish", msgTopic("tabith", "/#"), "");
 check("an empty nick yields empty", msgTopic("tabith", ""), "");
-check("a nick padded with spaces still finds itself", msgTopic("tabith", "  flash6 "), "chat/tabith/msg/flash6");
-check("nickFromMsgTopic reports the author the broker asserted", nickFromMsgTopic("chat/tabith/msg/flash6", "tabith"), "flash6");
+check("a nick padded with spaces still finds itself", msgTopic("tabith", "  lane6 "), "chat/tabith/msg/lane6");
+check("nickFromMsgTopic reports the author the broker asserted", nickFromMsgTopic("chat/tabith/msg/lane6", "tabith"), "lane6");
 check("a flat room topic is not a sender topic", nickFromMsgTopic("chat/tabith", "tabith"), "");
 check("a two-level leaf is not a sender", nickFromMsgTopic("chat/tabith/msg/a/b", "tabith"), "");
 check("an empty leaf is not a sender", nickFromMsgTopic("chat/tabith/msg/", "tabith"), "");
 check("the wildcard subscription itself is not a sender", nickFromMsgTopic("chat/tabith/msg/+", "tabith"), "+");
-check("another room's topic reports nothing", nickFromMsgTopic("chat/other/msg/wren", "tabith"), "");
+check("another room's topic reports nothing", nickFromMsgTopic("chat/other/msg/lane11", "tabith"), "");
 // The dual-read collapse: a line that arrives on BOTH the flat topic and the sender topic during the
 // migration window must still render once. That is noteRoomId's job and it is asserted here because
 // the pairing is what makes dual-read safe to ship before single-write does.
 {
-  const id = "wren-7-a84e80";
+  const id = "lane11-7-a84e80";
   let seen: string[] = [];
   const first = noteRoomId(seen, id);
   seen = first.seen;
@@ -793,20 +793,20 @@ check("another room's topic reports nothing", nickFromMsgTopic("chat/other/msg/w
 // only through a live broker: what a lane DOES with a disagreement has to be as testable as what the
 // broker does, or the client half of shape (B) ships unverified.
 console.log("\n== shape B: authorVerdict (topic-first, and loud on a conflict) ==");
-const avFlat = authorVerdict("chat/tabith", "tabith", "wren");
-check("a flat-topic line is delivered with the payload nick (phase 1's limit, named)", [avFlat.ok, avFlat.author, avFlat.mismatch], [true, "wren", false]);
-const avOwn = authorVerdict("chat/tabith/msg/wren", "tabith", "wren");
-check("own leaf agrees with the payload: delivered, no ceremony", [avOwn.ok, avOwn.author, avOwn.mismatch], [true, "wren", false]);
-const avClash = authorVerdict("chat/tabith/msg/wren", "tabith", "flash6");
+const avFlat = authorVerdict("chat/tabith", "tabith", "lane11");
+check("a flat-topic line is delivered with the payload nick (phase 1's limit, named)", [avFlat.ok, avFlat.author, avFlat.mismatch], [true, "lane11", false]);
+const avOwn = authorVerdict("chat/tabith/msg/lane11", "tabith", "lane11");
+check("own leaf agrees with the payload: delivered, no ceremony", [avOwn.ok, avOwn.author, avOwn.mismatch], [true, "lane11", false]);
+const avClash = authorVerdict("chat/tabith/msg/lane11", "tabith", "lane6");
 check("a leaf and payload that disagree are REFUSED", avClash.ok, false);
-check("the refusal keeps the authenticated author, not the typed one", avClash.author, "wren");
-check("and it says both names, so a lane can act on it", (avClash as { why: string }).why.includes('asserts "wren"'), true);
+check("the refusal keeps the authenticated author, not the typed one", avClash.author, "lane11");
+check("and it says both names, so a lane can act on it", (avClash as { why: string }).why.includes('asserts "lane11"'), true);
 check("the refusal is flagged as a mismatch", avClash.mismatch, true);
-const avNoNick = authorVerdict("chat/tabith/msg/ultra", "tabith", "");
-check("a payload with no nick still lands, authored by the topic", [avNoNick.ok, avNoNick.author], [true, "ultra"]);
+const avNoNick = authorVerdict("chat/tabith/msg/lane10", "tabith", "");
+check("a payload with no nick still lands, authored by the topic", [avNoNick.ok, avNoNick.author], [true, "lane10"]);
 check("but the lane is told where the author came from", avNoNick.mismatch, true);
-const avOther = authorVerdict("chat/other/msg/wren", "tabith", "wren");
-check("another room's sender topic is not ours: falls back to the flat rule", [avOther.ok, avOther.author, avOther.mismatch], [true, "wren", false]);
+const avOther = authorVerdict("chat/other/msg/lane11", "tabith", "lane11");
+check("another room's sender topic is not ours: falls back to the flat rule", [avOther.ok, avOther.author, avOther.mismatch], [true, "lane11", false]);
 
 // ─── tabichat#10 THE ACK WATCHDOG ────────────────────────────────────────────────────────────
 // The decision half only. What the BROKER does with a refused QoS 0 write is proven physically in
@@ -817,7 +817,7 @@ check("another room's sender topic is not ours: falls back to the flat rule", [a
 console.log("\n== #10 ack watchdog: register, settle, expire, alarm ==");
 const P0: AckWatch[] = [];
 const T0 = 1_000_000;
-const ctlT = "chat/tabith/_ctl/flash4-1-abc123";
+const ctlT = "chat/tabith/_ctl/lane4-1-abc123";
 
 const w1 = watchAck(P0, ctlT, "delivery receipt", T0);
 check("a publish is registered as one watched topic", [w1.pending.length, w1.dropped], [1, 0]);
@@ -905,7 +905,7 @@ check("the env knob is the documented one and the default is the shipped window"
    and reusing a name in a 700-line test file is a redeclaration that kills the whole run.
    Sharing the file's `check` keeps the reporting identical. */
 {
-// ─── leg 496 AC3 — the clear path, which is not optional under shape (ii) ───────────────────────
+// ─── a prior leg AC3 — the clear path, which is not optional under shape (ii) ───────────────────────
 // Under `_ctl/<id>` N acks collapsed into one retained payload; under `_ctl/<nick>/<id>` they are N
 // retained payloads. That is the board doing what P6 always wanted, and it is also unbounded growth
 // unless every lane clears what it pinned. So the clear path is part of the shape, and these cells are
@@ -913,11 +913,11 @@ check("the env knob is the documented one and the default is the shipped window"
 console.log("\n== 496 AC3: pin, age, clear ==");
 const PIN0: PinnedAck[] = [];
 const now = 2_000_000;
-const p1 = pinAck(PIN0, "chat/t/_ctl/wren/m1", now);
+const p1 = pinAck(PIN0, "chat/t/_ctl/lane11/m1", now);
 check("a board entry I wrote is remembered so I can clear it later", [p1.pinned.length, p1.dropped], [1, 0]);
 check("NEGATIVE: a blank topic is not pinnable (an unusable leaf must not become a phantom clear)",
   pinAck(PIN0, "", now).pinned.length, 0);
-const p2 = pinAck(p1.pinned, "chat/t/_ctl/wren/m1", now + 500);
+const p2 = pinAck(p1.pinned, "chat/t/_ctl/lane11/m1", now + 500);
 check("re-acking the same id replaces my own entry rather than stacking two clears",
   [p2.pinned.length, p2.pinned[0].ts], [1, now + 500]);
 const aged = pinAck(pinAck(PIN0, "a", now - 70_000).pinned, "b", now - 5_000).pinned;
@@ -950,7 +950,7 @@ check("NEGATIVE: the same list under the cap reports dropped 0 — the counter i
   let held = 0, droppedTotal = 0, cleared = 0;
   const W = 60_000, T0 = 10_000_000;
   for (let i = 0; i < 10_000; i++) {
-    const r = pinAck(board, `chat/t/_ctl/wren/m${i}`, T0 + i * 1_000);   // one ack per second
+    const r = pinAck(board, `chat/t/_ctl/lane11/m${i}`, T0 + i * 1_000);   // one ack per second
     board = r.pinned; droppedTotal += r.dropped;
     held = Math.max(held, board.length);
     const c = receiptClears(board, T0 + i * 1_000 + 1, W);                // sweep on the same tick
@@ -1023,28 +1023,28 @@ check("AC3 …and the newest stamp is the one kept", reWatch[0].ts, T0 + 500);
 
 // --- AC4: the field that tells a retransmit from a duplicate delivery, shown not asserted ---
 check("AC4 the compared field is the id, and the minter increments it per publish",
-  [msgId("flash3", 1, "ab12cd34") !== msgId("flash3", 2, "ab12cd34"), msgId("flash3", 2, "ab12cd34").endsWith("-ab12cd34")],
+  [msgId("lane3", 1, "ab12cd34") !== msgId("lane3", 2, "ab12cd34"), msgId("lane3", 2, "ab12cd34").endsWith("-ab12cd34")],
   [true, true]);
-const i21ack: Ack = { id: "flash3-1-ab12cd34", by: "wren", ts: T0 } as Ack;
+const i21ack: Ack = { id: "lane3-1-ab12cd34", by: "lane11", ts: T0 } as Ack;
 const i21dup = recordAck(recordAck([] as Ack[], i21ack), { ...i21ack, ts: T0 + 70 });
 check("AC4 the SAME id from the SAME lane is ONE delivery (this is what a duplicate copy looks like)",
   i21dup.length, 1);
-const i21two = recordAck(i21dup, { ...i21ack, id: "flash3-2-ab12cd34", ts: T0 + 90 });
+const i21two = recordAck(i21dup, { ...i21ack, id: "lane3-2-ab12cd34", ts: T0 + 90 });
 check("AC4 …and a retransmit carries a different id, so it is TWO deliveries, not one doubled",
   i21two.length, 2);
-check("AC4 the key being compared, printed: id|by", `${i21ack.id}|${i21ack.by}`, "flash3-1-ab12cd34|wren");
+check("AC4 the key being compared, printed: id|by", `${i21ack.id}|${i21ack.by}`, "lane3-1-ab12cd34|lane11");
 
 // --- AC2: the ids this session published, in one read ---
 const i21rows = [
-  { id: "flash3-1-ab12cd34", ts: T0, to: "wren", text: "first line" },
-  { id: "flash3-2-ab12cd34", ts: T0 + 10, text: "second line, nobody addressed" },
+  { id: "lane3-1-ab12cd34", ts: T0, to: "lane11", text: "first line" },
+  { id: "lane3-2-ab12cd34", ts: T0 + 10, text: "second line, nobody addressed" },
   { id: "", ts: T0 + 20, text: "a publish that lost its id" },
 ];
 const i21ob = outboxView(i21rows, i21rows.length);
 check("AC2 one read lists each publish with its own id, oldest first so the newest is the last line", i21ob.length, 3);
 check("AC2 the id is printed as printed on the result, so a lane can grep for it",
-  i21ob[1].includes("id flash3-2-ab12cd34"), true);
-check("AC2 an addressed line names the FIELD, not a rendered prefix", i21ob[0].includes('to "wren"'), true);
+  i21ob[1].includes("id lane3-2-ab12cd34"), true);
+check("AC2 an addressed line names the FIELD, not a rendered prefix", i21ob[0].includes('to "lane11"'), true);
 check("AC2 a publish with no id is shown as (no id), never dropped — dropping it hides the case the read exists for",
   i21ob[2].includes("(no id)"), true);
 const i21cut = outboxView(i21rows.slice(-2), i21rows.length);
@@ -1052,20 +1052,20 @@ check("AC2 a sliced list says how much it left out", i21cut[i21cut.length - 1].i
 check("AC2 …and says it only when something was left out", outboxView(i21rows, 3).length, 3);
 check("AC2 an empty outbox answers zero lines rather than a confident sentence", outboxView([], 0).length, 0);
 
-// --- leg 926, finding 1: the watch answers for ONE publish, and only for that one ---
-// The face flash1 measured on the repo's own loopback broker was 18 of 20 room posts answered
+// --- a prior leg, finding 1: the watch answers for ONE publish, and only for that one ---
+// The face lane1 measured on the repo's own loopback broker was 18 of 20 room posts answered
 // `confirmed` by a payload id that was NOT the publish being answered for, because the watch was
 // keyed on `chat/<room>` — the topic every lane in the room writes to and reads from. These cells
 // drive the same distinction with no broker: one shared topic, two publishes, two ids.
-console.log("\n== iid 21 leg 926: the watch is keyed on the publish's own id ==");
+console.log("\n== iid 21: the watch is keyed on the publish's own id ==");
 const K21_FLAT = "chat/tabith";
-const K21_A = "flash3-1-ab12cd";
-const K21_B = "flash3-2-ab12cd";
-const K21_PEER = "flash6-1-ab12cd";
+const K21_A = "lane3-1-ab12cd";
+const K21_B = "lane3-2-ab12cd";
+const K21_PEER = "lane6-1-ab12cd";
 check("finding 1 the key is the id when the publish has one — the same field the receipt ledger dedupes on",
   ackWatchKey({ topic: K21_FLAT, id: K21_A }), K21_A);
 check("…and it falls back to the topic ONLY for a write with no id, which is a topic unique to that write",
-  ackWatchKey({ topic: "chat/tabith/_ctl/wren/msg-1", id: "" }), "chat/tabith/_ctl/wren/msg-1");
+  ackWatchKey({ topic: "chat/tabith/_ctl/lane11/msg-1", id: "" }), "chat/tabith/_ctl/lane11/msg-1");
 check("NEGATIVE: a blank id and a blank topic key NOTHING (an unkeyed publish cannot be proven)",
   ackWatchKey({ topic: "   ", id: "  " }), "");
 check("…and a blank key registers NOTHING in the watch list either",
@@ -1115,21 +1115,21 @@ check("verdict NEGATIVE: a blank key is never confirmed — the one answer an un
 // absent from the list, and absence was the face that read `confirmed` — one commit, two opposite
 // answers for one face. The list now says WHICH entries it dropped, and index.ts records each one.
 const k21Full: AckWatch[] = Array.from({ length: ACK_WATCH_MAX }, (_, i) => ({
-  topic: K21_FLAT, id: `flash3-${i}-ab12cd`, kind: "room line", ts: T0 + i,
+  topic: K21_FLAT, id: `lane3-${i}-ab12cd`, kind: "room line", ts: T0 + i,
 }));
-const k21Over = watchAck(k21Full, K21_FLAT, "room line", T0 + ACK_WATCH_MAX, "flash3-new-ab12cd", ACK_WATCH_MAX);
+const k21Over = watchAck(k21Full, K21_FLAT, "room line", T0 + ACK_WATCH_MAX, "lane3-new-ab12cd", ACK_WATCH_MAX);
 check("the cap still bites at the cap (unchanged), and the newest entry is kept",
   [k21Over.pending.length, k21Over.dropped, ackWatchKey(k21Over.pending[k21Over.pending.length - 1])],
-  [ACK_WATCH_MAX, 1, "flash3-new-ab12cd"]);
+  [ACK_WATCH_MAX, 1, "lane3-new-ab12cd"]);
 check("finding 2: and it NAMES the entries it dropped, not merely how many, so the waiter can be told",
-  [k21Over.evicted.length, k21Over.evicted.map(ackWatchKey)], [1, [`flash3-0-ab12cd`]]);
+  [k21Over.evicted.length, k21Over.evicted.map(ackWatchKey)], [1, [`lane3-0-ab12cd`]]);
 const k21LostEvicted = new Set(k21Over.evicted.map(ackWatchKey));
 check("finding 2: an evicted publish, recorded by the registrar, answers UNCONFIRMED — the truth the overflow notice already says",
   deliveryVerdict(ackWatchKey(k21Over.evicted[0]), k21Over.pending, k21LostEvicted), "unconfirmed");
 check("finding 2 NEGATIVE: the publish that SURVIVED the eviction is still watched, not answered either way",
-  deliveryVerdict("flash3-new-ab12cd", k21Over.pending, k21LostEvicted), "watching");
+  deliveryVerdict("lane3-new-ab12cd", k21Over.pending, k21LostEvicted), "watching");
 check("…and once its own echo arrives it is confirmed on its own id, with the eviction still on the record beside it",
-  deliveryVerdict("flash3-new-ab12cd", settleAck(k21Over.pending, "flash3-new-ab12cd").pending, k21LostEvicted),
+  deliveryVerdict("lane3-new-ab12cd", settleAck(k21Over.pending, "lane3-new-ab12cd").pending, k21LostEvicted),
   "confirmed");
 check("finding 2 NEGATIVE: a list under the cap reports an EMPTY evicted set — the report is not always nonzero",
   watchAck([{ topic: K21_FLAT, id: K21_A, kind: "room line", ts: T0 }], K21_FLAT, "room line", T0 + 1, K21_B, ACK_WATCH_MAX).evicted.length,

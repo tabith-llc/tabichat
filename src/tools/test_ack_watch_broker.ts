@@ -20,11 +20,11 @@
 // do not exist before this branch, so the import fails and the run exits non-zero — a control that
 // cannot fail on the bytes it replaces is not a control.
 //
-// BOUNDED, AND ONLY EVER OURS. The fixture record is scoped to a per-process owner (the s140 hazard
+// BOUNDED, AND ONLY EVER OURS. The fixture record is scoped to a per-process owner (the hazard
 // was one global state file letting a neighbour's `down` kill this run's broker), and teardown runs
 // on every exit path including a throw. No live broker is contacted: this is 127.0.0.1 on a port the
 // fixture chose. Key CONTENTS are read only to hand to mqtt.js, never printed (fleet law: key-file
-// content is ultra's work alone).
+// content is lane10's work alone).
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -60,9 +60,9 @@ const sh = (args: string[]) => {
   const r = spawnSync("sh", args, {
     encoding: "utf8",
     cwd: REPO,
-    // The fixture default is site-neutral (leg 539); this file's main cells wear the named pair,
+    // The fixture default is site-neutral; this file's main cells wear the named pair,
     // so the pair is DECLARED here, never inherited from a silent default.
-    env: { ...process.env, TABICHAT_FIXTURE_OWNER: FIXTURE_OWNER, TABICHAT_FIXTURE_NICKS: "wren flash6" },
+    env: { ...process.env, TABICHAT_FIXTURE_OWNER: FIXTURE_OWNER, TABICHAT_FIXTURE_NICKS: "lane11 lane6" },
   });
   return (r.stdout ?? "") + (r.stderr ?? "");
 };
@@ -132,8 +132,8 @@ async function probe(phase: "phase1" | "phase2") {
 
   // The publisher is a REAL lane of this extension's filter shape: it subscribes `_ctl/#` (ONE
   // wildcard, per #3 — not both, which is what double-adjudicated a request and forked a seat).
-  const pub = await conn("wren");
-  const peer = await conn("flash6");
+  const pub = await conn("lane11");
+  const peer = await conn("lane6");
   const obs: Obs = { peer: [], self: [], selfFrame: [] };
   const filters = [`chat/${ROOM}`, `chat/${ROOM}/_ctl/#`, `chat/${ROOM}/msg/+`];
   const subOk = (c: mqtt.MqttClient) =>
@@ -164,14 +164,14 @@ async function probe(phase: "phase1" | "phase2") {
   // THE THREE WRITES, built by the shipped topic builders — not hand-typed strings.
   const id = `${phase}-msg-${Date.now().toString(36)}`;
   // Shape (ii) changed what PHASE2 means here. Before the grant narrowed, `_ctl/<id>` was refused
-  // because NO child was writable; now wren's OWN leaf IS writable, so the drop case has to be made
+  // because NO child was writable; now lane11's OWN leaf IS writable, so the drop case has to be made
   // the way the row actually cares about — a write under SOMEBODY ELSE's leaf, which the narrow
   // grant refuses. Both halves are asserted now: own leaf carried (AC1's positive) and foreign leaf
   // dropped with no echo (the watchdog's premise, re-proved on the new shape).
-  const tRcpt = ackTopic(ROOM, "wren", id);
-  const tAdmin = adminResultTopic(ROOM, "wren", `${id}-adm`);
-  const tForeign = ackTopic(ROOM, "flash6", `${id}-forge`);
-  const tForeignAdmin = adminResultTopic(ROOM, "flash6", `${id}-forge-a`);
+  const tRcpt = ackTopic(ROOM, "lane11", id);
+  const tAdmin = adminResultTopic(ROOM, "lane11", `${id}-adm`);
+  const tForeign = ackTopic(ROOM, "lane6", `${id}-forge`);
+  const tForeignAdmin = adminResultTopic(ROOM, "lane6", `${id}-forge-a`);
   const tBare = `chat/${ROOM}/_ctl`;
   const watch0: AckWatch[] = [];
   const wR = watchAck(watch0, tRcpt, "delivery receipt", Date.now());
@@ -191,8 +191,8 @@ async function probe(phase: "phase1" | "phase2") {
   // nothing was ever sent, which is the silent-vacuous-green class in its purest form: the assertion
   // was true, the instrument was dead. The positive cells (own leaf delivered) are what would have
   // caught it, and they did.
-  pub.publish(tForeign, JSON.stringify({ kind: "ack", id: `${id}-forge`, by: "flash6", probe: "not-mine", phase }));
-  pub.publish(tForeignAdmin, JSON.stringify({ kind: "lane-admin-result", id: `${id}-forge-a`, lane: "flash6", probe: "not-mine-admin", phase }));
+  pub.publish(tForeign, JSON.stringify({ kind: "ack", id: `${id}-forge`, by: "lane6", probe: "not-mine", phase }));
+  pub.publish(tForeignAdmin, JSON.stringify({ kind: "lane-admin-result", id: `${id}-forge-a`, lane: "lane6", probe: "not-mine-admin", phase }));
   const wB = watchAck(wA.pending, tBare, "control request", Date.now());
   pub.publish(tBare, JSON.stringify({ kind: "lane-admin", probe: "bare", phase }));
   const watched = watchAck(watched0.pending, tBare, "control request", Date.now()).pending;
@@ -208,9 +208,9 @@ async function probe(phase: "phase1" | "phase2") {
     check("PHASE1 the receipt child reached the peer (delivery, far-side verified)", has(obs.peer, tRcpt), true);
     check("PHASE1 the admin-outcome child reached the peer", has(obs.peer, tAdmin), true);
     check("PHASE1 the bare control topic reached the peer", has(obs.peer, tBare), true);
-    check("PHASE1 NEGATIVE-TODAY, MEASURED (flash2 finding 3): a receipt written under FLASH6's leaf IS carried by the running grant — the forgery is live on the fleet's face, not structural inference",
+    check("PHASE1 NEGATIVE-TODAY, MEASURED (lane2 finding 3): a receipt written under LANE6's leaf IS carried by the running grant — the forgery is live on the fleet's face, not structural inference",
       has(obs.peer, tForeign), true);
-    check("PHASE1 and so is a forged admin answer under FLASH6's leaf", has(obs.peer, tForeignAdmin), true);
+    check("PHASE1 and so is a forged admin answer under LANE6's leaf", has(obs.peer, tForeignAdmin), true);
     check("PHASE1 the publisher's OWN subscription echoes all three (the watchdog's premise)",
       [has(obs.self, tRcpt), has(obs.self, tAdmin), has(obs.self, tBare)].filter(Boolean).length, 3);
     // the watchdog's verdict, computed from NOTHING but what the socket observed
@@ -220,28 +220,28 @@ async function probe(phase: "phase1" | "phase2") {
     check("PHASE1 watchdog: every watch settles, nothing is lost, NO alarm is raised",
       [live.length, lost.length, ackLostLine(lost, Date.now())], [0, 0, ""]);
 
-    // ─── iid 21 finding 1 (leg 926) — THE SHARED TOPIC FACE, ON A REAL BROKER ──────────────────
+    // ─── iid 21 finding 1 — THE SHARED TOPIC FACE, ON A REAL BROKER ──────────────────
     // Every lane writes and reads `chat/<room>`, so a watch keyed on that topic is answered by
     // whichever frame arrived first. Measured at 18 of 20 room posts at `6e3e76771`: a lane was told
     // its own line was carried by a PEER's bytes. Here three publishes go onto the one shared topic
-    // — two by wren, one by flash6 — and the frames THIS socket actually received are replayed at the
+    // — two by lane11, one by lane6 — and the frames THIS socket actually received are replayed at the
     // shipped settle shape, in arrival order.
     const kFlat = `chat/${ROOM}`;
-    const kA = `wren-926-a-${id}`;
-    const kB = `wren-926-b-${id}`;
-    const kC = `wren-926-c-${id}`;
-    const kPeer = `flash6-926-p-${id}`;
-    pub.publish(kFlat, JSON.stringify({ nick: "wren", message: "926 first post", id: kA, ts: Date.now() }));
-    peer.publish(kFlat, JSON.stringify({ nick: "flash6", message: "926 peer post", id: kPeer, ts: Date.now() }));
-    pub.publish(kFlat, JSON.stringify({ nick: "wren", message: "926 second post", id: kB, ts: Date.now() }));
+    const kA = `lane11-watch-a-${id}`;
+    const kB = `lane11-watch-b-${id}`;
+    const kC = `lane11-watch-c-${id}`;
+    const kPeer = `lane6-watch-p-${id}`;
+    pub.publish(kFlat, JSON.stringify({ nick: "lane11", message: "watch first post", id: kA, ts: Date.now() }));
+    peer.publish(kFlat, JSON.stringify({ nick: "lane6", message: "watch peer post", id: kPeer, ts: Date.now() }));
+    pub.publish(kFlat, JSON.stringify({ nick: "lane11", message: "watch second post", id: kB, ts: Date.now() }));
     await new Promise((r) => setTimeout(r, 1500));
     const kFrames = obs.selfFrame.filter((f) => f.topic === kFlat);
-    check("926 POSITIVE CONTROL, MEASURED: the one shared topic carried a PEER's frame as well as both of mine (a quiet room would have proved nothing)",
+    check("watch POSITIVE CONTROL, MEASURED: the one shared topic carried a PEER's frame as well as both of mine (a quiet room would have proved nothing)",
       [kFrames.some((f) => f.id === kA), kFrames.some((f) => f.id === kB), kFrames.some((f) => f.id === kPeer)],
       [true, true, true]);
     let kWatch = watchAck([], kFlat, "room line", Date.now(), kA).pending;
     kWatch = watchAck(kWatch, kFlat, "room line", Date.now() + 1, kB).pending;
-    check("926 two posts by ONE lane on ONE shared topic are TWO watches, each keyed by its own id",
+    check("watch two posts by ONE lane on ONE shared topic are TWO watches, each keyed by its own id",
       kWatch.map(ackWatchKey), [kA, kB]);
     const kEarned: string[] = [];
     let kTopicSettles = 0;
@@ -255,9 +255,9 @@ async function probe(phase: "phase1" | "phase2") {
       if (s2.settled) kTopicSettles++;
       kList = s2.pending;
     }
-    check("926 EACH watch was earned by the frame carrying ITS OWN id — zero cross-earnings, the 18/20 face at the new tip",
+    check("watch EACH watch was earned by the frame carrying ITS OWN id — zero cross-earnings, the 18/20 face at the new tip",
       [kEarned.sort(), kList.length], [[kA, kB].sort(), 0]);
-    check("926 NEGATIVE: the peer's frame earned nothing, and the #10 TOPIC settle took nothing off the list either",
+    check("watch NEGATIVE: the peer's frame earned nothing, and the #10 TOPIC settle took nothing off the list either",
       [kEarned.includes(kPeer), kTopicSettles], [false, 0]);
     // The paired negative the row asked for, on the same busy topic: a publish nobody carried.
     let kBusy = watchAck([], kFlat, "room line", Date.now(), kC).pending;
@@ -265,23 +265,23 @@ async function probe(phase: "phase1" | "phase2") {
       kBusy = settleAck(kBusy, f.id).pending;
       kBusy = settleAck(kBusy, f.topic).pending;
     }
-    check("926 a publish whose echo never came back is STILL WATCHED while every other lane's frame flies past on the same topic",
+    check("watch a publish whose echo never came back is STILL WATCHED while every other lane's frame flies past on the same topic",
       [kBusy.length, kBusy.map(ackWatchKey)], [1, [kC]]);
     const kExp = expireAcks(kBusy, Date.now() + 10_000, 3000);
-    check("926 …the sweep ages it out, recorded under its OWN key, and the waiter's answer is UNCONFIRMED",
+    check("watch …the sweep ages it out, recorded under its OWN key, and the waiter's answer is UNCONFIRMED",
       [kExp.lost.map(ackWatchKey), deliveryVerdict(kC, kExp.live, new Set(kExp.lost.map(ackWatchKey)))],
       [[kC], "unconfirmed"]);
-    check("926 and the alarm still NAMES the lost publish's topic, so an operator can tie it to the post they just made",
+    check("watch and the alarm still NAMES the lost publish's topic, so an operator can tie it to the post they just made",
       ackLostLine(kExp.lost, Date.now() + 10_000).includes(kFlat), true);
   } else {
     // what the GENERATOR emits, and the cutover the tag would ship: `topic readwrite chat/<room>/_ctl`
     // is an exact match, so it cannot cover a child, and `_ctl/#` is granted READ only
-    check("PHASE2 wren's OWN receipt leaf is now CARRIED (the grant covers what the writer owns)",
+    check("PHASE2 lane11's OWN receipt leaf is now CARRIED (the grant covers what the writer owns)",
       has(obs.peer, tRcpt), true);
-    check("PHASE2 wren's OWN admin answer leaf is carried under the same one grant", has(obs.peer, tAdmin), true);
-    check("PHASE2 NEGATIVE (the forgery): a receipt written under FLASH6's leaf is DROPPED",
+    check("PHASE2 lane11's OWN admin answer leaf is carried under the same one grant", has(obs.peer, tAdmin), true);
+    check("PHASE2 NEGATIVE (the forgery): a receipt written under LANE6's leaf is DROPPED",
       has(obs.peer, tForeign), false);
-    check("PHASE2 NEGATIVE (the forgery, one level deeper): a forged admin answer under FLASH6 is DROPPED",
+    check("PHASE2 NEGATIVE (the forgery, one level deeper): a forged admin answer under LANE6 is DROPPED",
       has(obs.peer, tForeignAdmin), false);
     check("PHASE2 POSITIVE CONTROL: the bare `_ctl` write the grant DOES cover reached the peer — so the two absences above are the CHILD grant, not a dead listener or a stopped broker",
       has(obs.peer, tBare), true);
@@ -294,14 +294,14 @@ async function probe(phase: "phase1" | "phase2") {
     // grant the flat topic at all, so this is the docs' "publish into a void and report no error"
     // case, and the paired per-sender leaf is the write phase 2 DOES grant. Both are watched with
     // the same helper the shipped `publishRoom` uses, so the alarm must fire on exactly one of them.
-    const tLeaf = msgTopic(ROOM, "wren");
+    const tLeaf = msgTopic(ROOM, "lane11");
     // started from an EMPTY list, not from `watched`: `watched` still holds the two refused control
     // children above, and folding them in made this cell report 3 lost where the honest answer is 1.
     // A watch list that accumulates across assertions tests the assertion order, not the broker.
     const roomWatch0 = watchAck([], `chat/${ROOM}`, "room line", Date.now());
     const roomWatch = watchAck(roomWatch0.pending, tLeaf, "room line", Date.now());
-    pub.publish(`chat/${ROOM}`, JSON.stringify({ nick: "wren", message: "void-post", phase }));
-    pub.publish(tLeaf, JSON.stringify({ nick: "wren", message: "leaf-post", phase }));
+    pub.publish(`chat/${ROOM}`, JSON.stringify({ nick: "lane11", message: "void-post", phase }));
+    pub.publish(tLeaf, JSON.stringify({ nick: "lane11", message: "leaf-post", phase }));
     await new Promise((r) => setTimeout(r, 1500));
     check("PHASE2 the flat room write reached the peer: NO — this is the cutover silent-drop case",
       has(obs.peer, `chat/${ROOM}`) && obs.peer.includes(`chat/${ROOM}`), false);
@@ -317,14 +317,14 @@ async function probe(phase: "phase1" | "phase2") {
     // iid 21 finding 1, PHASE 2 face: this write is REFUSED outright (asserted just above, physically
     // — the far side heard nothing and no echo ever reached the publisher). Keyed on the publish's own
     // id, no frame this socket received can settle it, so the answer is the truth and not a pass.
-    const kSw = `wren-926-sw-${id}`;
+    const kSw = `lane11-watch-sw-${id}`;
     let kSwList = watchAck([], `chat/${ROOM}`, "room line", Date.now(), kSw).pending;
     for (const f of obs.selfFrame) {
       kSwList = settleAck(kSwList, f.id).pending;
       kSwList = settleAck(kSwList, f.topic).pending;
     }
     const kSwExp = expireAcks(kSwList, Date.now() + 10_000, 3000);
-    check("926 PHASE2 the refused write stays watched through EVERY inbound frame, ages out, and answers UNCONFIRMED",
+    check("watch PHASE2 the refused write stays watched through EVERY inbound frame, ages out, and answers UNCONFIRMED",
       [kSwList.length, kSwExp.lost.map(ackWatchKey), deliveryVerdict(kSw, kSwExp.live, new Set(kSwExp.lost.map(ackWatchKey)))],
       [1, [kSw], "unconfirmed"]);
     let list = watched;
@@ -368,7 +368,7 @@ async function probe(phase: "phase1" | "phase2") {
 (async () => {
   const p1 = await probe("phase1");
   const p2 = await probe("phase2");
-  await leg496();
+  await grantPhase();
   if (!p1 || !p2) failed++;
   if (p1 && p2) {
     console.log(`\n== doc-vs-generator: does docs/broker/acl.conf describe what :157/:138 emit? ==`);
@@ -405,8 +405,8 @@ async function probe(phase: "phase1" | "phase2") {
 })();
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
-// LEG 496 — SHAPE (ii): receipts under the sender. Everything above proves the WATCHDOG; this
-// proves the GRANT, and it is the part the owner priced the row on. Three claims, each with its
+// — SHAPE (ii): receipts under the sender. Everything above proves the WATCHDOG; this
+// proves the GRANT, and it is the half a grep cannot reach. Three claims, each with its
 // paired positive, and all of it against the ACL the GENERATOR wrote in this run — not a hand-typed
 // one, because the defect this row fixes was a doc that drifted from a generator.
 //
@@ -414,7 +414,7 @@ async function probe(phase: "phase1" | "phase2") {
 //   AC2  the watchdog still fires under the new shape (it must not go quiet because the topic moved)
 //   AC3  N acks now occupy N topics (they used to collapse to 1) AND the clear path empties them
 //
-// The foreign-write cell is also closing `flash2`'s review finding 3: the old code had ZERO cells
+// The foreign-write cell is also closing `lane2`'s review finding 3: the old code had ZERO cells
 // that could see a cross-lane receipt write — `grep -nE "foreign|other-" test_ack_watch_broker.ts`
 // returned nothing — so "a lane can write a receipt for an id it does not own" rode on the ACL text
 // alone. Here it is measured at BOTH grants: delivered under phase 1 (the hole, finally exercised),
@@ -424,18 +424,18 @@ import { ackTopic as ackTopicUnderSender, pinAck, receiptClears, clearPayload } 
 import { adminResultTopic as adminAnswerUnderSender } from "../extensions/tabichat/laneadmin.ts";
 
 // THIS BLOCK NEEDS A THIRD NICK (an unbiased observer), so it asks the fixture for it explicitly.
-// The fixture default is site-neutral since leg 539; connecting a nick the fixture never minted is a missing-file
+// The fixture default is site-neutral since a prior leg; connecting a nick the fixture never minted is a missing-file
 // error that mqtt.js surfaces as a dead socket, which is how this block first read as
 // "ECONNREFUSED" and looked like a broker bug instead of my own cell asking for a cert that
 // does not exist. State the requirement; do not infer it from a default.
-const sh2 = (n: string) => { const r = spawnSync("sh", n, { encoding: "utf8", cwd: REPO, env: { ...process.env, TABICHAT_FIXTURE_OWNER: FIXTURE_OWNER, TABICHAT_FIXTURE_NICKS: "wren flash6 ultra" } }); return (r.stdout ?? "") + (r.stderr ?? ""); };
+const sh2 = (n: string) => { const r = spawnSync("sh", n, { encoding: "utf8", cwd: REPO, env: { ...process.env, TABICHAT_FIXTURE_OWNER: FIXTURE_OWNER, TABICHAT_FIXTURE_NICKS: "lane11 lane6 lane10" } }); return (r.stdout ?? "") + (r.stderr ?? ""); };
 
 // ONE async entry point for this file (see the runner at :248). My first version left this as a
 // second top-level IIFE, and the first one's process.exit() killed the run mid-flight: the earlier
 // section printed nothing and the failure read like a broker bug (ECONNREFUSED) instead of a race I
 // had written. Sequential now, and the call is awaited before the single summary.
-const leg496 = async () => {
-  console.log("\n== 496 AC1/AC3: the generated shape-(ii) grant, on a real broker ==");
+const grantPhase = async () => {
+  console.log("\n== AC1/AC3: the generated shape-(ii) grant, on a real broker ==");
   const up = sh2(["src/tools/broker-fixture.sh", "up", "phase2"]);
   if (!up.includes("FIXTURE_PORT=")) {
     console.log("NOT RUN — the shape-(ii) fixture did not start, so AC1/AC3 were NOT EXECUTED. That is a result, not a pass.");
@@ -465,12 +465,12 @@ const leg496 = async () => {
   // would still pass on a wide grant and lie.
   const gen = readFileSync(join(DIR, "pki/acl-generated.conf"), "utf8");
   const wideSubtreeWrite = gen.split("\n").some((l) => /^\s*(topic|pattern)\s+(readwrite|write)\s+chat\/[^/]+\/_ctl\/#\s*$/.test(l));
-  check("496 the generated ACL grants NO write on the `_ctl` subtree (the phase-1 hole is gone)", wideSubtreeWrite, false);
-  check("496 and it DOES grant each nick its own `_ctl/<nick>/#` leaf", gen.includes(`topic write chat/${ROOM}/_ctl/wren/#`), true);
+  check("the generated ACL grants NO write on the `_ctl` subtree (the phase-1 hole is gone)", wideSubtreeWrite, false);
+  check("and it DOES grant each nick its own `_ctl/<nick>/#` leaf", gen.includes(`topic write chat/${ROOM}/_ctl/lane11/#`), true);
 
   let w: mqtt.MqttClient, f: mqtt.MqttClient, obs: mqtt.MqttClient;
   try {
-    w = await conn("wren"); f = await conn("flash6"); obs = await conn("ultra");
+    w = await conn("lane11"); f = await conn("lane6"); obs = await conn("lane10");
   } catch (e) {
     console.log("NOT RUN — a client could not connect under the new grant: " + String(e).slice(0, 160));
     failed++;
@@ -481,49 +481,49 @@ const leg496 = async () => {
     obs.on("message", (t) => seen.push(t));
     await new Promise(r => setTimeout(r, 400));
 
-    const MSG = "msg-496";
-    const own = ackTopicUnderSender(ROOM, "wren", MSG);
-    const foreign = ackTopicUnderSender(ROOM, "flash6", MSG);
-    check("496 the two topic shapes are different leaves, as designed", own !== foreign && own.includes("/_ctl/wren/") && foreign.includes("/_ctl/flash6/"), true);
+    const MSG = "msg-grant";
+    const own = ackTopicUnderSender(ROOM, "lane11", MSG);
+    const foreign = ackTopicUnderSender(ROOM, "lane6", MSG);
+    check("the two topic shapes are different leaves, as designed", own !== foreign && own.includes("/_ctl/lane11/") && foreign.includes("/_ctl/lane6/"), true);
 
     // AC1 POSITIVE first — if the own write does not land, the refusal below proves nothing.
-    w.publish(own, JSON.stringify({ kind: "ack", id: MSG, by: "wren", to: "ultra" }), { retain: true });
+    w.publish(own, JSON.stringify({ kind: "ack", id: MSG, by: "lane11", to: "lane10" }), { retain: true });
     await new Promise(r => setTimeout(r, 900));
-    check("AC1 POSITIVE: wren's OWN receipt leaf is DELIVERED to a third peer", seen.includes(own), true);
+    check("AC1 POSITIVE: lane11's OWN receipt leaf is DELIVERED to a third peer", seen.includes(own), true);
 
     // AC1 NEGATIVE — the forgery, the exact write that phase 1 permits and this grant does not.
-    w.publish(foreign, JSON.stringify({ kind: "ack", id: MSG, by: "flash6", to: "ultra" }), { retain: true });
+    w.publish(foreign, JSON.stringify({ kind: "ack", id: MSG, by: "lane6", to: "lane10" }), { retain: true });
     await new Promise(r => setTimeout(r, 900));
-    check("AC1 NEGATIVE: wren writing a receipt under FLASH6's leaf is REFUSED (the forgery closes)",
+    check("AC1 NEGATIVE: lane11 writing a receipt under LANE6's leaf is REFUSED (the forgery closes)",
       seen.includes(foreign), false);
 
     // ...and the same for a lane-admin answer, one level deeper. Half a fix is a whole hole.
-    const ownAns = adminAnswerUnderSender(ROOM, "wren", "req-496");
-    const fakeAns = adminAnswerUnderSender(ROOM, "flash6", "req-496");
-    w.publish(ownAns, JSON.stringify({ kind: "lane-admin-result", id: "req-496", lane: "wren", outcome: "run" }), { retain: true });
-    w.publish(fakeAns, JSON.stringify({ kind: "lane-admin-result", id: "req-496", lane: "flash6", outcome: "run" }), { retain: true });
+    const ownAns = adminAnswerUnderSender(ROOM, "lane11", "req-grant");
+    const fakeAns = adminAnswerUnderSender(ROOM, "lane6", "req-grant");
+    w.publish(ownAns, JSON.stringify({ kind: "lane-admin-result", id: "req-grant", lane: "lane11", outcome: "run" }), { retain: true });
+    w.publish(fakeAns, JSON.stringify({ kind: "lane-admin-result", id: "req-grant", lane: "lane6", outcome: "run" }), { retain: true });
     await new Promise(r => setTimeout(r, 900));
     check("AC1 a lane's OWN admin answer is delivered", seen.includes(ownAns), true);
     check("AC1 and a FORGED admin answer under another nick is refused", seen.includes(fakeAns), false);
 
-    // THE REQUESTER'S WILDCARD: the read side must not have to change (my §2.1 claim, measured here).
+    // THE REQUESTER'S WILDCARD: the read side must not have to change — claimed, and measured here.
     const wid = "req-wild";
     const wild = adminResultWild(ROOM, wid);
     const gotWild: string[] = [];
     await new Promise<void>(r => f.subscribe(wild, { qos: 0 }, () => r()));
     f.on("message", (t) => gotWild.push(t));
     await new Promise(r => setTimeout(r, 300));
-    w.publish(adminAnswerUnderSender(ROOM, "wren", wid), JSON.stringify({ kind: "lane-admin-result", id: wid }), { retain: true });
+    w.publish(adminAnswerUnderSender(ROOM, "lane11", wid), JSON.stringify({ kind: "lane-admin-result", id: wid }), { retain: true });
     await new Promise(r => setTimeout(r, 900));
-    check("496 a requester on `_ctl/admin/+/<id>` still hears an answer pinned under the ANSWERER",
-      gotWild.includes(adminAnswerUnderSender(ROOM, "wren", wid)), true);
+    check("a requester on `_ctl/admin/+/<id>` still hears an answer pinned under the ANSWERER",
+      gotWild.includes(adminAnswerUnderSender(ROOM, "lane11", wid)), true);
 
     // AC3 — cardinality, the thing that costs the day. Two writers, one message.
     const before = seen.length;
-    f.publish(ackTopicUnderSender(ROOM, "flash6", "one-msg"), JSON.stringify({ kind: "ack", id: "one-msg", by: "flash6" }), { retain: true });
-    w.publish(ackTopicUnderSender(ROOM, "wren", "one-msg"), JSON.stringify({ kind: "ack", id: "one-msg", by: "wren" }), { retain: true });
+    f.publish(ackTopicUnderSender(ROOM, "lane6", "one-msg"), JSON.stringify({ kind: "ack", id: "one-msg", by: "lane6" }), { retain: true });
+    w.publish(ackTopicUnderSender(ROOM, "lane11", "one-msg"), JSON.stringify({ kind: "ack", id: "one-msg", by: "lane11" }), { retain: true });
     await new Promise(r => setTimeout(r, 900));
-    const both = [ackTopicUnderSender(ROOM, "wren", "one-msg"), ackTopicUnderSender(ROOM, "flash6", "one-msg")];
+    const both = [ackTopicUnderSender(ROOM, "lane11", "one-msg"), ackTopicUnderSender(ROOM, "lane6", "one-msg")];
     const held = both.filter((t) => seen.includes(t));
     check("AC3 BEFORE the clear: two acks for ONE message now hold TWO board entries (they collapsed to one under the flat shape)",
       held.length, 2);
@@ -532,18 +532,18 @@ const leg496 = async () => {
     // aged 70s against a 60s window: my first draft used 10s and then demanded they clear, which is
     // the cell being wrong, not the code — receiptClears is `>=` on purpose.
     const aged = Date.now() - 70_000;
-    let pinned = pinAck([], both[0], aged).pinned;   // both[0] is wren's leaf, both[1] flash6's
+    let pinned = pinAck([], both[0], aged).pinned;   // both[0] is lane11's leaf, both[1] lane6's
     pinned = pinAck(pinned, both[1], aged).pinned;
     const { keep, clear } = receiptClears(pinned, Date.now(), 60_000);
     check("AC3 the clear list is exactly my own aged entries, and nothing young is cleared",
       [clear.length, keep.length], [2, 0]);
-    // Each entry is cleared by the lane that OWNS its leaf — wren clears `_ctl/wren/...`, flash6
-    // clears `_ctl/flash6/...`. A lane cannot clear a peer's leaf and that is the point of (ii), so
+    // Each entry is cleared by the lane that OWNS its leaf — lane11 clears `_ctl/lane11/...`, lane6
+    // clears `_ctl/lane6/...`. A lane cannot clear a peer's leaf and that is the point of (ii), so
     // the test must publish the empty retained payload from the right socket or it is testing nothing.
-    for (const x of clear) (x.topic.includes("/_ctl/wren/") ? w : f).publish(x.topic, clearPayload(), { retain: true });
+    for (const x of clear) (x.topic.includes("/_ctl/lane11/") ? w : f).publish(x.topic, clearPayload(), { retain: true });
     await new Promise(r => setTimeout(r, 900));
     const late: string[] = [];
-    const j = await conn("ultra").catch(() => null);
+    const j = await conn("lane10").catch(() => null);
     if (j) {
       await new Promise<void>(r => j.subscribe(`chat/${ROOM}/_ctl/#`, { qos: 0 }, () => r()));
       j.on("message", (t) => late.push(t));

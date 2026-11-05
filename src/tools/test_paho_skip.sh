@@ -3,10 +3,10 @@
 # Licensed under the Business Source License 1.1 (the "License"); you may not use this file
 # except in compliance with the License. You may obtain a copy of the License at the LICENSE
 # file in the repository root. SPDX-License-Identifier: BUSL-1.1
-# Truth table for the paho-mqtt exemption in src/tools/deploy-tabichat.sh — leg 905, item F4.
+# Truth table for the paho-mqtt exemption in src/tools/deploy-tabichat.sh — item F4.
 #   bash src/tools/test_paho_skip.sh        (exit 1 on any failure)
 #   sh   src/tools/test_paho_skip.sh        — the same, and this is how the deploy runs it: the shell-gate
-#     loop consults `sh`, which is dash here. Both faces are required to agree; ported at leg 958 for that
+#     loop consults `sh`, which is dash here. Both faces are required to agree; ported at a prior leg for that
 #     reason, and it is now a registered member of SHGATES.
 #
 # WHAT WAS WRONG. The deploy probes for paho (`python3 -c "import paho.mqtt.client"`) and, on a host without
@@ -40,8 +40,8 @@
 # work tree). Nothing else is touched: the python loop under test, the probe above it, and the skip branch are
 # the shipped code, and the static cells below prove the shipped arrays are not empty before any strip is used.
 #
-# WHY THIS FILE IS REGISTERED IN SHGATES NOW, and what leg 862's ruling does NOT extend to. Leg 955 left it
-# out on two readings: that it counts the gate arrays while its own planted faces rewrite them (leg 862's reason
+# WHY THIS FILE IS REGISTERED IN SHGATES NOW, and what a prior leg's ruling does NOT extend to. a prior leg left it
+# out on two readings: that it counts the gate arrays while its own planted faces rewrite them (a prior leg's reason
 # for test_secret_guard.sh), and that the shell loop consults `sh` while this file carried bash-only process
 # substitutions. The second was real and is now fixed — the two `<(...)` sites are a temp-file set comparison,
 # and the 34 cells agree under `sh` and `bash`. The first does not apply as written: this file counts the arrays
@@ -83,7 +83,7 @@ members_of() {  # $1 = script path, $2 = array name -> one member per line, read
 # grep_absent <lines to test> <the allowed lines> -> prints the members of the first list that are absent
 # from the second. A temp file rather than a process substitution, because the shell-gate loop runs
 # `sh tools/<name>` and /bin/sh on this box is dash: `grep -vxF -f <(printf …)` is bash-only and dash stops
-# the whole file at parse time (measured at leg 955: `sh src/tools/test_paho_skip.sh` -> rc 2,
+# the whole file at parse time (measured at a prior leg: `sh src/tools/test_paho_skip.sh` -> rc 2,
 # `Syntax error: "(" unexpected`). Same predicate, same output, one fewer interpreter dependency — the
 # exemption is a SET, and the set check has to run in the shell that the deploy actually uses.
 grep_absent() {

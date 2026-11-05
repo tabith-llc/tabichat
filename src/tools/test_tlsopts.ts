@@ -85,10 +85,10 @@ check("tls:// is NOT claimed as plaintext (it is not a known plain form)", isPla
 check("tls:// is not silently treated as anything the module knows", isTlsScheme("tls://h:8883"), false);
 
 console.log("\n== URL redaction and the credentials-in-the-URL refusal ==");
-check("redactUrl hides the password", redactUrl("mqtts://wren:hunter2@broker.example:8883"), "mqtts://wren:***@broker.example:8883");
+check("redactUrl hides the password", redactUrl("mqtts://lane11:hunter2@broker.example:8883"), "mqtts://lane11:***@broker.example:8883");
 check("redactUrl leaves a clean URL byte-identical", redactUrl("mqtt://broker.example:1883"), "mqtt://broker.example:1883");
-check("redactUrl leaves a user-only URL alone", redactUrl("mqtt://wren@broker.example:1883"), "mqtt://wren:***@broker.example:1883");
-never("the secret is NOT in the redacted output", redactUrl("mqtts://wren:hunter2@h:8883"), "hunter2");
+check("redactUrl leaves a user-only URL alone", redactUrl("mqtt://lane11@broker.example:1883"), "mqtt://lane11:***@broker.example:1883");
+never("the secret is NOT in the redacted output", redactUrl("mqtts://lane11:hunter2@h:8883"), "hunter2");
 check("hasUserinfo true only for userinfo", [hasUserinfo("mqtt://a:b@h"), hasUserinfo("mqtt://h:1883"), hasUserinfo("mqtt://h:1883/a@b")], [true, false, false]);
 says("a credential in the URL is a REFUSAL naming the alternative", userinfoError("mqtt://u:p@h"), TLS_ENV.certfile);
 never("the refusal line does not echo the secret itself", userinfoError("mqtt://u:hunter2@h"), "hunter2");
@@ -242,7 +242,7 @@ console.log("\n== AC5: no secret value can reach a notify line, a log line or a 
 // The ruled test for this is "configure a fake credential and grep the outputs", not an assertion.
 // Everything the module can say about a credential is a PATH, so the check is: hand it a value that
 // would be catastrophic to print, and prove the string never appears in any output it produces.
-const SECRET_MARK = "venya-SUPERSECRET-do-not-print-909";
+const SECRET_MARK = "secret-marker-do-not-print-xyz";
 const leakEnv = {
   [TLS_ENV.cafile]: "/k/ca.crt",
   [TLS_ENV.certfile]: "/k/client.crt",
@@ -268,8 +268,8 @@ for (const d of [
   if (d.mode === "tls") check("AC5 the key is handed to the socket layer, not dropped", d.tls?.key?.includes(SECRET_MARK), true);
 }
 // and the DISPLAY form of every URL this module will ever print is redacted
-const shownUrl = redactUrl("mqtts://wren:venya-SUPERSECRET-do-not-print-909@broker.example:8883");
-never("AC5 redactUrl is what the print path uses, and it hides the value", shownUrl, "venya-SUPERSECRET-do-not-print-909");
+const shownUrl = redactUrl("mqtts://lane11:secret-marker-do-not-print-xyz@broker.example:8883");
+never("AC5 redactUrl is what the print path uses, and it hides the value", shownUrl, "secret-marker-do-not-print-xyz");
 
 console.log("\n== the fs reader the real path uses (makePemReader), on a directory that exists ==");
 const real = makePemReader((p) => {

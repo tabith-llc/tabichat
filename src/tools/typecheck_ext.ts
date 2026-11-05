@@ -3,7 +3,7 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * THE TYPECHECK GATE (leg 806, ACT 2.1). Run from `src/`:
+ * THE TYPECHECK GATE (PART 2.1). Run from `src/`:
  *   bun tools/typecheck_ext.ts        (exit 1 on any UNLISTED error)
  *
  * WHY THIS EXISTS. The defect 45 + 236 + 421 + 10 cells all missed was one missing key in one
@@ -23,7 +23,7 @@
  * error goes red, which is what makes tonight's regression class impossible to ship; a listed
  * entry that has been FIXED stays listed until a human prunes the list, and the gate prints the
  * live count so drift is visible. The instrument proves it bites by the RED-at-the-old-tip record
- * in the leg-806 report: TS2741 naming `appendFileSync` before the fix commit, silence after.
+ * in the report that found it: TS2741 naming `appendFileSync` before the fix commit, silence after.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -37,7 +37,7 @@ const fail = (m: string) => {
   console.log(`FAIL ${m}`);
 };
 
-// the config must exist where the checker will find it — if it drifts away, the check silently
+// the config must exist where the lane17 will find it — if it drifts away, the check silently
 // degrades into "Cannot find module" flood; the unlisted fingerprints catch that too, but naming
 // it first makes the cause readable.
 for (const need of ["tsconfig.json", "externals.d.ts"]) {
@@ -69,7 +69,7 @@ for (const line of out.split("\n")) {
 // member short of the real thing (statSync `mtimeMs`/`isFile`). 25 distinct fingerprints, 32 live
 // occurrences at this tip; the printed count is the drift detector. NONE of these is the wiring
 // class: TS2741 on a fresh object literal is NOT and never will be on this list — that is the line
-// this gate was built to make impossible to ship, and the leg-806 report holds its RED output at
+// this gate was built to make impossible to ship, and the finding's own report holds the RED output at
 // the pre-fix tip. Prune entries as files get narrowed; never add one without naming it here.
 const APPROVED: string[] = [
   "broker.ts|TS2339|Property 'message' does not exist on type 'BrokerResolution'.",

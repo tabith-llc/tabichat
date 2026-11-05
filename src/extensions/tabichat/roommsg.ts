@@ -9,7 +9,7 @@
 // checkable in tools/test_roommsg.ts without a network. index.ts owns the
 // clients; this module owns the shapes and the arithmetic.
 //
-// Why each piece exists (lead requirements P2-P5, owner order 2026-10-05):
+// Why each piece exists:
 //   P2  an id per message + an ack on a NON-room topic, so the lead can tell
 //       "never delivered" apart from "received and being ignored" without
 //       spending turns on the difference;
@@ -41,7 +41,7 @@ export const msgId = (nick: string, seq: number, boot: string): string =>
 /**
  * THE TWO ID NAMESPACES, and the parse that tells them apart (`iid 22`). A lane is shown ids in two
  * places and asks for receipts by id in a third, and until now nothing told it WHICH namespace a
- * string came from — so an id in a shape no shipped minter builds (`ultra-1762147481813`) read as a
+ * string came from — so an id in a shape no shipped minter builds (`<nick>-1762147481813`) read as a
  * publish whose receipt was missing, when the truth is that no publish was ever in that namespace.
  * Silence in one namespace must not look like failure in another.
  *
@@ -61,7 +61,7 @@ export const idNamespace = (id: string): IdNamespace => {
   const v = (id ?? "").trim();
   if (v === "") return "unminted";
   // admin FIRST: its literal segment is the discriminator, and a nick may itself contain dashes, so
-  // the two shapes overlap on strings like `wren-admin-1-0eff46` and only the specific one is right.
+  // the two shapes overlap on strings like `<nick>-admin-1-0eff46` and only the specific one is right.
   if (ADMIN_ID_SHAPE.test(v)) return "admin";
   return MSGID_SHAPE.test(v) ? "msgid" : "unminted";
 };
@@ -157,7 +157,7 @@ export const msgTopic = (room: string, nick: string): string => {
   return leaf ? `chat/${room}/msg/${leaf}` : "";
 };
 /**
- * The retained per-lane TAIL BOARD (leg 800, flag `MQTT_HIST_BOARD=1`, default OFF): one topic per
+ * The retained per-lane TAIL BOARD (flag `MQTT_HIST_BOARD=1`, default OFF): one topic per
  * lane, overwritten on every send, so a late subscriber is handed the lane's last few lines the
  * moment it subscribes. Same sanitised leaf as `msgTopic` — one filter, never a re-implementation.
  * An empty leaf returns "" for the same reason `msgTopic` refuses: a trailing-separator topic is
@@ -295,8 +295,8 @@ export const peerRecordWins = (prev: PeerSeen | undefined, incoming: PeerSeen): 
  * OURS, so a record stamped more than one whole allowance ahead of us is not a beat we can time at
  * all — it is a clock we cannot trust. It used to read `online`, and it read `online` for as long as
  * the skew kept the age negative, which is how a seat whose process was gone stayed live on the
- * peers board and got lanes staffed off it (R-2717 item 3; the board was never a process check and
- * never said so). Such a record is `stale` now: "we heard something, we cannot rank it".
+ * peers board and got lanes staffed off it — the board was not a process check and
+ * never said so. Such a record is `stale` now: "we heard something, we cannot rank it".
  */
 export const peerState = (
   seen: PeerSeen | undefined,
@@ -320,8 +320,8 @@ export const peerState = (
  * clock, with the beat interval and the allowance as the only numbers in it. A seat that died without
  * its last will reaching the broker keeps reading `stale` here, and a `stale` row is not evidence that
  * anyone is gone. Say that on the surface, because a reader who is not sitting on the broker cannot
- * derive it from three words and a number (s305: the witnesses for a running process are /proc and
- * lane-exits.log, and this board is neither).
+ * derive it from three words and a number (the witnesses for a running process are /proc and
+ * the exit log, and this board is neither).
  */
 export const PEERS_INSTRUMENT =
   "measured: the last presence beat THIS seat heard per nick on this room's presence topic, ranked against THIS seat's clock; a beat is not a process check, so `stale` here never means gone";
@@ -368,16 +368,16 @@ export interface RoomLine {
    */
   to?: string;
   /**
-   * The line came from HISTORY — the on-disk journal or a retained tail board (leg 800), not from
+   * The line came from HISTORY — the on-disk journal or a retained tail board, not from
    * the live room. Replayed lines must never read as news: they carry this flag so every render
    * shows `hist`, and the wiring never injects or re-journals them.
    */
   hist?: boolean;
   /**
-   * The MONOTONIC ARRIVAL STAMP (leg 804, D1). `pushRoomLine` assigns it; `takeUnseen` compares
+   * The MONOTONIC ARRIVAL STAMP. `pushRoomLine` assigns it; `takeUnseen` compares
    * against it. An absolute INDEX into a capped, shifting array cannot carry the unseen boundary:
    * once `shift()` fires, every stored index silently points one line too far, and a reader at the
-   * saturated length sees nothing EVER AGAIN — proven pre-existing on `dev` by leg 803's control
+   * saturated length sees nothing EVER AGAIN — proven pre-existing on `dev` by a control
    * block (0/5 surfaced with no journal involved). The boundary must be a number that only grows.
    */
   seq?: number;
@@ -394,8 +394,8 @@ export const renderLine = (l: RoomLine): string =>
   `[${tsLabel(l.ts)} chat:${l.nick}${toLabel(l.to)}${l.hist ? " hist" : ""}] ${l.message}`;
 
 /**
- * Provenance for one INBOUND line (owner order 2026-10-08, after a lane published six
- * re-dispatches it had never received). A mention used to arrive as `[chat:<nick>] <text>`
+ * Provenance for one INBOUND line, after a lane published six
+ * re-dispatches it had never received. A mention used to arrive as `[chat:<nick>] <text>`
  * with nothing to pin it to, so a claim about what the room sent was unfalsifiable inside the
  * lane: the only message ids a lane ever saw were the ones its own posts printed, and the ids
  * invented in that incident copied exactly that shape (`anna-1-a84e80`). The tag carries the
@@ -414,7 +414,7 @@ export const renderInbound = (l: RoomLine): string =>
   `[chat:${l.nick}${lineTag(l.id, l.ts)}${toLabel(l.to)}${l.hist ? " hist" : ""}] ${l.message}`;
 
 /**
- * Per-sender tally of received mentions: `lead-agent x1, dust x2`. This is the number a lane
+ * Per-sender tally of received mentions: `lead-agent x1, owner x2`. This is the number a lane
  * used to assert from memory ("the lead relayed this six times") — here it is counted.
  */
 export const inboxTally = (rows: readonly RoomLine[]): string => {
@@ -430,7 +430,7 @@ export const inboxTally = (rows: readonly RoomLine[]): string => {
  *
  * The lane used to be handed up to 12 unaddressed room lines ahead of every mention, under a
  * `[room lines since your last turn]` header. Two costs, both paid by the fleet: the block eats
- * context on every mention, and it upsets the less capable lane models — a 2026-10-08 incident
+ * context on every mention, and it upsets the less capable lane models — one run
  * had a fresh worker lane read unaddressed traffic as six re-dispatches of its own order and
  * accuse the lead in the room of ignoring reports it had, in fact, been acked for. Nothing is
  * lost by removing it: the whole room stays in the buffer, so `chat_read` still answers any
@@ -454,7 +454,7 @@ export const planInbound = (o: {
 /**
  * Lines the reader has not been shown yet, plus the cursor to store afterwards.
  *
- * STAMPED mode (leg 804): when the array's lines carry `seq`, the boundary is the last STAMP shown,
+ * STAMPED mode: when the array's lines carry `seq`, the boundary is the last STAMP shown,
  * not an array position — `seen = l.seq > cursor`. This is provably shift-immune: `Array.shift()`
  * removes elements, it cannot move a stamp, so a reader parked at 50 still sees the line stamped 51
  * after the window wrapped. An array with NO stamps keeps the historical index semantics for
@@ -475,7 +475,7 @@ export const takeUnseen = <T>(
 };
 
 /**
- * The ONE way a room line enters the capped window (leg 804, D1): stamp the next monotonic seq,
+ * The ONE way a room line enters the capped window: stamp the next monotonic seq,
  * append, and let the oldest fall when the cap is reached. Callers that hand-rolled
  * `buffer.push(...); if (buffer.length > BUFFER_MAX) buffer.shift();` held the exact index-vs-shift
  * drift this function exists to close — a pushed line sat BELOW the stored cursor forever.
@@ -552,12 +552,11 @@ export const sanitizeAckId = (id: string): string =>
 
 /**
  * Room-post length cap. The owner's own posts are unlimited; agent posts are
- * capped at 2500 (raised from 1500 on the lead's
- * recommendation "RAISE to ~2500 — keep the refusal, never lift", after three posts bounced at 1500 in
+ * capped at 2500 (raised from 1500 after three posts bounced at 1500 in
  * one round and a 1,792-character merge order died inside a refused draft). The REFUSAL IS THE POINT AND
  * IT IS UNCHANGED: a post over the cap is refused and nothing is published; only the number moved. Room
  * text is read by every lane that picks it up, and a lane can post a whole worklog into the room — one
- * 2026-10-07 post ran to ~2,600 characters — with nothing measuring it, because the rule to keep room
+ * post ran to ~2,600 characters — with nothing measuring it, because the rule to keep room
  * text to a verdict line plus a report path was only ever an instruction. The owner's own nick is exempt
  * and posts without a limit.
  *
@@ -586,14 +585,14 @@ export const postLengthVerdict = (
 /** What the lane reads when its post was too long. Nothing went out; the file is the way. */
 export const postTooLongNote = (len: number, max: number): string =>
   // `len` is the TOTAL measured length, not the excess — a lane read "2684 characters over the 2500 cap"
-  // as 2,684 characters OVER the limit and filed it as a defect (a canary report, 2026-10-08). State both
+  // as 2,684 characters OVER the limit and filed it as a defect. State both
   // numbers unambiguously: the total, the cap, and the difference.
   `chat_post: refused — ${len} characters, ${len - max} over the ${max} cap, nothing was published. ` +
   `Post one verdict line plus the path to your report file; the long form belongs in that file.`;
 
 /**
- * Duplicate suppression for room lines (owner order 2026-10-07, verbatim: "i want these things to
- * not appear in the room"). Four copies of one dispatch had been read in the room: a message
+ * Duplicate suppression for room lines: these things must not
+ * appear in the room more than once. Four copies of one dispatch had been read in the room: a message
  * arriving more than once must render ONCE. The cause found that day was a room tap registering its
  * message handler inside the connect handler, so every reconnect added another handler and one
  * message printed once per handler - same text, same timestamp, N lines. Whatever the delivery

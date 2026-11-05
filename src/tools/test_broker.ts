@@ -16,7 +16,7 @@
  *   4. a SOURCE-SHAPE half plus a TREE-SCAN half. The source-shape grep is what catches a correct
  *      module nobody calls (the `ctx is not defined` incident: a perfectly tested file whose wiring
  *      line never ran). The tree scan is the negative half of the ruling itself — "we removed the
- *      default" and "we removed the address" are different claims, and the owner ruled on BOTH — so
+ *      default" and "we removed the address" are different claims, and the two were decided apart — so
  *      this file fails if a venue hostname comes back into any tracked text file, default, prose or
  *      example. The banned strings are HEX-ENCODED so this guard cannot contain what it guards
  *      (same trick as .githooks/forbidden-strings.hex).
@@ -81,7 +81,7 @@ check("a URL with no port is still a location", kind(resolveBrokerUrl({ env: "mq
 const none = resolveBrokerUrl({ site: undefined, env: undefined, configPath: PATH });
 check("NOTHING SET → refuses", kind(none), "refuse");
 check(
-  "and the refusal NAMES THE CONFIG PATH IT SEARCHED (the owner's refinement — env-or-refuse alone " +
+  "and the refusal NAMES THE CONFIG PATH IT SEARCHED (the refinement — env-or-refuse alone " +
     "is half the ruling)",
   none.ok === false && none.message.includes(PATH),
   true,
@@ -193,11 +193,11 @@ check("shipped extension imports the resolver", shipped.includes(`from "./broker
 check("shipped extension calls resolveBrokerUrl", shipped.includes("resolveBrokerUrl({"), true);
 check("shipped extension uses the RESOLVED url to connect", shipped.includes("mqtt.connect(brokerUrl"), true);
 check("shipped extension never guesses past the refusal", /if \(brokerRefusal !== ""\) \{[\s\S]{0,400}return;\n\s*\}/.test(shipped), true);
-// RE-PAIRED by leg 517 (owner order 2026-10-24, verbatim: "can we not figure out how to keep errors
-// out of the place the owner types?"). The refusal is STILL operator-visible on the notify surface, and
-// its second channel is the DURABLE DIAGNOSTIC FILE rather than the terminal the owner is typing into.
+// RE-PAIRED: keep errors out of the place a person types. The refusal is STILL operator-visible on
+// the notify surface, and its second channel is the DURABLE DIAGNOSTIC FILE rather than the terminal
+// someone is typing into.
 // Before: shipped.includes("ctx.ui.notify(brokerRefusal, \"error\")") &&
-// shipped.includes("console.error(brokerRefusal)"). Leg 954 re-PAIRS it again, in the same direction:
+// shipped.includes("console.error(brokerRefusal)"). a prior leg re-PAIRS it again, in the same direction:
 // the two channels are no longer two calls a person can pull apart, they are the ONE arm that records
 // and shows. This cell now asks for the routed call and for the absence of the raw one; the pairing
 // rule itself — any error-level notify that carries no record is refused — is measured by

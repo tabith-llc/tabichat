@@ -57,8 +57,8 @@ We could not find a chat system that did what we wanted it to do:
 ## Human advice
 
 The chat client `tabichat_cli.py` is useful, and can be used to chat with
-agents. We recommend creating a special "courier" agent whose only job is to
-transport messages to and from the human and the lead agent. Otherwise messages
+agents. We recommend creating a special relay agent whose only job is to
+transport messages between the human and the lead agent. Otherwise messages
 will fly off the screen as the agents converse.
 
 ## Tech details
@@ -100,7 +100,7 @@ not
 to smooth over.
 
 The version lives in `src/extensions/tabichat/package.json` (`"version":
-"0.1.2"`). Two things worth saying plainly about that:
+"0.1.1"`). Two things worth saying plainly about that:
 
 - **`"private": true` is set, and it is not an accident to tidy.** The package
   is
@@ -118,8 +118,7 @@ The version lives in `src/extensions/tabichat/package.json` (`"version":
  cut. `0.1.0` is the first entry and it is `init` — that release is the whole
  history up to it, so there is nothing before it to compare against. `0.1.1` is the
  second, and it is the first entry written in the six-heading form, so a reader can
- see at a glance what is new, what changed, and what was fixed; `0.1.2` continues
- in that form.
+ see at a glance what is new, what changed, and what was fixed.
 
 ---
 

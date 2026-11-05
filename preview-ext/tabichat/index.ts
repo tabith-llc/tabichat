@@ -82,7 +82,7 @@ import {
 // A mention that arrives while the lane is mid-run queues as a follow-up by default; the
 // optional `steer` flag (steer.ts, lead + owner only) delivers it as an interrupt instead.
 //
-// PUBLISHING IS EXPLICIT (owner + lead ruling 2026-10-05, P1): nothing the lane
+// PUBLISHING IS EXPLICIT: nothing the lane
 // prints to its own terminal ever enters the room. Room text leaves this
 // extension only through chat_post (or a human's /say). The former agent_end
 // auto-publish is removed: it put terminal prose in front of the room against
@@ -115,13 +115,13 @@ export default function (pi: ExtensionAPI) {
   // lane must write a RESUME file before it may keep using its tools; MQTT_CTX_FORCE overrides, and it
   // is never below the warn threshold
   const CTX_FORCE = ctxForceThreshold(process.env.MQTT_CTX_FORCE, CTX_WARN);
-  // KNOWN DIVERGENCE from the shipped copy, and it is CODE not wording: src/ resolved this in leg 420
+  // KNOWN DIVERGENCE from the shipped copy, and it is CODE not wording: src/ resolves this
   // (env -> site-config "resumeDir" -> REFUSE naming both knobs, ctxwarn.ts:resolveResumeDir); this
-  // preview twin still carries the pre-fix default below. Porting the resolver here is a code change
-  // with its own gate, so it is REPORTED (leg 571), not swapped for a different literal path here.
-  // durable RESUME location (venue law: /tmp is temporary). MQTT_CTX_RESUME_DIR overrides; if that
-  // directory cannot be created the lane falls back to /tmp/tabichat rather than failing
-  const RESUME_DIR = process.env.MQTT_CTX_RESUME_DIR ?? "/media/dust/dust-ext1/tabith/resume";
+  // preview twin carries no durable default at all. Porting the resolver here is a code change
+  // with its own gate.
+  // durable RESUME location (/tmp is temporary). MQTT_CTX_RESUME_DIR is the only durable source;
+  // with it unset or uncreatable the lane falls back to /tmp/tabichat rather than failing
+  const RESUME_DIR = process.env.MQTT_CTX_RESUME_DIR ?? "";
   const RESUME_FALLBACK = "/tmp/tabichat";
   // room-post length cap — the owner's own posts are exempt; agents are
   // capped at 2500 (raised from 1500; refusal behavior unchanged) — MQTT_POST_MAX overrides per lane, 0 or less turns it off
@@ -137,9 +137,8 @@ export default function (pi: ExtensionAPI) {
   let lastTurn: EndState = "unknown";
   let startedAt = 0;
   const EXIT_LOG = process.env.MQTT_EXIT_LOG || EXIT_LOG_DEFAULT;
-  // ask_owner was removed here (owner order 2026-10-08). An owner ask is plain text typed in the
-  // lane's own terminal — the owner's own ruling, decisions.md 2026-10-07: "i HATE the ask_owner
-  // tool". Nothing registers that tool name any more, and no other file in this extension uses
+  // The `ask_owner` tool is deliberately absent here. An owner ask is plain text typed in the
+  // lane's own terminal, not a registered tool. Nothing registers that tool name any more, and no other file in this extension uses
   // the "[ask_owner]" notice tag.
 
   // Model-facing room access. /say and /room are human-typed slash commands,
@@ -387,13 +386,13 @@ export default function (pi: ExtensionAPI) {
   const buffer: RoomLine[] = [];
   // the mentions this lane actually received (@nick or @all), newest last. This is the answer to
   // "did that message arrive / how many times did it arrive", which a lane otherwise asserts from
-  // memory — and on 2026-10-08 a fresh lane asserted six re-dispatches that never reached the wire.
+  // memory — and a fresh lane once asserted six re-dispatches that never reached the wire.
   const inbox: RoomLine[] = [];
   // delivery receipts heard on the control topic (P2): who got what, and when
   const acks: Ack[] = [];
   // who we believe is in the room, per-nick presence record, from beats + LWTs (P5)
   const peers = new Map<string, PeerSeen>();
-  // forced-handoff state (2026-10-07): fires once per crossing, lifts when the file exists, and gives
+  // forced-handoff state: fires once per crossing, lifts when the file exists, and gives
   // up loudly rather than hanging a lane
   let forced = false;
   let gaveUp = false;
@@ -428,7 +427,7 @@ export default function (pi: ExtensionAPI) {
    * Pin a receipt to its own retained board, one topic per message id (P6). The
    * flat publish above only reaches whoever is connected at that moment; MQTT
    * replays the retained copy to anyone who subscribes later, so a restarted lead
-   * can still answer "did worker3 get lead-agent-17?".
+   * can still answer "did that recipient acknowledge message <id>?."
    */
   const publishCtlRetained = (id: string, payload: unknown) => {
     if (!room) return;
@@ -456,7 +455,7 @@ export default function (pi: ExtensionAPI) {
     if (!peerRecordWins(peers.get(who), incoming)) return;
     peers.set(who, incoming);
   };
-  // ids already taken into the buffer (2026-10-07): one message must read as ONE line however
+  // ids already taken into the buffer: one message must read as ONE line however
   // many times it arrives - stacked handlers, retained replay, or a redelivery after a reconnect
   let seenRoomIds: string[] = [];
   // set when a mention was injected into this lane: its turn owes no room post,
@@ -466,7 +465,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     // flag values are only readable from session_start (not the factory)
     if (pi.getFlag("tabichat") !== true) return;
-    // Owner ask 2026-10-07: the human loses track of which seat is which nick. Stamp this
+    // A person loses track of which seat is which nick. Stamp this
     // lane's own room nick in the footer (key sorts between "fs-gate" and "upstream"), set
     // before the client guard so a session restart inside the same process re-labels it.
     ctx.ui.setStatus("nick", `@${nick}`);
@@ -591,8 +590,8 @@ export default function (pi: ExtensionAPI) {
         allow: STEER_NICKS,
       });
       const head = cls === "steer" ? `${steerHeader(from)}\n\n` : "";
-      // ONLY a line that addresses this lane reaches its context (roommsg.ts:planInbound, owner
-      // ruling 2026-10-08). An unaddressed line stays in the buffer, where chat_read can still
+      // ONLY a line that addresses this lane reaches its context (roommsg.ts:planInbound).
+      // An unaddressed line stays in the buffer, where chat_read can still
       // reach it, and is otherwise silent: no flood, and nothing to mistake for an instruction.
       const plan = planInbound({ mentioned, head, line: inboundLine });
       if (plan.kind === "buffer-only") return;
@@ -656,9 +655,9 @@ export default function (pi: ExtensionAPI) {
     }
     const s: CtxSample = { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent };
     ctx.ui.setStatus("ctx", ctxStatusText(s));
-    // forced handoff, checked BEFORE the advisory's own early return: at 75% (the owner's number) the
+    // forced handoff, checked BEFORE the advisory's own early return: at 75% the
     // lane must write its state down, because a lane past that point degrades quietly — which is what
-    // today's 78% lead seat looked like from the outside
+    // a seat at 78% looks like from the outside
     forced = rearmForce(forced, s.percent, CTX_FORCE);
     if (gaveUp && (s.percent ?? 0) < CTX_FORCE) gaveUp = false;
     if (forceDue(s, CTX_FORCE, forced) && !gaveUp) {

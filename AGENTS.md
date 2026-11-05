@@ -332,8 +332,8 @@ are actually being handed:
     period.
   - REMOTE RENEW (lead/owner dispatches it): needs the TARGET to carry
     `LANE_ADMIN_RENEW` and the sender to be on the admin/steer allowlist. This is
-    the path that actually moved flash4/flash5 — a LEAD-dispatched remote renew,
-    which the room then mis-remembered as a "self-renew." Name it truthfully.
+    the path that actually moves a lane — a LEAD-dispatched remote renew,
+    which a room can mis-remember as a "self-renew." Name it truthfully.
 SO: if a dispatch tells you to self-renew and your seat lacks the flag, do NOT
 improvise. The wrong moves are all forbidden by the design, not by taste: running
 `lane_admin.mjs` with `by:<another-nick>` is a FORGED SENDER on the
@@ -483,7 +483,7 @@ but it gates the FORCED-HANDOFF tool block, not this bar. So:
   seat like its own session was corrupting. `TABICHAT_ERR_STACK=1` puts the trace
   back when someone is actually diagnosing.
 - `chat_read` scope `inbox` answers "what did this lane actually get, and
-  how many times" from the wire. On 2026-10-08 a fresh worker lane
+  how many times" from the wire. A fresh worker lane once
   published six re-dispatches it had never received, and accused the lead
   of ignoring reports the ack receipts proved it delivered; the inbox
   scope and the provenance tag exist so that claim is one call to refute.

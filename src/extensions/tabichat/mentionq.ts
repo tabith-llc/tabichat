@@ -3,16 +3,13 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * MENTION QUEUE COLLAPSE (option B: build it on its own branch,
- * do not merge until the word, then deploy it and use it for a fleet
- * session to see how it goes).
+ * MENTION QUEUE COLLAPSE.
  *
- * THE COMPLAINT, in the owner's own words: "when i send a chat to ultra, i see a comment queue
- * built up over where i type in the harness. more messages, more stacked levels of this visible
- * queue. if one get 200 messages queued, the entire section where the llm prints out their
- * thoughts and speech gets blocked by these stacked messages."
+ * THE COMPLAINT THIS ANSWERS: a chat sent to a busy lane stacks a visible queue over the place the
+ * operator types — more messages, more stacked levels, and enough of them block the section where
+ * the model prints its own output.
  *
- * WHAT PRODUCES THE STACK, measured at main `9a65226` (index.ts:560-581): a mention that arrives
+ * WHAT PRODUCES THE STACK: a mention that arrives
  * while the lane is mid-run is handed to pi with `deliverAs: "followUp"`, and pi renders every
  * queued follow-up as its own block in the pending-input area above the editor. Nothing in
  * tabichat draws that area — it is pi (`modes/interactive/interactive-mode.d.ts:384-410`,
@@ -29,15 +26,15 @@
  * delivered in arrival order, oldest first, each with its normal provenance tag plus one line
  * saying it was held.
  *
- * WHAT "BUSY" MEANS HERE (the 2026-10-11 correction, and the reason option B did not hold at
- * first). The gate is the lane's RUN STATE, not pi's queue depth. The shipped gate asked
+ * WHAT "BUSY" MEANS HERE — and the reason an earlier shape of this gate did not hold.
+ * The gate is the lane's RUN STATE, not pi's queue depth. The shipped gate asked
  * `ctx.hasPendingMessages()` — and a lane that is mid-run has an EMPTY queue, because it is
  * executing rather than waiting on input. So the predicate read false on essentially every
  * mid-run arrival, every mention took the ordinary `queue` arm, and each one rendered as its own
- * visible block: the 28-line stack the owner reported. `busy` is now derived from pi's own run
+ * visible block: a 28-line stack. `busy` is now derived from pi's own run
  * events (`agent_start` → `agent_settled`, paired by construction because the settle call sits in
  * the run's `finally`), cross-checked with `ctx.isIdle()` so the worst a missed event can do is
- * fall back to the pre-option-B behavior rather than stall a line.
+ * fall back to one-turn-per-mention rather than stall a line.
  *
  * WHY THIS IS NOT LOSS BY ANOTHER NAME: delivery is DEFERRED, NEVER DROPPED. Three details make
  * that true rather than hopeful — (1) the ack to the sender fires BEFORE the hold decision, so a
@@ -99,14 +96,13 @@ export const HOLD_MAX = 20;
  *
  * THE KEY NAME IS A LAYOUT DECISION, not a label: status entries are ordered by key, so this string decides
  * where the lane reads the held count. It was `mentions`, which sorts BEFORE `nick`, so the badge led the line
- * ahead of the seat's own name. Owner order 2026-10-24, verbatim: "this section "[tabichat] 1 mention(s) held
- * — the lane is busy; chat_read scope=inbox" need to be shortened to just "1 mention(s) held", and it needs to
- * appear AFTER THE MUSHROOM". `queue` sits after `nick-tabichat` (the mushroom, worker1's O224 position) and after
+ * ahead of the seat's own name. The badge must read short — `1 mention(s) held` — and must appear
+ * AFTER the mushroom. `queue` sits after `nick-tabichat` (the mushroom's position) and after
  * the ponytail extension's key, and before `resume` — the only window that puts the badge behind the mushroom
- * WITHOUT moving the mushroom, which is what `test_laneadmin.ts` O224 guards. Evidence for the ordering model,
- * stated because I could not read pi's renderer itself in the installed dist: the repo comment at
- * `index.ts` "`nick-tabichat` sorts immediately AFTER `nick`", O224's own `localeCompare` sort of the keys read
- * out of source, and the owner's specimen line, whose segments appear in exactly that order.
+ * WITHOUT moving the mushroom, which is what `test_laneadmin.ts` guards. Evidence for the ordering model,
+ * stated because pi's renderer itself cannot be read in the installed dist: the repo comment at
+ * `index.ts` "`nick-tabichat` sorts immediately AFTER `nick`", the `localeCompare` sort of the keys read
+ * out of source, and a specimen status line whose segments appear in exactly that order.
  */
 export const HOLD_BADGE_KEY = "queue";
 
@@ -195,7 +191,7 @@ export const HELD_FLUSH_MAX_CHARS_ENV = "MQTT_HELD_FLUSH_MAX_CHARS";
 
 /**
  * Default character budget for one coalesced flush, over the joined line bodies and their
- * separators. Derived from one round's mean (1,247 chars/line, s83): 5 lines is ~6.2 KB, a full
+ * separators. Derived from one round's mean (1,247 chars/line): 5 lines is ~6.2 KB, a full
  * HOLD_MAX batch is ~25 KB. It is a starting budget, not a measurement of the fleet — hence the
  * env override, so tuning it does not cost a redeploy.
  */

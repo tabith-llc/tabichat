@@ -3,11 +3,11 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * Truth table for the diagnostic sink and its routing (leg 517).
+ * Truth table for the diagnostic sink and its routing.
  *   bun tools/test_diaglog_routing.ts      (exit 1 on any failure)
  *
- * WHY THIS FILE EXISTS. The owner's order, verbatim 2026-10-24: "can we not figure out how to keep
- * errors out of the place the owner types?" Two fixes had already landed and NEITHER was about the
+ * WHY THIS FILE EXISTS. The rule it serves: keep errors out of the place a person types.
+ * Two fixes had already landed and NEITHER was about the
  * destination — #585 made the throw survivable, `07b2bbd` made ONE emitter stop double-publishing —
  * and the class survived both because `index.ts` had nineteen other print sites. A gate that checks
  * the DECISION but not the DESTINATION would have kept this green forever.
@@ -166,7 +166,7 @@ check("rotate decision: crossing the cap rotates", rotateNeeded(90, 20, 100), tr
   const boom: DiagIo = { ...fakeIo(), append: () => { throw new Error("EROFS: read-only"); } };
   const r = writeDiagLine(okTarget, boom, "hello\n", 1000);
   check("a failed write is RETURNED, and the record says which path", r.ok === false && /EROFS/.test(r.reason), true);
-  const sink = makeDiagSink({ home: "/h" }, { nick: "flash1", now: () => "2026-10-24T20:00:00Z", io: boom });
+  const sink = makeDiagSink({ home: "/h" }, { nick: "lane1", now: () => "2026-10-24T20:00:00Z", io: boom });
   sink.write("ERROR", "first dropped line");
   check("...and through the sink it sets the one-time fault flag rather than printing", [sink.failed, /EROFS/.test(sink.reason)], [true, true]);
 }
@@ -176,7 +176,7 @@ check("rotate decision: crossing the cap rotates", rotateNeeded(90, 20, 100), tr
 }
 
 // --- 2b. the record itself -----------------------------------------------------------------
-// LEG 522 RE-PAIR. The cell below used to build its message as
+// RE-PAIR. The cell below used to build its message as
 //   `dropped at ${redactUrl("mqtts://user:hunter2@...")}`
 // — the fixture applied the function under test BEFORE handing the string over, so the formatter
 // only ever saw a clean input and "the credential is redacted at the file boundary" asserted that a
@@ -185,7 +185,7 @@ check("rotate decision: crossing the cap rotates", rotateNeeded(90, 20, 100), tr
 // pre-fix run of this file is the proof the cell can bite.
 const DIRTY_MID = "dropped at connect threw url=mqtts://user:hunter2@broker.example:1883 handshake";
 const DIRTY_LEAD = "mqtts://user:hunter2@broker.example:1883";
-const line = formatDiagLine({ ts: "2026-10-24T20:00:00Z", nick: "flash1", level: "ERROR", message: DIRTY_MID });
+const line = formatDiagLine({ ts: "2026-10-24T20:00:00Z", nick: "lane1", level: "ERROR", message: DIRTY_MID });
 check("one record is ONE line (a newline in a message would forge a second record)", (line.match(/\n/g) ?? []).length, 1);
 check("the credential in a MID-STRING url is redacted at the file boundary", /hunter2/.test(line), false);
 check("...and the SAME secret is redacted when the url starts the message", /hunter2/.test(formatDiagLine({ ts: "T", nick: "n", level: "ERROR", message: DIRTY_LEAD })), false);
@@ -195,7 +195,7 @@ check("the non-secret part of the URL survives to be useful", /broker\.example:1
 check("the text BEFORE the url survives (a fix that blanks the message is a worse bug)", line.includes("dropped at connect threw url="), true);
 check("the text AFTER the url survives", line.includes("handshake"), true);
 check("the user name survives, only the secret is replaced", line.includes("user:***@broker.example:1883"), true);
-check("the record names time, lane and level", line.startsWith("2026-10-24T20:00:00Z flash1 ERROR "), true);
+check("the record names time, lane and level", line.startsWith("2026-10-24T20:00:00Z lane1 ERROR "), true);
 check("NEGATIVE: a message with no url is returned untouched (no false rewriting)", formatDiagLine({ ts: "T", nick: "n", level: "INFO", message: "nothing credential-shaped here" }).endsWith(" nothing credential-shaped here\n"), true);
 check(
   "a stack reaches the record only when the caller passes one (the sink gates it on TABICHAT_ERR_STACK)",
@@ -232,7 +232,7 @@ const scanPrints = (src: string) => {
   return hits;
 };
 // --- 3. THE ENTRY, EXECUTED (iid 11 AC4: "a test that only checks 'the line appears somewhere' would
-//        have passed on the broken face"). Leg 954 found the three cells below this one — the mirror
+//        have passed on the broken face"). a prior leg found the three cells below this one — the mirror
 //        regex, the sink regex, the `indexOf` ordering comparison — reading `index.ts` as TEXT, and
 //        text is exactly what a broken face can still contain. So the claim moved here: the shipped
 //        entry is IMPORTED and RUN, with the two surfaces recorded, with the presenter throwing, and
@@ -245,7 +245,7 @@ const scanPrints = (src: string) => {
 // relative import resolving for real. `index.ts` is the only file in the shipped set that names them
 // (each token counted once across the 13 names), so one rewrite covers the graph.
 const stubDir = mkdtempSync(join(tmpdir(), "iid11-entry-"));
-// THE LISTENER IS KEPT, NOT DROPPED (leg 983, iid 11 finding L-2: "two text assertions, zero
+// THE LISTENER IS KEPT, NOT DROPPED (iid 11 finding L-2: "two text assertions, zero
 // observations"). The stub records every `on(ev, fn)` the entry registers, so a cell can CALL the
 // shipped `message` handler and raise `owedTurns` through the real inbound path instead of assuming
 // it. The previous stub answered `on() {}` and dropped the listener, which is why no cell in this
@@ -257,7 +257,7 @@ writeFileSync(join(stubDir, "pi-ca.ts"), `export const defineTool = (t) => t;\ne
 
 // EVERY SINK THE SHIPPED ENTRY CAN APPEND TO IS POINTED AT SCRATCH BEFORE THE ENTRY IS MOUNTED
 // (iid 11 finding F-2). Measured on the face this leg started from:
-// one run of this file grew `~/.pi/agent/tabichat-diag.log` by 4 `guarantee-973` lines and
+// one run of this file grew `~/.pi/agent/tabichat-diag.log` by 4 `fixture-nick` lines and
 // `/tmp/tabichat/lane-exits.log` by 2, because the fault this file provokes is recorded by the
 // shipped gate into whatever sink the process has. Both sinks are resolved inside the factory, so
 // setting them here — before any mount — is what makes the gate a reader of scratch, not a writer
@@ -285,7 +285,7 @@ const { NOTICE_ARMS, noticeSurfaces, emitNotice, LOSS_KINDS, lossTellHeader, mak
 check(`the entry exports its arms, and the set is the three shapes the row describes (${NOTICE_ARMS.length})`,
   NOTICE_ARMS.join(" "), "record-and-present present-only record-only");
 check("record-and-present keeps AND shows", noticeSurfaces("record-and-present"), { record: true, present: true });
-check("present-only shows and keeps NOTHING (the owner's input area is the point)", noticeSurfaces("present-only"), { record: false, present: true });
+check("present-only shows and keeps NOTHING (the input area is the point)", noticeSurfaces("present-only"), { record: false, present: true });
 check("record-only keeps and shows NOTHING — kept quiet is a decision, not an oversight", noticeSurfaces("record-only"), { record: true, present: false });
 check("NEGATIVE CONTROL: an arm nobody recognises still KEEPS the line rather than dropping it",
   noticeSurfaces("typo-arm" as never), { record: true, present: true });
@@ -346,7 +346,7 @@ const runArm = (arm: string, o: { level?: string; stack?: string; throws?: boole
 // to come out of the file redacted.
 {
   const io = fakeIo();
-  const sink = makeDiagSink({ home: "/h" }, { nick: "flash3", now: () => "2026-11-04T12:00:00Z", io });
+  const sink = makeDiagSink({ home: "/h" }, { nick: "lane3", now: () => "2026-11-04T12:00:00Z", io });
   const dirty = "transport refused url=mqtts://user:hunter2@broker.example:1883";
   for (const arm of NOTICE_ARMS.filter((a: string) => a !== "present-only")) {
     emitNotice(arm as never, dirty, { record: (t, st) => sink.write("ERROR", t, st), present: () => {} }, "error");
@@ -522,14 +522,14 @@ check("the real-fs IO is the only place append/rename/stat are reached for diagn
  */
 const flatSrc = indexSrc.replace(/\s+/g, " ");
 /**
- * Is this message routed to the durable file? Both spellings count, because leg 954 moved the record
+ * Is this message routed to the durable file? Both spellings count, because a prior leg moved the record
  * decision into the entry: `notice("record-only", …)` is the arm, and `diag("ERROR", …)` remains
  * legitimate ONLY as the entry's own surface binding — the census below is what keeps it there.
  */
 const diagCall = (level: string, msgStart: string): boolean =>
   flatSrc.includes(`diag("${level}", \`${msgStart}`) ||
   flatSrc.includes(`notice("record-only", \`${msgStart}`) ||
-  // leg 962 (iid 11 piece 5): a PROMOTED fault still records through the entry — `noticeLost`'s own body
+  // (iid 11 piece 5): a PROMOTED fault still records through the entry — `noticeLost`'s own body
   // is `notice("record-only", text, o)` — and additionally queues a tell for the seat. The routing claim
   // is unchanged, so the spelling is accepted; it is not a licence, because the kind has to be one of the
   // six the entry enumerates, and the negative control below proves a bare terminal print is still NO.
@@ -546,7 +546,7 @@ check("NEGATIVE CONTROL: the routing predicate still says NO to a line that is o
   false);
 /**
  * Is this message printed to the terminal — i.e. is there a `console.error(` whose first argument begins
- * with this text? FOUND BY THIS LEG to have been an inert predicate (iid 13 follow-on, leg 969): the shipped
+ * with this text? FOUND BY THIS LEG to have been an inert predicate (iid 13 follow-on): the shipped
  * needle was `flatSrc.includes(`console.error( \`${msgStart}`)` — a SPACE between the paren and the backtick —
  * while `flatSrc` is `indexSrc.replace(/\s+/g, " ")`, which turns every whitespace run into exactly one space.
  * A source written with no space flattens to no space, so the spaced needle could never match the shape the
@@ -583,7 +583,7 @@ const consoleCall = (msgStart: string): boolean => consoleCallIn(indexSrc, msgSt
 }
 
 check(
-  "the owner's reported line is routed: `[tabichat] inbound line dropped, handler threw` reaches the FILE, not the terminal",
+  "the reported line is routed: `[tabichat] inbound line dropped, handler threw` reaches the FILE, not the terminal",
   diagCall("ERROR", "[tabichat] inbound line dropped, handler threw") && !consoleCall("[tabichat] inbound line dropped"),
   true,
 );
@@ -696,7 +696,7 @@ const rogueName = "synthetic rogue print is REPORTED";
 }
 
 
-// ─── 7. THE GUARANTEE (iid 11 piece 5 follow-on, leg 973) ──────────────────────────────────────
+// ─── 7. THE GUARANTEE (iid 11 piece 5 follow-on) ──────────────────────────────────────
 // What is claimed: a seat is told it lost work even when nobody talked to it. The tell used to ride
 // the held flush, so on a quiet room the tell stayed queued and unspent — not muted by design, just
 // never reached. These cells run the shipped settle handler itself against a recording ExtensionAPI:
@@ -713,7 +713,7 @@ const rogueName = "synthetic rogue print is REPORTED";
   mkdirSync(goodRoot);
 
   type Rec = { ev: string; fn: (...a: never[]) => unknown };
-  const makePi = (who = "guarantee-973") => {
+  const makePi = (who = "fixture-nick") => {
     const handlers: Rec[] = [];
     const sends: string[] = [];
     const notifies: string[] = [];
@@ -740,7 +740,7 @@ const rogueName = "synthetic rogue print is REPORTED";
   // `idle` may be a GETTER: the option-B gate calls `liveCtx().isIdle()`, and the live handle is the
   // one this lane registered at `session_start` — not the fresh ctx each event is fired with. A cell
   // that wants a mention HELD has to move the handle the gate actually reads.
-  const mkCtx = (notifies: string[], who = "guarantee-973", idle: boolean | (() => boolean) = true) =>
+  const mkCtx = (notifies: string[], who = "fixture-nick", idle: boolean | (() => boolean) = true) =>
     new Proxy({ ui: { setStatus: () => undefined, notify: (t: string) => void notifies.push(String(t)), setWidget: () => undefined },
       cwd: blockedRoot, messages: [], sessionId: who,
       isIdle: () => (typeof idle === "function" ? idle() : idle),
@@ -768,7 +768,7 @@ const rogueName = "synthetic rogue print is REPORTED";
 
   // G2 — THE POSITIVE, EXECUTED: a quiet room, one real fault, exactly one send carrying it.
   process.env.MQTT_ROOMLOG = join(asFile, "sub", "journal.jsonl");
-  process.env.MQTT_NICK = "guarantee-973";
+  process.env.MQTT_NICK = "fixture-nick";
   const g2 = makePi();
   ENTRY.default(g2.pi as never);
   const g2events = g2.handlers.map((h) => h.ev);
@@ -900,7 +900,7 @@ const rogueName = "synthetic rogue print is REPORTED";
   };
 
   // THE INSTRUMENT'S OWN POSITIVE CONTROL, before any zero below means anything: prove this harness
-  // can reach the inbound path and can produce a notice at all (root AGENTS.md §1).
+  // can reach the inbound path and can produce a notice at all (the repo's own first rule).
   {
     const who = "expiry-983ctl";
     const lane = await mountQuiet(who, join(goodRoot, "ctl.jsonl"));

@@ -34,8 +34,11 @@ esac
 }
 if [ ! -f "$consulted" ]; then
     printf 'subject-armed: NOT ARMED — git consults %s, which does not exist, so no subject check runs here.\n' "$consulted" >&2
-    printf 'subject-armed:   arm it on this box:   git config --global core.hooksPath /tabith/githooks\n' >&2
-    printf 'subject-armed:   or per venue:         git config --local  core.hooksPath /tabith/githooks-tabichat\n' >&2
+    printf 'subject-armed:   arm it in THIS venue:  sh src/tools/enable_hook_chain.sh\n' >&2
+    printf 'subject-armed:   That writes a per-clone chain inside the git dir of this clone and forwards to\n' >&2
+    printf 'subject-armed:   whatever hook set the host already consults. Do NOT set core.hooksPath by hand:\n' >&2
+    printf 'subject-armed:   a global or system value replaces EVERY hook name at once, silently, and writing\n' >&2
+    printf 'subject-armed:   a global config is a host change rather than a venue change.\n' >&2
     exit 1
 fi
 if ! grep -v '^[[:space:]]*#' "$consulted" 2>/dev/null | grep -qs 'subject-guard\.sh'; then

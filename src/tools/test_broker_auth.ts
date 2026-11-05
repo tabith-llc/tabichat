@@ -17,7 +17,7 @@
 // container on 127.0.0.1; the fleet's broker measured `mosquitto version 2.0.21` (read from
 // `$SYS/broker/version`, not from a shell — no lane has a shell on the broker host). So these cells prove
 // the SHAPE and the option NAMES as written, and they prove NOTHING about a live broker, which this
-// leg never touched (owner fence: artifact only). The version figure and the `use_subject_as_username`
+// leg never touched (the fence here is the artifact only). The version figure and the `use_subject_as_username`
 // availability are separately evidenced in the report.
 //
 // THE PAIRED-NEGATIVE LAW, applied literally. Every refusal sits beside the pass it must not be
@@ -27,8 +27,8 @@
 // and every publish cell then read as a refusal. The extension's real filters are used instead.
 //
 // NO SECRET IS READ HERE. Cert and key PATHS are passed to the TLS layer; their contents are read
-// only to hand to mqtt.js, never printed, never asserted on. Per the fleet law of 2026-10-18,
-// key-file CONTENT is ultra's work alone.
+// only to hand to mqtt.js, never printed, never asserted on. Per the fleet law of
+// key-file CONTENT is lane10's work alone.
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { makePemReader, transportDecision } from "../extensions/tabichat/tlsopts.ts";
 import { spawnSync } from "node:child_process";
@@ -53,14 +53,14 @@ const REPO = join(import.meta.dirname, "..", "..");
 // THIS RUN OWNS ITS FIXTURE. The fixture record used to be one box-global path, so the teardown
 // below stopped and destroyed whatever broker was recorded there — including one another seat had
 // started for its own physical cells, which then read NOT RUN and looked like a product failure.
-// Reproduced deterministically by the lead on 2026-10-19. A per-run owner name means this file can
+// Reproduced deterministically. A per-run owner name means this file can
 // only ever reach a container this file started.
 const FIXTURE_OWNER = `broker-auth-${process.pid}`;
 const sh = (args: string[]) => {
   const r = spawnSync("sh", args, {
     encoding: "utf8",
     cwd: REPO,
-    env: { ...process.env, TABICHAT_FIXTURE_OWNER: FIXTURE_OWNER, TABICHAT_FIXTURE_NICKS: "wren flash6" },
+    env: { ...process.env, TABICHAT_FIXTURE_OWNER: FIXTURE_OWNER, TABICHAT_FIXTURE_NICKS: "lane11 lane6" },
   });
   return { out: (r.stdout ?? "") + (r.stderr ?? ""), rc: r.status ?? 1 };
 };
@@ -176,11 +176,11 @@ const stamp = () => new Date(since).toISOString().slice(11, 19);
     true,
   );
 
-  const good = await connect({ url: U, ca: caPem(DIR), cli: certIn(DIR)("wren") });
-  check("AC1 PAIRED POSITIVE: wren's cert + the pinned CA CONNECTS", good.ok, true);
+  const good = await connect({ url: U, ca: caPem(DIR), cli: certIn(DIR)("lane11") });
+  check("AC1 PAIRED POSITIVE: lane11's cert + the pinned CA CONNECTS", good.ok, true);
 
   // ---- AC4 wrong CA / no CA ----
-  const rogue = await connect({ url: U, ca: roguePem(DIR), cli: certIn(DIR)("wren") });
+  const rogue = await connect({ url: U, ca: roguePem(DIR), cli: certIn(DIR)("lane11") });
   check("AC4 a client that pins a ROGUE CA is REFUSED", rogue.ok, false);
   // The client-side certificate error is the observable. Asserting on the BROKER log here was
   // wrong: the handshake dies in the client's own verification of the server leaf, so the broker
@@ -192,7 +192,7 @@ const stamp = () => new Date(since).toISOString().slice(11, 19);
     /certificate|ca|self-signed|unknown ca|alt name|ssl|tls|handshake|alert/i.test(rogue.err),
     true,
   );
-  const noCa = await connect({ url: U, cli: certIn(DIR)("wren") });
+  const noCa = await connect({ url: U, cli: certIn(DIR)("lane11") });
   check("AC4 no CA configured: REFUSED (system roots do not know the tabichat CA)", noCa.ok, false);
 
   // ---- the plaintext attempt against the TLS listener ----
@@ -201,7 +201,7 @@ const stamp = () => new Date(since).toISOString().slice(11, 19);
 
   // ---- PHASE 1: what it closes, and the limit it leaves. Subscribed with the extension's own
   // filters so a refusal below is about a PUBLISH, not about a subscribe nobody asked for.
-  const sub = await connect({ url: U, ca: caPem(DIR), cli: certIn(DIR)("flash6") });
+  const sub = await connect({ url: U, ca: caPem(DIR), cli: certIn(DIR)("lane6") });
   const heard: string[] = [];
   if (sub.client) {
     // 3s, not 1.5s: the first run of this file resolved the promise on its TIMEOUT and printed an
@@ -226,7 +226,7 @@ const stamp = () => new Date(since).toISOString().slice(11, 19);
     );
     sub.client.on("message", (t, p) => heard.push(`${t}|${p.toString()}`));
     await new Promise((r) => setTimeout(r, 250));
-    good.client?.publish(`chat/${ROOM}`, JSON.stringify({ nick: "wren", message: "own-line" }));
+    good.client?.publish(`chat/${ROOM}`, JSON.stringify({ nick: "lane11", message: "own-line" }));
     await new Promise((r) => setTimeout(r, 600));
     check(
       "PHASE1 POSITIVE PAIR: a flat-topic publish from an authenticated lane IS carried",
@@ -238,7 +238,7 @@ const stamp = () => new Date(since).toISOString().slice(11, 19);
     // EXPECTS the forgery to land — it is the evidence that phase 2 is owed, not a pass to boast of.
     good.client?.publish(
       `chat/${ROOM}`,
-      JSON.stringify({ nick: "flash6", message: "forged-under-phase1" }),
+      JSON.stringify({ nick: "lane6", message: "forged-under-phase1" }),
     );
     await new Promise((r) => setTimeout(r, 600));
     check(
@@ -264,8 +264,8 @@ const stamp = () => new Date(since).toISOString().slice(11, 19);
     const R2 = envOf(up2.out, "FIXTURE_ROOM");
     const U2 = `mqtts://127.0.0.1:${P2}`;
     const c2 = certIn(D2);
-    const w = await connect({ url: U2, ca: caPem(D2), cli: c2("wren") });
-    const f = await connect({ url: U2, ca: caPem(D2), cli: c2("flash6") });
+    const w = await connect({ url: U2, ca: caPem(D2), cli: c2("lane11") });
+    const f = await connect({ url: U2, ca: caPem(D2), cli: c2("lane6") });
     check("PHASE2 both authenticated lanes connect (an ACL is not a wall)", w.ok && f.ok, true);
 
     const heard2: string[] = [];
@@ -276,23 +276,23 @@ const stamp = () => new Date(since).toISOString().slice(11, 19);
       f.client.on("message", (t, p) => heard2.push(`${t}|${p.toString()}`));
       await new Promise((r) => setTimeout(r, 300));
     }
-    // POSITIVE half first: wren writes its OWN per-sender leaf. Must land, or the two negatives
+    // POSITIVE half first: lane11 writes its OWN per-sender leaf. Must land, or the two negatives
     // below would only prove the broker is broken.
-    w.client?.publish(`chat/${R2}/msg/wren`, JSON.stringify({ nick: "wren", message: "mine" }));
+    w.client?.publish(`chat/${R2}/msg/lane11`, JSON.stringify({ nick: "lane11", message: "mine" }));
     await new Promise((r) => setTimeout(r, 600));
     check(
-      "AC3 POSITIVE PAIR: own topic chat/<room>/msg/wren is DELIVERED under the phase-2 ACL",
+      "AC3 POSITIVE PAIR: own topic chat/<room>/msg/lane11 is DELIVERED under the phase-2 ACL",
       heard2.some((l) => l.includes('"mine"')),
       true,
     );
     // NEGATIVE half: the same connection writes another nick's leaf. Dropped by the BROKER.
-    w.client?.publish(`chat/${R2}/msg/flash6`, JSON.stringify({ nick: "flash6", message: "not-mine" }));
+    w.client?.publish(`chat/${R2}/msg/lane6`, JSON.stringify({ nick: "lane6", message: "not-mine" }));
     // and a flat-topic write, which phase 2 does not grant at all — the reason the client migration
     // must precede this ACL, and why it is shipped COMMENTED.
-    w.client?.publish(`chat/${R2}`, JSON.stringify({ nick: "wren", message: "flat-denied" }));
+    w.client?.publish(`chat/${R2}`, JSON.stringify({ nick: "lane11", message: "flat-denied" }));
     await new Promise((r) => setTimeout(r, 1000));
     check(
-      "AC3 NEGATIVE: another nick's topic msg/flash6 is DROPPED by the broker",
+      "AC3 NEGATIVE: another nick's topic msg/lane6 is DROPPED by the broker",
       heard2.some((l) => l.includes("not-mine")),
       false,
     );

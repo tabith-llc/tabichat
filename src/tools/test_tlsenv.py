@@ -9,7 +9,7 @@
 
 NO BROKER NEEDED, AND THAT IS DELIBERATE. The decision module is pure: every rule below is about
 what the client is ALLOWED to do with a socket, which is exactly the part that must not drift between
-the python and the agent side. WHAT CHANGED AT s140: this file used to say "no paho needed" and then
+the python and the agent side. WHAT CHANGED: this file used to say "no paho needed" and then
 check `apply_to_client` against a FAKE that accepted any kwargs it was handed — which is how a
 string where paho wants an int (`tls_version="TLSv1.3"`) passed the whole suite and killed every real
 TLS connect. The fake is now STRICT (tls_set raises, only tls_set_context is accepted, and the
@@ -153,9 +153,9 @@ refuses("empty-ish URL after defaults is not a guess", "mqtt://h:abc", {}, "non-
 
 print("\n== credentials in the URL are refused, and the refusal hides them ==")
 secret = "hunter2"
-msg = refuses("userinfo in MQTT_URL", f"mqtts://wren:{secret}@h:8883", {"MQTT_TLS_CAFILE": "/k/ca.crt"}, "userinfo")
+msg = refuses("userinfo in MQTT_URL", f"mqtts://lane11:{secret}@h:8883", {"MQTT_TLS_CAFILE": "/k/ca.crt"}, "userinfo")
 check("the refusal does not repeat the secret", secret not in msg, True)
-check("redact_url hides it", redact_url(f"mqtts://wren:{secret}@h:8883"), "mqtts://wren:***@h:8883")
+check("redact_url hides it", redact_url(f"mqtts://lane11:{secret}@h:8883"), "mqtts://lane11:***@h:8883")
 check("redact_url leaves a clean URL byte-identical", redact_url("mqtt://broker.example:1883"), "mqtt://broker.example:1883")
 check("redact_url is not confused by an @ in the path", redact_url("mqtt://h:1883/a@b"), "mqtt://h:1883/a@b")
 

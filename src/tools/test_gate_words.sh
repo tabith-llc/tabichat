@@ -92,7 +92,7 @@ build_clone() { # $1 = path; $2 = extra += registration text, if any; $3 = file 
   # is therefore stripped from the CLONE's copy only: the loop under test still runs with every OTHER
   # registered gate, on the shipped code path, and the cell at the end of this file proves the
   # registration is present in the tree before it is stripped, so the strip cannot silently become a no-op.
-  grep -v -e 'SHGATES+=(test_gate_words.sh)' -e '# leg 851: the truth table' "$dest/$DEP_REL" > "$dest/$DEP_REL.tmp"
+  grep -v -e 'SHGATES+=(test_gate_words.sh)' -e '# the truth table for THIS loop' "$dest/$DEP_REL" > "$dest/$DEP_REL.tmp"
   mv "$dest/$DEP_REL.tmp" "$dest/$DEP_REL"
   # A clone that removes a harness's registration must not keep that harness's file. The directory census
   # (test_gate_coverage.sh) reads the tree it is run in, and a check file with no registration in that tree is

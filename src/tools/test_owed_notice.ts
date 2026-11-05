@@ -3,7 +3,7 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * tabichat iid 29, leg 992 — the end-of-turn owed-turn notice must measure PUBLICATION.
+ * tabichat iid 29 — the end-of-turn owed-turn notice must measure PUBLICATION.
  *   bun tools/test_owed_notice.ts            (exit 1 on any failure)
  *   bun tools/test_owed_notice.ts --plant    (the negative control: this run is EXPECTED RED, rc 1)
  *
@@ -28,10 +28,10 @@
  * that bypasses the counter must bring the notice back and turn cell 2 RED. A cell that passes in
  * both shapes measures nothing.
  *
- * LEG 998 (this file's author is the reviewer of leg 992, writing its two corrections forward).
+ * (this file's author is the reviewer of a prior leg, writing its two corrections forward).
  *   C-1 — one arm is not both arms. Every cell above ran the FLAT arm, because the env that selects
  *   the per-sender topic is deleted at module scope. A shipped byte that bumped the counter on the flat
- *   arm alone passed all fifteen cells (measured at leg 993: a reviewer's plant, 15/15 GREEN), so the
+ *   arm alone passed all fifteen cells (measured at a prior leg: a reviewer's plant, 15/15 GREEN), so the
  *   gate could not see the difference between "counted on the shared tail" and "counted on one branch".
  *   Cell 6 drives the SAME turn shape with `MQTT_SENDER_TOPIC` set and asserts the topic it actually
  *   landed on, so the two arms are distinguishable and a one-armed bump reddens cell 6.
@@ -40,7 +40,7 @@
  *   The fix counts it; cell 7 drives the shipped `/renew` handler to that publish and asserts no false
  *   notice, then pairs it with the same mount publishing NOTHING at all, which must still print one.
  *
- * LEG 1004 (test surface only — no shipped byte moved): cell 8 guards the PLACEMENT cell 7 depends on.
+ * (test surface only — no shipped byte moved): cell 8 guards the PLACEMENT cell 7 depends on.
  *   998 counts the hold AFTER the awaited publish resolves, and states in its own comment that a publish
  *   the socket rejected is therefore not counted. That rule had no cell: moving the bump to before the
  *   `await` (PLANT D) passed 25/25 at base `20c21d5d`. Cell 8 makes the stub refuse the write, so the
@@ -311,7 +311,7 @@ says("S3 agent_start opens the turn's budget", INDEX_SRC, "publishedThisTurn = 0
 }
 
 // ─── cell 4 — the counter is per-TURN, so an earlier turn cannot answer for this one ─────────────
-// This is the false-silence class the fix could have introduced, and it would re-open leg 983's L-1.
+// This is the false-silence class the fix could have introduced, and it would re-open a prior leg's L-1.
 {
   const m = await mount();
   m.arm();
@@ -335,8 +335,8 @@ says("S3 agent_start opens the turn's budget", INDEX_SRC, "publishedThisTurn = 0
   check("C5c CONTROL the mount published nothing on its own", m.client.publishes.length, before);
 }
 
-// ─── cell 6 — THE SECOND ARM (leg 998, C-1): the same shapes with the sender-topic env set ──────
-// Measured at leg 993: a shipped byte that bumped the counter on the FLAT arm alone passed every cell
+// ─── cell 6 — THE SECOND ARM (C-1): the same shapes with the sender-topic env set ──────
+// Measured at a prior leg: a shipped byte that bumped the counter on the FLAT arm alone passed every cell
 // above, because the env that selects the per-sender arm is deleted at module scope and no mount ever
 // put it back. The env is read INSIDE the factory pass, so it is set for the mount and restored right
 // after it — and the arm is then asserted from the topic the publish ACTUALLY landed on, never from a
@@ -371,9 +371,9 @@ says("S3 agent_start opens the turn's budget", INDEX_SRC, "publishedThisTurn = 0
     [flatTopic === ROOM_TOPIC, senderTopic !== flatTopic], [true, true]);
 }
 
-// ─── cell 7 — THE PRE-RENEW HOLD IS COUNTED (leg 998, C-2) ───────────────────────────────────────
+// ─── cell 7 — THE PRE-RENEW HOLD IS COUNTED (C-2) ───────────────────────────────────────
 // The hold is published on its own callback in the `/renew` handler and never passes `publishRoom`, so
-// the counter that decides the notice had one KNOWN bypass left at leg 992: a lead whose turn produced
+// the counter that decides the notice had one KNOWN bypass left at a prior leg: a lead whose turn produced
 // only the hold was told "nothing was published" after publishing to every lane. Driven through the
 // shipped handler, not re-implemented here. `shouldHoldBeforeRenew` is `self === leadNick`, and this
 // file deletes MQTT_LEAD_NICK so the lead is ctxwarn.ts's shipped default — so the mount that can reach
@@ -395,7 +395,7 @@ says("S3 agent_start opens the turn's budget", INDEX_SRC, "publishedThisTurn = 0
   process.env.MQTT_NICK = "t29seat";
 }
 
-// ─── cell 8 — the hold's PLACEMENT (leg 1004, test surface only, no shipped byte) ───────────────
+// ─── cell 8 — the hold's PLACEMENT (test surface only, no shipped byte) ───────────────
 // 998's own comment states the rule: the bump sits AFTER the await "so a publish the socket rejected is
 // NOT counted". Nothing measured that rule — PLANT D, the bump moved to before the `await`, read
 // 25/25 GREEN at base 20c21d5d (quoted in the leg's report), so the guard was missing while the byte was

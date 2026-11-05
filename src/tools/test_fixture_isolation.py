@@ -11,8 +11,8 @@ WHY THIS FILE EXISTS. `broker-fixture.sh` kept its record at one box-global path
 `down` at teardown — so it stopped and destroyed whatever broker was recorded there, including one a
 different seat had started for its own physical TLS cells. The victim's own test then printed
 `NOT RUN — no fixture recorded`, which reads exactly like a product failure and is not one. The lead
-reproduced it deterministically on 2026-10-19, twice, and `flash6` had already met it once as an
-unexplained anomaly (its report §6.6) and correctly refused to guess a cause.
+reproduced it deterministically, twice, and another lane had already met it once as an
+unexplained anomaly and correctly refused to guess a cause.
 
 This is the same disease the serve tooling was fixed for: a teardown that acts on whatever it finds
 instead of only on what it started. The rule is identify before you signal, and scope the record.

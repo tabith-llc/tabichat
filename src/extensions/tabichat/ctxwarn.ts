@@ -17,9 +17,9 @@
 // "unknown" — it never guesses.
 
 /**
- * Advisory threshold, percent of the declared window. **60%** is the shipped default,
- * replacing the 77 of 2026-10-06. The higher number was chosen to stop early interruptions and it
- * backfired the next day: a lane at 78% kept working and produced the confusion the owner was chasing,
+ * Advisory threshold, percent of the declared window. **60%** is the shipped default.
+ * A higher figure (77) was tried once and it
+ * backfired: a lane at 78% kept working and produced the confusion the threshold exists to prevent,
  * which is what an alarm at 77% looks like from the outside — it goes off when there is nothing left
  * to do about it. On a 262,144-token window, 60% is ~157,300 tokens, which leaves roughly 88,000
  * tokens of runway: enough to finish the item in hand AND write the handoff. The paired hard action
@@ -73,15 +73,15 @@ export const resumePath = (dir: string, nick: string, boot: string): string =>
 export const resumeWritten = (exists: boolean, bytes: number): boolean => exists && bytes >= RESUME_MIN_BYTES;
 
 /**
- * tabichat §5 ITEM 1 / leg 420 ACT B — WHICH handoff counts as THIS seat's.
+ * WHICH handoff counts as THIS seat's.
  *
- * THE MEASURED FALSE NEGATIVE, RED-proofed before I wrote a line (see the report's §ACT B): a
- * well-formed 156-byte handoff sat at `RESUME-flash9-OLDTAG.md`, and the bar looked for
- * `RESUME-flash9-NEWTAG.md` and answered `false`. The file was real, fresh and complete; only its
- * BOOT TAG disagreed, and the boot tag CHANGES ACROSS A RENEW — s136 measured `…-01081a` →
- * `…-059820`. So the rule "the filename must carry my current tag" means a renewed seat's NEXT renew
- * is refused forever: the very seats the force path exists to clear are the ones it strands. That is
- * the second false-negative generator the owner ordered cleared *before* force exists.
+ * THE FALSE NEGATIVE THIS RULE CLEARS: a well-formed 156-byte handoff sat at
+ * `RESUME-<nick>-<OLDTAG>.md` while the bar looked for `RESUME-<nick>-<NEWTAG>.md` and answered
+ * `false`. The file was real, fresh and complete; only its BOOT TAG disagreed, and the boot tag
+ * CHANGES ACROSS A RENEW — one renew re-mints it. So the rule "the filename must carry my current
+ * tag" means a renewed seat's NEXT renew is refused forever: the very seats the force path exists to
+ * clear are the ones it strands. That is the second false-negative generator, and it had to be
+ * cleared before a force envelope could be trusted.
  *
  * THE RULE, stated where it is enforced: identity is **nick + freshness**, not nick + tag. A handoff
  * is this seat's when its mtime is newer than this seat's own process start. Why the tag is NOT the
@@ -171,14 +171,14 @@ export const pickResumeHandoff = (
 };
 
 /**
- * THE CONTENT BAR — iid 17, and the payload half that leg 420 assigned to a separate leg.
+ * THE CONTENT BAR — iid 17, and the payload half of the same problem.
  *
- * What 420 left true, and what closes it: `pickResumeHandoff` admits a handoff by nick, freshness and
- * BYTES, so a sheet written early in a boot for an EARLIER leg was admitted for the leg about to be
+ * `pickResumeHandoff` admits a handoff by nick, freshness and
+ * BYTES, so a sheet written early in a boot for an EARLIER task was admitted for the one about to be
  * lost, and a fresh file full of filler cleared the byte floor. Two rules, and neither is a byte count:
  *
- *  - LEG CURRENCY. The sheet names the leg it describes (`leg 959` on one of its opening lines, or
- *    `-leg959` in its filename), and when the seat declares the leg it is running — `MQTT_LEG`, read
+ *  - LEG CURRENCY. The sheet names the leg it describes (`leg <n>` on one of its opening lines, or
+ *    `-leg<n>` in its filename), and when the seat declares the leg it is running — `MQTT_LEG`, read
  *    by `currentLeg` — the two must agree. A mismatch refuses, and the refusal prints both numbers and
  *    the knob, because a lane cannot fix what it cannot see.
  *  - SECTION PRESENCE, WITH A VALUE. The blocks a handoff must carry are `RESUME_TEMPLATE`'s own lines,
@@ -190,7 +190,7 @@ export const pickResumeHandoff = (
  *  - `RESUME_MIN_BYTES` stays **200** and is not raised. A bigger stub is still a stub, and the byte
  *    measure is the check this row says is the wrong check.
  *  - a bar that demands every block would refuse a genuinely good handoff written in prose or in the
- *    lane's own words — the false-negative class ACT B exists to keep clear — hence `RESUME_MIN_SECTIONS`.
+ *    lane's own words — the false-negative class the admission rule exists to keep clear — hence `RESUME_MIN_SECTIONS`.
  *  - with no `MQTT_LEG` set the leg is read and printed but NOT compared: it is a launcher value, the
  *    launcher is not this repo's to set, and inventing one here would strand every lane on the box.
  *  - it still cannot tell a lie from a well-formed truth. It checks that the blocks are ANSWERED, not
@@ -216,8 +216,8 @@ export const RESUME_LEG_SCAN_LINES = 40;
 
 /**
  * A leg named in the FILENAME. `resumePath` mints `RESUME-<nick>-<boot>.md` and a lane names its own
- * sheet too, and both shapes are already on this box: `RESUME-clerk-01a1a325-940.md` (a trailing
- * all-digit component) and a `-leg959` slug. A hex boot tag (`0554ee`) is not a number, so it does not
+ * sheet too, and both shapes are in use: `RESUME-<nick>-<hextag>-<n>.md` (a trailing
+ * all-digit component) and a `-leg<n>` slug. A hex boot tag (`0554ee`) is not a number, so it does not
  * match — which is why the digit rule is anchored to a whole filename component and not a loose search.
  */
 export const legInName = (name: string): string | null => {
@@ -229,8 +229,8 @@ export const legInName = (name: string): string | null => {
 
 /**
  * A leg named on one LINE, first match wins. The `leg` word must not be preceded by a hyphen, which
- * is what keeps a branch slug like `feature/handoff-bar-by-leg-17` from answering for `leg 959` —
- * measured on this box's own branch names, and pinned by a cell.
+ * is what keeps a hyphenated branch slug that ends `-leg-<n>` from answering for the sheet's own
+ * `leg <n>` line — measured against real branch names, and pinned by a cell.
  */
 export const legInLine = (line: string): string | null =>
   /(?:^|[^-\w])leg[\s:=#]*(\d{1,7})\b/i.exec(line ?? "")?.[1] ?? null;
@@ -265,11 +265,11 @@ export const RESUME_SECTIONS: readonly { label: string; line: string; aliases?: 
  * How many blocks a handoff must answer. DERIVED, not chosen: 287 real `RESUME-*.md` sheets in the two
  * dirs this box actually uses, counted through the same function over the same head the audit reads —
  *   7 blocks: 122 files · 6: 136 · 5: 22 · 4: 4 · 3: none · 2: 3
- * and those three are `RESUME-flash5-09349c.md` (the 359-byte padding sheet this row is named after)
- * and two rig fixtures. So 4 is the HIGHEST floor that refuses every filler sheet found and still
+ * and those three are stubs written to clear a byte count, and two rig fixtures. So 4 is the HIGHEST
+ * floor that refuses every filler sheet found and still
  * admits all 284 real ones. 5 would have refused four genuine handoffs, one of them 18 KB and written
  * in its own vocabulary — and a bar that strands a lane holding a good handoff is the failure class
- * leg 420 ACT A and ACT B exist to prevent. Command, output and the date are in the leg report.
+ * the admission rules exist to prevent. The command and its output are in the leg report.
  */
 export const RESUME_MIN_SECTIONS = 4;
 
@@ -420,18 +420,16 @@ export const handoffContentVerdict = (
 };
 
 /**
- * tabichat §5 ITEM 1 / leg 420 ACT A — WHERE A HANDOFF IS ALLOWED TO LIVE, decided by ONE pure
+ * WHERE A HANDOFF IS ALLOWED TO LIVE, decided by ONE pure
  * function so no call site can invent a fourth answer.
  *
- * THE DEFECT THIS REMOVES, measured at `bf6449a` on this box before I typed a line:
- *   `const RESUME_DIR = process.env.MQTT_CTX_RESUME_DIR ?? "/media/dust/dust-ext1/tabith/resume"`
- * is a MONTANA path that does not exist here (`ls -d …` → No such file or directory), and it is not
- * creatable by the lane user either (`mkdir /media/dust` → Permission denied). So the old code's
- * `mkdirSync` inside a `try` whose `catch` fell through did not merely fall through — it fell
+ * THE DEFECT THIS REMOVES: the shipped default used to be an absolute path on one operator's personal
+ * mount (`MQTT_CTX_RESUME_DIR ?? <that path>`). On every machine where that mount is absent the path
+ * does not exist, and it is not creatable by the lane user either. So the old code's
+ * `mkdir` inside a `try` whose `catch` fell through did not merely fall through — it fell
  * through on EVERY lane, EVERY boot, forever, into `RESUME_FALLBACK = "/tmp/tabichat"`, which is
- * tmpfs. The owner's own words on why this runs BEFORE the matching work: *"the /media/dust default
- * is the larger false-negative generator, and the tmpfs fallback means a handoff can evaporate on
- * reboot"* and *"A force envelope that can rescue state that no longer exists is theater."*
+ * tmpfs. The ordering is deliberate: a durable default whose contents can evaporate on reboot rescues
+ * state that no longer exists, which is why the location is settled before the matching rule is.
  *
  * WHAT WAS BUILT, and what deliberately was not: NO new absolute path is hardcoded, because a second
  * fossil is worse than the first — a fresh default that is wrong on a different box just moves the

@@ -3,10 +3,10 @@
 Four files, one script, and a hard boundary.
 
 **The boundary: everything in this directory is an ARTIFACT. No lane applies it to a broker.**
-The operator's broker host is not in the wyoming/utah host-config delegation; the owner's
-order of 2026-10-18 released *implementation on a branch*, which is what this directory and the
-client half of the branch are. `mosquitto` was never reloaded, `/etc/mosquitto` was never written,
-no CA was minted onto his box, and no port was opened — by this leg or by any file here.
+The broker host is outside the delegated host-config surface, so what is released here is
+*implementation on a branch*: this directory and the client half of that branch. `mosquitto` was
+never reloaded, `/etc/mosquitto` was never written, no CA was minted on the operator's box, and no
+port was opened — by this change or by any file here.
 
 | file | what it is | applied by |
 |---|---|---|
@@ -45,7 +45,7 @@ dev convenience.
 
 With mTLS the launch sheet and `tabichat-aliases.sh` carry **paths**. A password scheme puts a
 secret into the file that gets pasted around — and this project has already recorded what a launch
-line that silently lies about its effective values costs (`s78`). Rotation becomes a re-issue.
+line that silently lies about its effective values costs. Rotation becomes a re-issue.
 
 ## What phase 1 closes, and what it does not
 
@@ -74,10 +74,10 @@ the broker from starting at all:
 3. **`tls_use_subject CN=%s` IS NOT A MOSQUITTO OPTION** — `"Unknown configuration variable
    'tls_use_subject'."` The real one is the boolean `use_subject_as_username true`, and it behaves
    differently: the username becomes the **entire subject DN**, in mosquitto's own RDN order
-   (measured: `/CN=worker1` → `CN=worker1`, while `/CN=lead-agent/O=tabith` → `O=tabith,CN=lead-agent`). So a
-   (the specimen nicks are generic tokens per the site-value rule; the ORDER they show is the measurement).
+   (measured: `/CN=<nick>` → `CN=<nick>`, while `/CN=<nick>/O=<org>` → `O=<org>,CN=<nick>`). So a
+   (the specimen names are placeholders; the ORDER they show is the measurement).
    subject must be a single `CN=<nick>` RDN for an ACL `user` line to be predictable, which is what
-   the mint script produces. The design row's pre-flight answer is YES-WITH-CORRECTION, and the
+   the mint script produces. The design note's pre-flight answer is YES-WITH-CORRECTION, and the
    `password_file` contingency still does not apply.
 4. **An indented comment inside a listener block is a load error** — `"Unknown configuration variable
    '#'."` Comments there must start at column 0.
@@ -90,9 +90,9 @@ vacuously. The paired positives are what caught it.
 
 ## Version pre-flight, and the limit of what this directory knows
 
-The live broker was read **read-only** on 2026-10-18: `mosquitto version 2.0.21` (via
-`$SYS/broker/version`; the ssh route from this box returns `Permission denied (publickey)` — no lane
-has a shell on the broker host). `use_subject_as_username` needs no special version, and the design row's
+The live broker was read **read-only**: `mosquitto version 2.0.21` (via
+`$SYS/broker/version`; an ssh route from a lane box returns `Permission denied (publickey)` — no lane
+has a shell on the broker host). `use_subject_as_username` needs no special version, and the design note's
 2.0.12 floor for subject-to-username mapping is satisfied.
 
 The fixture runs mosquitto 2.1.2 in a container. So these files are proven as a SHAPE against a
@@ -122,8 +122,8 @@ reordered: a QoS 0 publish the broker refuses without saying so (§"ACL order ca
 | change | pass 1 (client, then restart every seat) | pass 2 (generated ACL, then broker reload) | mixed-fleet behaviour during the window | if you invert it |
 |---|---|---|---|---|
 | room single-write (phase 2, step 4 above) | `MQTT_SENDER_TOPIC=1` per lane | `topic readwrite chat/<room>/msg/<nick>` only | old lane writes flat, new lane writes `msg/<nick>`; both READ via `msg/+` | flat writers go silently quiet |
-| **receipts + lane-admin answers under the sender** (tabichat#10 shape (ii), owner `"ii."` 2026-10-24) | `roommsg.ts` + `laneadmin.ts` + `index.ts` + `lane_admin.mjs` → `_ctl/<nick>/<id>` and `_ctl/<nick>/admin/<id>`, each lane clears its own aged leaves | `mint-tabichat-pki.sh` emits `topic write chat/<room>/_ctl/<nick>/#`, no `_ctl/#` write for anyone | **harmless both ways on READ** (`_ctl/#` crosses levels); a not-yet-restarted lane still writes flat and is refused under pass 2 — its receipts stop arriving, its watchdog says so loudly | a non-migrated lane's receipts vanish silently; a migrated lane under the OLD wide ACL is fine, which makes pass 1 the safe half to sit on |
-| **tail board `hist/<nick>`** (leg 800 client half) | client ships DARK: publish and `hist/+` subscribe exist behind `MQTT_HIST_BOARD=1`, default OFF; no lane turns it on yet | `mint-tabichat-pki.sh` ALREADY emits `topic readwrite chat/<room>/hist/<nick>` + `pattern read chat/<room>/hist/+` — apply the generated ACL and reload the broker, THEN flip the flag lane by lane | the flag-off default makes the window EMPTY by construction: zero writes to any `hist/` topic, and readers that merge boards treat them as history, never news | flag on before the ACL: a QoS 0 publish the broker refuses with no error and no log line — the board simply never appears, and only the operator's own `chat_read` shows the silence |
+| **receipts + lane-admin answers under the sender** (tabichat#10 shape (ii)) | `roommsg.ts` + `laneadmin.ts` + `index.ts` + `lane_admin.mjs` → `_ctl/<nick>/<id>` and `_ctl/<nick>/admin/<id>`, each lane clears its own aged leaves | `mint-tabichat-pki.sh` emits `topic write chat/<room>/_ctl/<nick>/#`, no `_ctl/#` write for anyone | **harmless both ways on READ** (`_ctl/#` crosses levels); a not-yet-restarted lane still writes flat and is refused under pass 2 — its receipts stop arriving, its watchdog says so loudly | a non-migrated lane's receipts vanish silently; a migrated lane under the OLD wide ACL is fine, which makes pass 1 the safe half to sit on |
+| **tail board `hist/<nick>`** (client half) | client ships DARK: publish and `hist/+` subscribe exist behind `MQTT_HIST_BOARD=1`, default OFF; no lane turns it on yet | `mint-tabichat-pki.sh` ALREADY emits `topic readwrite chat/<room>/hist/<nick>` + `pattern read chat/<room>/hist/+` — apply the generated ACL and reload the broker, THEN flip the flag lane by lane | the flag-off default makes the window EMPTY by construction: zero writes to any `hist/` topic, and readers that merge boards treat them as history, never news | flag on before the ACL: a QoS 0 publish the broker refuses with no error and no log line — the board simply never appears, and only the operator's own `chat_read` shows the silence |
 
 The proof cells for both rows are `src/tools/test_ack_watch_broker.ts` (a real broker, both grants, own
 leaf delivered and foreign leaf refused). The cost of row 2 is stated where it belongs: N lanes acking

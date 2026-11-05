@@ -2,7 +2,7 @@
 // Licensed under the Business Source License 1.1 (the "License"); you may not use this file
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
-// Truth table for the exit-code class (tabichat leg 549).
+// Truth table for the exit-code class (tabichat).
 //   bun src/tools/test_exit_class.ts      (exit 1 on any failure)
 //
 // WHY THIS FILE EXISTS. `bun test` runs the files it is given in ONE process, and a top-level

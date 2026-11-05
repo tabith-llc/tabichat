@@ -3,7 +3,7 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * tabichat iid 28 (second half), leg 995 — the gate must REFUSE an entry-mounting cell whose sinks
+ * tabichat iid 28 (second half) — the gate must REFUSE an entry-mounting cell whose sinks
  * are unset, so the protection is a check and not a memory.
  *   bun tools/test_sink_guard.ts        (exit 1 on any refusal)
  *
@@ -17,11 +17,11 @@
  *                     `index.ts:872` as `process.env.MQTT_EXIT_LOG || EXIT_LOG_DEFAULT`, an absolute
  *                     path, so a scratch `cwd` does not redirect it either.
  * Both files are mode `0664` on a box where every seat runs as the same user. A later seat greps them
- * for lane traffic and reads a cell's line as something a lane said. Leg 991 pointed the mounters at
+ * for lane traffic and reads a cell's line as something a lane said. a prior leg pointed the mounters at
  * scratch; that is the memory half. This file is the check: a new arm written into either sink lands on
  * the box file only if this gate is silently skipped.
  *
- * HOW THE MOUNT SET IS DERIVED (the method leg 991 recorded — reused, not reinvented). The predicate is
+ * HOW THE MOUNT SET IS DERIVED (the method a prior leg recorded — reused, not reinvented). The predicate is
  * **"a dynamic import whose argument resolves to the entry"**, never a literal-path grep. A grep for
  * `tabichat/index.ts` names `test_broker.ts` (which `readFileSync`s the entry's BYTES to assert on their
  * shape) and `test_fsgate.ts` (which holds the path inside a `classify()` fixture string), and MISSES
@@ -35,7 +35,7 @@
  * the literal env names; a cell that sets a sink through a computed key (`process.env[DIAG_ENV]`)
  * escapes it — cell 4 is the behavioural net for exactly that case. (2) A mount through a path assembled
  * some other way (a variable holding the whole directory, or a child process that loads the extension)
- * escapes the predicate too, and leg 991 says so of its own census; this gate inherits that limit rather
+ * escapes the predicate too, and a prior leg says so of its own census; this gate inherits that limit rather
  * than claiming past it. (3) Cell 4 spawns the mounters, so it measures what a run does today; the text
  * arms are what catch a cell that has not been run yet.
  *

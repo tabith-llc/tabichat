@@ -3,7 +3,7 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 // Truth table for mention-queue collapse (option B; gate corrected
-// 2026-10-11 — it now reads the lane's RUN STATE, not pi's queue depth).
+//  — it now reads the lane's RUN STATE, not pi's queue depth).
 //   bun tools/test_mentionq.ts      (exit 1 on any failure)
 //
 // THE RULE UNDER TEST: a mention that lands while the lane is busy does not buy its own visible
@@ -21,15 +21,14 @@
 // first, minimum one line, never truncated — instead of one sendUserMessage per held line. pi 1.1.0
 // replays every prompt made while it emits `agent_settled` back-to-back with no delay, so the
 // per-line drain was launching N full-context requests at a ~0 s gap: 6 errors / 11 turns (54.5%) at
-// >=500k prompt tokens, versus 0/55 at 10-15 s (handoff-400-lane-deaths-20261005.md §2.17). The tail
+// >=500k prompt tokens, versus 0/55 at 10-15 s (measured on this box). The tail
 // that does not fit stays held and drains at the NEXT settle, a whole lane turn later.
 //
-// THE SECOND RULE, added 2026-10-09 (owner, verbatim: "i want it fixed. build held-flush"): that
+// THE SECOND RULE, added on request (held-flush is the shape): that
 // drain delivers ONE coalesced message per settle, not one per held line, bounded by lines and
 // characters with the overflow RE-HELD for the next settle. The per-line fan-out was launching N
 // full-context requests at a ~0 s gap (pi replays the deferred settled prompts back-to-back), which
-// is the measured 54.5% provider-error cell — see mentionq.ts and
-// handoff-400-lane-deaths-20261005.md §2.17.
+// is the measured 54.5% provider-error cell — recorded in mentionq.ts.
 //
 // Paired negatives everywhere, per the project's truth-table law: a decision function that always
 // answered "hold" (a lane that never sees its mentions) fails here exactly as one that always
@@ -91,7 +90,7 @@ const flushText = (send: readonly HeldMention[]): string =>
   `${heldHeader(send.length)}\n\n${heldBatchBody(send)}`;
 
 // --- the switch -------------------------------------------------------------
-check("env: unset means ON (the owner wants this behaviour)", mergeEnabled(undefined), true);
+check("env: unset means ON (the shipped default is the intended behaviour)", mergeEnabled(undefined), true);
 check("env: empty means ON", mergeEnabled(""), true);
 for (const off of ["0", "false", "off", "no", "OFF", " No "]) {
   check(`env: ${JSON.stringify(off)} means OFF`, mergeEnabled(off), false);
@@ -165,7 +164,7 @@ check(
 check("cap is generous but finite", HOLD_MAX, 20);
 
 // --- a full hold sequence: N arrivals on a busy lane, then one settle ----------
-// The gate is only half of it; the shape of a real round is what the owner saw. Simulated here
+// The gate is only half of it; the shape of a real round is what an operator sees. Simulated here
 // without pi: 6 mentions arrive while the lane runs, every one must be held (0 pi blocks), then
 // the settle drains them oldest-first, one message each, with the count and the badge unwinding.
 {
@@ -252,7 +251,7 @@ check("cap is generous but finite", HOLD_MAX, 20);
 // --- what the lane and the sender are told ----------------------------------
 check("badge: zero held clears the footer line", holdBadge(0), "");
 says("badge: one held names the count", holdBadge(1), "1 mention(s) held");
-says("badge: the footer is the count and nothing else (owner order 2026-10-24)", holdBadge(2), "2 mention(s) held");
+says("badge: the footer is the count and nothing else", holdBadge(2), "2 mention(s) held");
 check("badge: the pointer text is GONE from the footer", holdBadge(2).includes("chat_read"), false);
 check("badge: the subsystem tag is GONE from the footer", holdBadge(2).startsWith("[tabichat]"), false);
 check("badge key is the declared slot (renamed to sit behind the mushroom)", HOLD_BADGE_KEY, "queue");
@@ -264,7 +263,7 @@ never("held header never claims the lane already saw it", heldHeader(3), "you al
 // The defect this treats: the settle drain used to call pi.sendUserMessage ONCE PER held line, and
 // pi 1.1.0 replays every prompt made while it emits `agent_settled` back-to-back with no delay — N
 // full-context requests at a ~0 s gap, the measured 6/11 = 54.5% cell at >=500k prompt tokens
-// (handoff-400-lane-deaths-20261005.md §2.17). One message per settle deletes N-1 of those launches.
+// (measured on this box). One message per settle deletes N-1 of those launches.
 // Budget: HELD_FLUSH_MAX_LINES / HELD_FLUSH_MAX_CHARS_DEFAULT, whichever fills first, minimum one
 // line, NEVER truncate; the tail stays held and drains at the NEXT settle (a whole lane turn apart).
 
@@ -352,7 +351,7 @@ check("line budget constant is the ruled 5", HELD_FLUSH_MAX_LINES, 5);
   const third = planHeldFlush(takeHeld(second.rehold).deliver);
   check("the settle after that ships the last 2", third.send.map((h) => h.id), ["m-11", "m-12"]);
   check("and the list is finally empty", third.rehold, []);
-  // THE NEVER-SETTLES-AGAIN CASE (ultra left it open): if the lane dies before the next settle, the
+  // THE NEVER-SETTLES-AGAIN CASE (lane10 left it open): if the lane dies before the next settle, the
   // tail is still in `held` and the session-end valve takes the WHOLE list, so nothing is stranded.
   const rescued = takeHeld(heldAfter);
   check("the shutdown valve would hand over every tail line", rescued.deliver.length, 7);
@@ -415,7 +414,7 @@ for (const bad of ["0", "-1", "abc", "12.5x", "1e999", "99999999999999999999999"
   // pi queue depth, which is EMPTY exactly when a lane is busy. The gate is the lane's run state,
   // armed by `agent_start` and discharged by `agent_settled`, cross-checked with the live
   // context's `isIdle()`.
-  // RE-PAIRED 2026-10-13 (#585): the socket's callbacks no longer hold a session ctx, so the
+  // RE-PAIRED (#585): the socket's callbacks no longer hold a session ctx, so the
   // cross-check reads `liveCtx().isIdle()` through the handle instead of the captured `ctx`.
   // Same gate, same meaning, honest literal. Re-paired, not deleted.
   says("the hold gates on run state, armed and discharged by pi's own events", index, "busy: runActive && !liveCtx().isIdle()");
@@ -436,7 +435,7 @@ for (const bad of ["0", "-1", "abc", "12.5x", "1e999", "99999999999999999999999"
   check("a held line is already in the inbox when it is held (deferred, not lost)", pushAt > -1 && holdAt > pushAt, true);
   says("the drain is wired to the settle event", index, 'pi.on("agent_settled"');
   says("the drain takes from the hold list", index, "takeHeld(held)");
-  // RE-PAIRED 2026-10-09 (held-flush coalescing). The old pin read `heldHeader(deliver.length)`,
+  // RE-PAIRED (held-flush coalescing). The old pin read `heldHeader(deliver.length)`,
   // which stamped the size of the DRAINED GROUP on the message; the drain now ships a bounded chunk,
   // so the honest literal is `heldHeader(send.length)`. Re-paired, not deleted.
   says("the drained batch carries the held header, counting what it ships", index, "heldHeader(send.length)");
@@ -463,7 +462,7 @@ for (const bad of ["0", "-1", "abc", "12.5x", "1e999", "99999999999999999999999"
     "the settle drain has exactly TWO sendUserMessage call SITES, and both are named",
     // tabichat#19: the send moved to the re-armed `sendUser` handle (pi's load-time API throws for
     // the rest of the process after a replacement). The count is the cell, not the identifier.
-    // iid 11 (leg 973) re-numbered it from 1, and the second site is a DUTY, not a fan-out: held
+    // iid 11 re-numbered it from 1, and the second site is a DUTY, not a fan-out: held
     // traffic ships as one batch, and a pending loss tell ships alone when nothing is held. Both are
     // pinned by their own text below, so a third site has to arrive as a third named duty.
     (drainSrc.match(/pi\.sendUserMessage|\bsendUser\(/g) ?? []).length,
@@ -488,7 +487,7 @@ for (const bad of ["0", "-1", "abc", "12.5x", "1e999", "99999999999999999999999"
     false,
   );
   // "Set on hold" is the MESSAGE-CALLBACK site (the hold arm inside client.on("message")),
-  // not the drain's restatement above. RE-PAIRED 2026-10-13 (#585): that callback now reads the
+  // not the drain's restatement above. RE-PAIRED (#585): that callback now reads the
   // handle, so the honest literal is `liveCtx().ui.setStatus(...)`; the plain-`ctx` form still
   // exists in `agent_settled`, which is a per-event context and stays as it is. Pinning the old
   // literal here would have passed for the wrong reason — the wrong-reason class, not a weakened check.
@@ -527,7 +526,7 @@ for (const bad of ["0", "-1", "abc", "12.5x", "1e999", "99999999999999999999999"
   // would re-enter the very queue this replaces
   check("the drain is not wired to turn_end", /pi\.on\("turn_end"[^)]*takeHeld/s.test(index), false);
   // and the safety valve must still be the per-line followUp path it has always been — it is
-  // explicitly out of scope for the coalescing change (§3.7), so pin that it did not silently change
+  // explicitly out of scope for the coalescing change, so pin that it did not silently change
   says("the shutdown valve still hands each line back as a followUp", index, 'sendUser(h.body, { deliverAs: "followUp" })');
 }
 

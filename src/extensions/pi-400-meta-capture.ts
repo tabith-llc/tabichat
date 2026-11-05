@@ -5,15 +5,14 @@
 /**
  * pi-400-meta-capture.ts — passive provider-failure METADATA instrument.
  *
- * Part of the 400-lane-death investigation. This is the meta-only rebuild of the
- * s22 harness (`work5/pi-400-capture.ts`), retargeted on the owner's word
- * (2026-10-12): the old tool wrote the RAW request payload — the whole conversation
- * — to disk, and the owner declined that trade ("delete it"). No request bytes are
+ * Part of the 400-lane-death investigation. This is the meta-only rebuild of an earlier capture
+ * harness, retargeted after that first tool wrote the RAW request payload — the whole conversation
+ * — to disk. That trade was refused and the tool was deleted. No request bytes are
  * written here, in any form, ever. What remains is the measurable part of the
  * question: does request DENSITY (bytes and requests per minute) predict a death,
  * and what does the provider's own error text say when one happens.
  *
- * Why a second event path: the s22 instrument never fired. Its only trigger was
+ * Why a second event path: the first instrument never fired. Its only trigger was
  * `after_provider_response` with `status >= 400` — an HTTP-level signal. If a
  * refusal arrives MID-STREAM, that handler is presented a 2xx status and sees
  * nothing. `agent_end` is provably the event that does see them: the live tabichat extension builds its
@@ -22,7 +21,7 @@
  * message.") from `event.messages` in its `agent_end` handler — `upstreamErrorNote(msgs)` in
  * `src/extensions/tabichat/index.ts`, whose text comes from `buildNote` in
  * `src/extensions/tabichat/errnote.ts`, which reads `stopReason === "error"` and `errorMessage`.
- * Leg 907 moved only where that line is PRINTED — `agent_settled`, the boundary that can promise no retry is
+ * A later move changed only where that line is PRINTED — `agent_settled`, the boundary that can promise no retry is
  * coming — and kept the OBSERVATION here, on the same two fields of the same event, which is the claim this
  * paragraph rests on.
  * This module reads the same two
@@ -36,7 +35,7 @@
  *   <META_DIR>/events.jsonl   one JSONL line per captured failure, with class
  *   <META_DIR>/revivals.log   one line when a session that failed then succeeded
  *
- * SURVIVAL RULES BAKED INTO THIS CODE (inherited from the s22 harness, unchanged):
+ * SURVIVAL RULES BAKED INTO THIS CODE (inherited from the first capture harness, unchanged):
  *  - NOTHING is ever echoed to stdout or to any other channel. Silent by design.
  *  - No request payload, message text, header value, or credential is written.
  *    Only counts, sizes, timings, and the provider's own error text.

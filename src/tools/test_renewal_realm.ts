@@ -3,7 +3,7 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * iid 20, leg 889 Cell A — THE REALM, MEASURED.
+ * iid 20 Cell A — THE REALM, MEASURED.
  *
  * Why this file exists. The renewal read failed: a guinea seat went 1 → 2 established sockets on a
  * remote renew while `grep -c '[tabichat][client]'` returned 0 in BOTH diag generations, on bytes
@@ -251,7 +251,7 @@ check("B2 the counter matches string OR number remotePort, and ignores everythin
   countBrokerSockets([{ remotePort: "8883" }, { remotePort: 8883 }, { remotePort: "1883" }, {}, { remotePort: null }, null] as never[], "8883"), 2);
 check("B2 NEGATIVE: no handle on that port is 0, not a shrug", countBrokerSockets([{ remotePort: "1883" }] as never[], "8883"), 0);
 check("B2 NEGATIVE: an absent port answers ? rather than inventing a default", countBrokerSockets([{ remotePort: "8883" }] as never[], ""), "?");
-check("B3 the note never borrows the teardown discriminator's words, so leg 888's two greps stay separable",
+check("B3 the note never borrows the teardown discriminator's words, so the two greps stay separable",
   clientFaceNote(false, 2).includes("closed the prior client"), false);
 const faceOrderOk = (src: string) => {
   const read = src.indexOf("const storeSharedAtEntry = MQTT_CLIENT.current !== null;");
@@ -272,7 +272,7 @@ check("B5 and the teardown discriminator string is UNTOUCHED — still built in 
   readFileSync(EXT_LANE, "utf8").includes("closed the prior client before connecting"), true);
 
 // ─── CELL C — why ZERO teardown rows is the healthy face, measured not argued ──────────────────
-// Leg 888 read `grep -c '[tabichat][client]'` = 0 on bytes equal to the tip and took that as the fix
+// read `grep -c '[tabichat][client]'` = 0 on bytes equal to the tip and took that as the fix
 // not running. The order pi documents (shutdown the old instance, then start the new one) puts the
 // OUTGOING run's teardown first, and that site discards the verdict — so by the time the incoming
 // run reaches the one site that prints, the holder it would report on is already empty. Cells C1-C3
@@ -282,7 +282,7 @@ check("C1 the shipped shutdown site DISCARDS the verdict — no diag between the
 check("C1 NEGATIVE: the same predicate refuses a site that does print its verdict", SILENCE_SHAPE.test(
   INDEX_SRC.replace(/if \(MQTT_CLIENT\.current === client\) endPriorClient\(MQTT_CLIENT, "session_shutdown"\);/,
     'if (MQTT_CLIENT.current === client) { const v = endPriorClient(MQTT_CLIENT, "session_shutdown"); diag("WARN", v.note); }')), false);
-// C2 was written when the start-path guard honoured TWO signals, and that silence was the finding. Leg 891
+// C2 was written when the start-path guard honoured TWO signals, and that silence was the finding. a prior leg
 // adds the third (`prior.destroyed`), because a stalled close unhooks with a non-zero count and so printed
 // anyway — the gap that remained was a destroy that FAILED. Rewritten to the new shape, NOT relaxed: the
 // predicate now refuses any guard that omits any of the three signals, which is strictly more than it checked

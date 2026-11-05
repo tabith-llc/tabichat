@@ -13,8 +13,7 @@
 # EVERY hook name. On a host whose global points at a guard directory — the fleet keeps its
 # commit-identity check there — following the shipped line silently stopped every hook that
 # directory provided. No error, no changed exit code, commits kept landing: nine clones on one box
-# were in exactly that state and only a deliberate census found them
-# (fleet.db:facts F-idaho-9-tabichat-venues-shadow-global-hookspath). So the defect was never the
+# were in exactly that state and only a deliberate census found them. So the defect was never the
 # guard's behaviour, it was the INSTRUCTION. An instruction is a shipped artifact, so it gets a
 # shipped instrument: this file is what the header tells you to run now.
 #
@@ -22,16 +21,16 @@
 # `core.hooksPath` exists at global or system scope and holds a runnable hook, this writes a
 # per-clone chain directory INSIDE $(git-dir) — one small wrapper per hook name, each running the
 # incumbent's hook first and this repo's tracked hook after, and the first refusal wins — then points
-# LOCAL `core.hooksPath` at that generated directory. That is the shape already deployed for this
-# fleet at /tabith/githooks-tabichat (identity check, then exec the repo's own guard, return its
-# status), generated per clone instead of per host. It stays site-agnostic: nothing here names a
+# LOCAL `core.hooksPath` at that generated directory. That is the shape this fleet already runs —
+# identity check, then exec the repo's own guard, then return its status — generated per clone
+# instead of per host. It stays site-agnostic: nothing here names a
 # directory, it reads the one git already consults out of the config and forwards to it.
 #
 # WHAT IT NEVER DOES.
 #   - It never writes into the incumbent directory. That is someone else's tree — host-owned, and in
 #     the fleet's case a guard with its own rules. The wrappers live in THIS clone's git dir.
 #   - It never lowers coverage. Every hook name in the union of (incumbent set, this repo's .githooks)
-#     gets a wrapper, so a name that would otherwise vanish is forwarded rather than dropped. Leg 842
+#     gets a wrapper, so a name that would otherwise vanish is forwarded rather than dropped. A review
 #     found the first draft of this file forwarding pre-commit only, which is the same defect wearing
 #     a smaller hat: a host `commit-msg` check behind a chain that names one hook is still disabled.
 #   - It never re-aims a hooksPath that already reaches this guard. If the consulted hook invokes

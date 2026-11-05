@@ -6,7 +6,7 @@
  * Truth table for remote lane administration (PROTOTYPE gate).
  *   bun tools/test_laneadmin.ts      (exit 1 on any failure)
  *
- * Three halves, because the 2026-10-07 `ctx is not defined` incident proved that a module
+ * Three halves, because the `ctx is not defined` incident proved that a module
  * can be perfectly tested and still be dead code: the wiring line was never executed and no
  * compile step existed to notice. So besides the decisions themselves:
  *   - every rule gets its rejection case (an admin check that only passes the happy path is
@@ -44,7 +44,7 @@ import {
   wakeDirective,
   wakePathFor,
   wakePickPath,
-  // iid 17 / leg 959 — the payload and leg audit, and the note the wake line adds
+  // iid 17 — the payload and leg audit, and the note the wake line adds
   auditHandoff,
   handoffDirs,
   wakeLegNote,
@@ -77,7 +77,7 @@ import {
   type ClosableClient,
   type CtlEntry,
 } from "../extensions/tabichat/laneadmin.ts";
-// §5 item 1 ACT B imports the matcher and its stat type from ctxwarn.ts, where they live.
+// PART B imports the matcher and its stat type from ctxwarn.ts, where they live.
 import {
   pickResumeHandoff,
   RESUME_SCAN_MAX,
@@ -109,13 +109,13 @@ const check = (name: string, got: unknown, want: unknown) => {
 };
 
 const ON = { LANE_ADMIN_COMPACT: "1", LANE_ADMIN_SHUTDOWN: "on", LANE_ADMIN_RENEW: "yes" };
-const ALLOW = ["lead-agent", "dust"];
+const ALLOW = ["lead-agent", "lane16"];
 
 // --- what counts as an admin request ------------------------------------------------------
-check("an admin request is recognised", isLaneAdmin({ kind: ADMIN_KIND, action: "compact", by: "dust" }), true);
-check("a delivery receipt is not ours", isLaneAdmin({ kind: "ack", id: "x", by: "dust", to: "ultra" }), false);
+check("an admin request is recognised", isLaneAdmin({ kind: ADMIN_KIND, action: "compact", by: "lane16" }), true);
+check("a delivery receipt is not ours", isLaneAdmin({ kind: "ack", id: "x", by: "lane16", to: "lane10" }), false);
 check("a sender-less request is not ours", isLaneAdmin({ kind: ADMIN_KIND, action: "compact" }), false);
-check("an action-less request is not ours", isLaneAdmin({ kind: ADMIN_KIND, by: "dust" }), false);
+check("an action-less request is not ours", isLaneAdmin({ kind: ADMIN_KIND, by: "lane16" }), false);
 check("a null payload is not ours", isLaneAdmin(null), false);
 
 // --- the flags: off is the default, and each route is separate ----------------------------
@@ -131,48 +131,48 @@ check("the flag names are the documented three", Object.values(ADMIN_FLAGS).join
   "LANE_ADMIN_RENEW,LANE_ADMIN_COMPACT,LANE_ADMIN_SHUTDOWN");
 
 // --- authority: both halves ---------------------------------------------------------------
-const base = { self: "flash1", allow: ALLOW, env: ON, idle: true, resumeWritten: true, to: "flash1" };
+const base = { self: "lane1", allow: ALLOW, env: ON, idle: true, resumeWritten: true, to: "lane1" };
 const v = (over: Record<string, unknown>) => adminVerdict({ ...base, ...over });
 
 check("the lead may compact an idle lane", v({ action: "compact", by: "lead-agent" }),
   { ok: true, action: "compact", by: "lead-agent", arm: false });
-check("a stranger is refused", v({ action: "compact", by: "flash3" }).ok, false);
-check("a lane cannot administer itself by room message", v({ action: "compact", by: "flash1" }).ok, false);
+check("a stranger is refused", v({ action: "compact", by: "lane3" }).ok, false);
+check("a lane cannot administer itself by room message", v({ action: "compact", by: "lane1" }).ok, false);
 check("an anonymous request is refused", v({ action: "compact", by: "" }).ok, false);
-check("an invented action is refused", v({ action: "reboot", by: "dust" }).ok, false);
-check("a route that is off is refused", adminVerdict({ ...base, action: "compact", by: "dust", env: {} }).ok, false);
-check("a mid-turn request arms rather than runs", v({ action: "compact", by: "dust", idle: false }),
-  { ok: true, action: "compact", by: "dust", arm: true });
-// losing the session is the bar the owner's renewal law protects
-check("shutdown without a RESUME file is refused", v({ action: "shutdown", by: "dust", resumeWritten: false }).ok, false);
-check("renew without a RESUME file is refused", v({ action: "renew", by: "dust", resumeWritten: false }).ok, false);
-check("compact does not need a RESUME file", v({ action: "compact", by: "dust", resumeWritten: false }).ok, true);
-check("shutdown with a RESUME file runs", v({ action: "shutdown", by: "dust" }),
-  { ok: true, action: "shutdown", by: "dust", arm: false });
+check("an invented action is refused", v({ action: "reboot", by: "lane16" }).ok, false);
+check("a route that is off is refused", adminVerdict({ ...base, action: "compact", by: "lane16", env: {} }).ok, false);
+check("a mid-turn request arms rather than runs", v({ action: "compact", by: "lane16", idle: false }),
+  { ok: true, action: "compact", by: "lane16", arm: true });
+// losing the session is the bar the renewal rule protects
+check("shutdown without a RESUME file is refused", v({ action: "shutdown", by: "lane16", resumeWritten: false }).ok, false);
+check("renew without a RESUME file is refused", v({ action: "renew", by: "lane16", resumeWritten: false }).ok, false);
+check("compact does not need a RESUME file", v({ action: "compact", by: "lane16", resumeWritten: false }).ok, true);
+check("shutdown with a RESUME file runs", v({ action: "shutdown", by: "lane16" }),
+  { ok: true, action: "shutdown", by: "lane16", arm: false });
 const refused = adminVerdict({ ...base, action: "compact", by: "nobody" });
 check("a refusal states a reason", refused.ok === false && (refused as { reason: string }).reason.includes("nobody"), true);
 
-// --- recipient field: who is this request even for? (s136 Leg A, both halves) --------------
-check("a request addressed to this lane is honoured", v({ action: "compact", by: "dust", to: "flash1" }),
-  { ok: true, action: "compact", by: "dust", arm: false });
-check("to: all reaches every lane", v({ action: "compact", by: "dust", to: "all" }),
-  { ok: true, action: "compact", by: "dust", arm: false });
-check("an @-prefixed field is the same address", v({ action: "compact", by: "dust", to: "@flash1" }).ok, true);
-check("a list of nicks addresses each of them", v({ action: "compact", by: "dust", to: "clerk, flash1" }).ok, true);
-check("a bystander lane refuses in silence", v({ action: "compact", by: "dust", to: "flash3" }),
-  { ok: false, speak: false, reason: "addressed to flash3, not to flash1 — this lane is not the addressee" });
-check("whole tokens: flash10 is not flash1", v({ action: "compact", by: "dust", to: "flash10" }).ok, false);
-check("a fieldless request is inert AND loud", adminVerdict({ ...base, to: undefined, action: "compact", by: "dust" }),
+// --- recipient field: who is this request even for? (both halves) -------------------------
+check("a request addressed to this lane is honoured", v({ action: "compact", by: "lane16", to: "lane1" }),
+  { ok: true, action: "compact", by: "lane16", arm: false });
+check("to: all reaches every lane", v({ action: "compact", by: "lane16", to: "all" }),
+  { ok: true, action: "compact", by: "lane16", arm: false });
+check("an @-prefixed field is the same address", v({ action: "compact", by: "lane16", to: "@lane1" }).ok, true);
+check("a list of nicks addresses each of them", v({ action: "compact", by: "lane16", to: "lane14, lane1" }).ok, true);
+check("a bystander lane refuses in silence", v({ action: "compact", by: "lane16", to: "lane3" }),
+  { ok: false, speak: false, reason: "addressed to lane3, not to lane1 — this lane is not the addressee" });
+check("whole tokens: lane1z is not lane1", v({ action: "compact", by: "lane16", to: "lane1z" }).ok, false);
+check("a fieldless request is inert AND loud", adminVerdict({ ...base, to: undefined, action: "compact", by: "lane16" }),
   { ok: false, speak: true, reason: "no recipient field — a fleet-wide admin request is inert by design; name the lane (lane_admin.mjs <by> <target> <action>)" });
-check("a field that names nobody is the same inert case", adminVerdict({ ...base, to: "!!!", action: "compact", by: "dust" }).ok, false);
-check("the recipient gate runs before the allowlist", v({ action: "compact", by: "nobody", to: "flash3" }),
-  { ok: false, speak: false, reason: "addressed to flash3, not to flash1 — this lane is not the addressee" });
+check("a field that names nobody is the same inert case", adminVerdict({ ...base, to: "!!!", action: "compact", by: "lane16" }).ok, false);
+check("the recipient gate runs before the allowlist", v({ action: "compact", by: "nobody", to: "lane3" }),
+  { ok: false, speak: false, reason: "addressed to lane3, not to lane1 — this lane is not the addressee" });
 check("even an addressed request needs a sender", adminVerdict({ ...base, action: "compact", by: "" }).ok, false);
 
-// --- SELF-addressed requests (ticket row 2, R1) -------------------------------------------
-// The owner's order, verbatim 2026-10-18: "that ticket needs to include YOU BEING ABLE TO SELF
-// RENEW PROPERLY! THE LAST TIME FAILED". The refusal at laneadmin.ts:149 is what made the lead's
-// `lane_admin.mjs wren wren renew` a no-op that still printed `published`. Widening is bounded
+// --- SELF-addressed requests (ticket row 2) -----------------------------------------------
+// The requirement: a ticket that lets a seat RENEW ITSELF PROPERLY — the last attempt failed.
+// The refusal at laneadmin.ts:149 is what made the lead's
+// `lane_admin.mjs lane11 lane11 renew` a no-op that still printed `published`. Widening is bounded
 // four ways and each bound gets its own rejection case below: renew ONLY, its OWN opt-in flag
 // (default OFF, so today's inert-everywhere property holds until a venue turns it on), the RESUME
 // bar untouched and still load-bearing, and the allowlist NOT required for a self request (a
@@ -181,23 +181,23 @@ const SELFRENEW_ON = { ...ON, LANE_ADMIN_SELFRENEW: "1" };
 
 check(
   "a self-addressed renew runs when its own flag is on",
-  v({ action: "renew", by: "flash1", env: SELFRENEW_ON }),
-  { ok: true, action: "renew", by: "flash1", arm: false },
+  v({ action: "renew", by: "lane1", env: SELFRENEW_ON }),
+  { ok: true, action: "renew", by: "lane1", arm: false },
 );
 check(
   "a self renew mid-turn arms rather than runs",
-  v({ action: "renew", by: "flash1", env: SELFRENEW_ON, idle: false }),
-  { ok: true, action: "renew", by: "flash1", arm: true },
+  v({ action: "renew", by: "lane1", env: SELFRENEW_ON, idle: false }),
+  { ok: true, action: "renew", by: "lane1", arm: true },
 );
 check(
   "self renew is refused when its flag is off (default face, unchanged)",
-  v({ action: "renew", by: "flash1" }).ok,
+  v({ action: "renew", by: "lane1" }).ok,
   false,
 );
 check(
   "a refused self renew names the working alternative, not just the refusal",
   (() => {
-    const r = v({ action: "renew", by: "flash1" }) as { reason?: string };
+    const r = v({ action: "renew", by: "lane1" }) as { reason?: string };
     return (
       !!r.reason &&
       r.reason.includes("LANE_ADMIN_SELFRENEW") &&
@@ -206,26 +206,26 @@ check(
   })(),
   true,
 );
-// R2's "the asker must be told WHOM", both halves. The floor is the seat's own env, so a refusal that
+// The requirement that the asker be told WHOM, both halves. The floor is the seat's own env, so a refusal that
 // says "a lane on the steer allowlist" without a name is still a trapped lane with nothing to ask.
 // NEGATIVE HALF FIRST: an allow list that names nobody must print a reason, not a blank pair of
 // parentheses — a blank here is the same silent-inertia class the row was filed for.
 check(
-  "R2 NEGATIVE: an empty admin floor is SAID as empty, never printed blank",
+  "NEGATIVE: an empty admin floor is SAID as empty, never printed blank",
   (() => {
     const r = adminVerdict({
-      ...base, action: "renew", by: "flash1", allow: [], env: ON,
+      ...base, action: "renew", by: "lane1", allow: [], env: ON,
     }) as { reason?: string };
     return !!r.reason && r.reason.includes("none") && !r.reason.includes("()") && r.reason.includes("empty");
   })(),
   true,
 );
 check(
-  "R2 POSITIVE: a refused self renew prints every nick this seat actually honours",
+  "POSITIVE: a refused self renew prints every nick this seat actually honours",
   (() => {
-    const floor = ["wren", "dust", "ultra", "courier", "dove"];
+    const floor = ["lane11", "lane16", "lane10", "lane12", "lane18"];
     const r = adminVerdict({
-      ...base, action: "renew", by: "flash1", allow: floor, env: ON,
+      ...base, action: "renew", by: "lane1", allow: floor, env: ON,
     }) as { reason?: string };
     return !!r.reason && floor.every((n) => r.reason!.includes(n));
   })(),
@@ -235,12 +235,12 @@ check(
   // The predicate above could be satisfied by a reason that echoes the list once and nowhere useful.
   // This pins the two halves the trapped lane acts on are in the SAME sentence: whom to ask, and what
   // to have them run. Measured separately it would pass on two unrelated lines of prose.
-  "R2: whom-to-ask and what-to-run are in one instruction, not two unrelated clauses",
+  "whom-to-ask and what-to-run are in one instruction, not two unrelated clauses",
   (() => {
     const r = adminVerdict({
-      ...base, action: "renew", by: "flash1", allow: ["dove"], env: ON,
+      ...base, action: "renew", by: "lane1", allow: ["lane18"], env: ON,
     }) as { reason?: string };
-    const i = (r.reason ?? "").indexOf("dove");
+    const i = (r.reason ?? "").indexOf("lane18");
     const j = (r.reason ?? "").indexOf("lane_admin.mjs");
     return i >= 0 && j > i && (r.reason ?? "").slice(i, j).length < 120;
   })(),
@@ -248,38 +248,38 @@ check(
 );
 check(
   "self renew ONLY: compact keeps the old refusal even with the flag on",
-  v({ action: "compact", by: "flash1", env: SELFRENEW_ON }),
-  { ok: false, speak: true, reason: "flash1 cannot administer its own lane by room message" },
+  v({ action: "compact", by: "lane1", env: SELFRENEW_ON }),
+  { ok: false, speak: true, reason: "lane1 cannot administer its own lane by room message" },
 );
 check(
   "self renew ONLY: shutdown keeps the old refusal even with the flag on",
-  v({ action: "shutdown", by: "flash1", env: SELFRENEW_ON }),
-  { ok: false, speak: true, reason: "flash1 cannot administer its own lane by room message" },
+  v({ action: "shutdown", by: "lane1", env: SELFRENEW_ON }),
+  { ok: false, speak: true, reason: "lane1 cannot administer its own lane by room message" },
 );
 check(
   "self renew still needs a RESUME file (the bar is not widened)",
-  v({ action: "renew", by: "flash1", env: SELFRENEW_ON, resumeWritten: false }).ok,
+  v({ action: "renew", by: "lane1", env: SELFRENEW_ON, resumeWritten: false }).ok,
   false,
 );
 check(
   "the self door does not read the allowlist (a worker is not on the steer floor)",
-  v({ action: "renew", by: "flash1", env: SELFRENEW_ON, allow: [] }),
-  { ok: true, action: "renew", by: "flash1", arm: false },
+  v({ action: "renew", by: "lane1", env: SELFRENEW_ON, allow: [] }),
+  { ok: true, action: "renew", by: "lane1", arm: false },
 );
 check(
   "SELFRENEW on does not enable the peer renew route for a stranger",
-  adminVerdict({ ...base, action: "renew", by: "flash3", env: SELFRENEW_ON }).ok,
+  adminVerdict({ ...base, action: "renew", by: "lane3", env: SELFRENEW_ON }).ok,
   false,
 );
 check(
   "a forged self request naming a DIFFERENT lane is still refused",
-  adminVerdict({ ...base, action: "renew", by: "flash3", to: "flash3", env: SELFRENEW_ON }).ok,
+  adminVerdict({ ...base, action: "renew", by: "lane3", to: "lane3", env: SELFRENEW_ON }).ok,
   false,
 );
 check(
   "a self-addressed request aimed at another lane stays bystander-silent",
-  v({ action: "renew", by: "flash1", to: "flash3", env: SELFRENEW_ON }),
-  { ok: false, speak: false, reason: "addressed to flash3, not to flash1 — this lane is not the addressee" },
+  v({ action: "renew", by: "lane1", to: "lane3", env: SELFRENEW_ON }),
+  { ok: false, speak: false, reason: "addressed to lane3, not to lane1 — this lane is not the addressee" },
 );
 check(
   "SELFRENEW=off is off", selfRenewEnabled({ LANE_ADMIN_SELFRENEW: "off" }), false,
@@ -310,35 +310,35 @@ check(
   adminVerdict({
     ...base,
     action: "renew",
-    by: "flash1",
+    by: "lane1",
     env: { LANE_ADMIN_SELFRENEW: "1" },
   }).ok,
   false,
 );
 
-// --- the outcome the ASKER sees (ticket row 2, R3) ----------------------------------------
+// --- the outcome the ASKER sees (ticket row 2) -------------------------------------------
 // A `published` line with nothing behind it is the defect. These assert the answer exists, is
 // recognisable, cannot escape its topic, and maps to a nonzero rc when a lane said no.
-const RES = adminResultPayload("wren-1-abc123", "flash5", "wren", "renew", "refused", "no RESUME file", 1);
-check("an answer is built with the request id it answers", RES.id, "wren-1-abc123");
-check("an answer names the lane that judged it", RES.lane, "flash5");
-check("an answer echoes the requester", RES.requester, "wren");
+const RES = adminResultPayload("lane11-1-abc123", "lane5", "lane11", "renew", "refused", "no RESUME file", 1);
+check("an answer is built with the request id it answers", RES.id, "lane11-1-abc123");
+check("an answer names the lane that judged it", RES.lane, "lane5");
+check("an answer echoes the requester", RES.requester, "lane11");
 check("an answer is recognised as one", isAdminResult(RES), true);
-check("an admin REQUEST is not an answer", isAdminResult({ kind: ADMIN_KIND, action: "renew", by: "wren" }), false);
-check("a delivery receipt is not an answer", isAdminResult({ kind: "ack", id: "x", by: "wren" }), false);
+check("an admin REQUEST is not an answer", isAdminResult({ kind: ADMIN_KIND, action: "renew", by: "lane11" }), false);
+check("a delivery receipt is not an answer", isAdminResult({ kind: "ack", id: "x", by: "lane11" }), false);
 check("an invented outcome word is not an answer", isAdminResult({ ...RES, outcome: "done" }), false);
 check("a null payload is not an answer", isAdminResult(null), false);
-// Shape (ii), leg 496: the answer rides UNDER THE ANSWERER, so the requester hears it on the
+// Shape (ii): the answer rides UNDER THE ANSWERER, so the requester hears it on the
 // one-level wildcard `adminResultWild`. Exact values on purpose — the leaf must carry no extra level
 // and no wildcard, on either of the two variable pieces.
 check(
   "answers ride a per-request child of the ANSWERER's own leaf",
-  adminResultTopic("tabith", "wren", "wren-1-abc123"),
-  "chat/tabith/_ctl/wren/admin/wren-1-abc123",
+  adminResultTopic("tabith", "lane11", "lane11-1-abc123"),
+  "chat/tabith/_ctl/lane11/admin/lane11-1-abc123",
 );
 check("and the requester's subscription is one wildcard wide, not a reconstruction",
-  adminResultWild("tabith", "wren-1-abc123"),
-  "chat/tabith/_ctl/+/admin/wren-1-abc123",
+  adminResultWild("tabith", "lane11-1-abc123"),
+  "chat/tabith/_ctl/+/admin/lane11-1-abc123",
 );
 check(
   // The original escape cell, re-paired and STRENGTHENED: the answerer's nick is now a topic level
@@ -352,7 +352,7 @@ check(
   // wildcard, no `..`.
   "chat/tabith/_ctl/presence/admin/a",
 );
-check("an id that sanitises to nothing yields NO topic", adminResultTopic("tabith", "wren", "/"), "");
+check("an id that sanitises to nothing yields NO topic", adminResultTopic("tabith", "lane11", "/"), "");
 check("NEGATIVE: a nick that sanitises to nothing yields NO topic either (no silent flat-shape write)",
   adminResultTopic("tabith", "//", "abc"), "");
 check("and a nick cannot wildcard the control topic from the answerer slot",
@@ -371,7 +371,7 @@ check(
 // index.ts is not loadable in a gate (it would open a live socket), so this half is a LABELLED
 // GREP — the same standing test_ctx_handle.ts and the source-shape half above claim, with the
 // same honest limit: it proves the call is written, not that it ran. The runtime proof of the
-// answer path is the live dispatch in ultra-seat-killer-audit-s138-report.md.
+// answer path is the live dispatch in the two-seat killer audit that leg ran.
 const src = readFileSync(join(import.meta.dirname, "..", "extensions", "tabichat", "index.ts"), "utf8");
 const takeAdminBody = src.slice(src.indexOf("const takeAdmin = "), src.indexOf("// percent of the last advisory"));
 check("the lane publishes an outcome on its own verdict", /adminResultPayload\(/.test(takeAdminBody), true);
@@ -401,11 +401,11 @@ check(
   // Every exit site in the tool, spelled out. There is NO process.exit(0): success is only ever
   // reachable through finish(), whose code comes from adminExitCode() or ADMIN_EXIT.unknown. A
   // future "just exit 0 after the publish" trips this — that is exactly how the old tool lied.
-  // RE-PAIRED at s138d: the site-agnostic ruling (owner: "no default, must be set") added a fourth
+  // RE-PAIRED for site-agnosticism ("no default, must be set") — that added a fourth
   // site, the no-broker refusal, which exits ADMIN_EXIT.broker (4). That is a NON-ZERO site, so the
   // cell's intent is intact — and the literal no-zero check below is now asserted separately, because
   // an inventory alone would let a future exit(0) slide in by also changing the expected string.
-  // RE-PAIRED AGAIN at s263 (tabichat#2): this leg's transport-refusal site is a FIFTH site, and it is
+  // RE-PAIRED AGAIN (tabichat#2): this leg's transport-refusal site is a FIFTH site, and it is
   // also NON-ZERO — a tool that cannot agree a transport with the broker must never report a dispatch.
   // The count went 4 -> 5; the no-exit(0) intent below is unchanged and is still asserted separately.
   "the requester has no unconditional success exit",
@@ -415,15 +415,15 @@ check(
 check("and NONE of those exit sites is a bare success", /process\.exit\(\s*0\s*\)/.test(tool), false);
 check("the requester's rc comes from the outcome", /adminExitCode\(msg\.outcome\)/.test(tool), true);
 check("an unanswered dispatch exits UNKNOWN, not 0", /ADMIN_EXIT\.unknown/.test(tool), true);
-check("fleet-wide fan-out is never accidental", v({ action: "shutdown", by: "dust", to: "all" }),
-  { ok: true, action: "shutdown", by: "dust", arm: false });
+check("fleet-wide fan-out is never accidental", v({ action: "shutdown", by: "lane16", to: "all" }),
+  { ok: true, action: "shutdown", by: "lane16", arm: false });
 
 // --- what the lane says ------------------------------------------------------------------
 check("the notice names the requester", adminNotice("compact", "lead-agent").includes("lead-agent"), true);
-check("the compact notice says compact", adminNotice("compact", "dust").includes("compact"), true);
-check("the renew notice hands over the command", adminNotice("renew", "dust").includes(RENEW_COMMAND), true);
-check("the pending notice names the flag", pendingNotice("shutdown", "dust").includes(ADMIN_FLAGS.shutdown), true);
-check("the dispatch notice says the session is ending", renewDispatched("dust").includes("dispatching"), true);
+check("the compact notice says compact", adminNotice("compact", "lane16").includes("compact"), true);
+check("the renew notice hands over the command", adminNotice("renew", "lane16").includes(RENEW_COMMAND), true);
+check("the pending notice names the flag", pendingNotice("shutdown", "lane16").includes(ADMIN_FLAGS.shutdown), true);
+check("the dispatch notice says the session is ending", renewDispatched("lane16").includes("dispatching"), true);
 check("the failure half says nothing was renewed", renewDispatchFailed("boom").includes("nothing was renewed"), true);
 check("the failure half names the command it dispatches", renewDispatchFailed("boom").includes(RENEW_COMMAND), true);
 
@@ -447,7 +447,7 @@ check("index.ts asks the gate before acting", index.includes("adminVerdict("), t
 check("index.ts still answers delivery receipts", index.includes("isAck(msg)"), true);
 check("index.ts registers the renew command", index.includes(`pi.registerCommand("${RENEW_COMMAND.slice(1)}"`), true);
 // The renew handler is SLICED by its own braces and tested inside the slice, rather than grepped
-// with a distance-limited regex: Leg H added a hold block ahead of newSession(), which pushed the
+// with a distance-limited regex: the hold block landed ahead of newSession(), which pushed the
 // call past any sane window. A window that fails because code got safer is the wrong instrument —
 // membership in the handler's own text is the invariant, and it does not rot when the handler grows.
 const renewHandler = (index.match(/pi\.registerCommand\("renew",\s*\{[\s\S]*?\n  \}\);/) ?? [""])[0];
@@ -458,24 +458,24 @@ check("compact goes through ctx.compact", index.includes("compact("), true);
 // the recipient gate is only real if the running file hands it the field and obeys the silence flag
 check("index.ts passes the recipient field to the gate", index.includes("to: msg.to"), true);
 check("index.ts obeys the bystander silence flag", index.includes("if (v.speak)"), true);
-// Leg B: renew must go through the command path, and the retired ceiling must be gone for good
+// renew must go through the command path, and the retired ceiling must be gone for good
 check("index.ts dispatches its own renew command", index.includes(`pi.sendUserMessage(RENEW_COMMAND, { expandPromptTemplates: true })`), true);
 check("index.ts imports the command it dispatches", index.includes("RENEW_COMMAND,"), true);
 check("a failed dispatch is reported, not swallowed", index.includes("renewDispatchFailed("), true);
 check("the retired ceiling is gone from laneadmin.ts", readFileSync(join(SRC, "laneadmin.ts"), "utf8").includes("cannotSelfRenew"), false);
 check("the retired ceiling is gone from index.ts", index.includes("cannotSelfRenew"), false);
 check("the false claim about user-initiated renew is not re-shipped", index.includes("only to user-initiated commands"), false);
-// Leg C: the renew must re-arm the live context, or the next inbound line kills the seat (flash5, 2026-10-18)
+// the renew must re-arm the live context, or the next inbound line kills the seat
 check("the renew handler passes withSession", /newSession\(\s*\{[\s\S]{0,200}withSession:/.test(index), true);
 check("withSession re-arms the live-context handle", index.includes("currentCtx = next"), true);
 check("the bare newSession() that stranded the handle is gone", index.includes("ctx.newSession()"), false);
 check("stale-ctx is caught on the socket path, not fatal", index.includes("handleInbound(topic, payload)") && index.includes("inbound line dropped, handler threw"), true);
 check("the un-armed case speaks on stderr, never through a dead ctx", index.includes("withSession did not fire") && index.includes("console.error("), true);
 
-// --- LEG D: the wake half (a renewed seat is an ERASED seat and must be told where its handoff is) --
-check("wake with a handoff names the path", wakeDirective("/tabith/resume/RESUME-flash5-09349c.md").includes("/tabith/resume/RESUME-flash5-09349c.md"), true);
+// --- SECTION D: the wake half (a renewed seat is an ERASED seat and must be told where its handoff is) --
+check("wake with a handoff names the path", wakeDirective("/home/u/resume/RESUME-lane5-09349c.md").includes("/home/u/resume/RESUME-lane5-09349c.md"), true);
 check("wake with a handoff tells the seat to read it", wakeDirective("/p").includes("Read it"), true);
-check("wake does NOT authorise resuming work (owner no-self-start law s105)", wakeDirective("/p").includes("WAIT for a dispatch"), true);
+check("wake does NOT authorise resuming work (the no-self-start rule)", wakeDirective("/p").includes("WAIT for a dispatch"), true);
 check("wake with no handoff says there is none", wakeDirective(null).includes("NO RESUME file"), true);
 check("wake with no handoff still ends in HOLD", wakeDirective(null).includes("HOLD"), true);
 check("wake with no handoff forbids resuming from memory", wakeDirective(null).includes("from memory"), true);
@@ -486,8 +486,8 @@ check("a missing file (null bytes) is never a handoff", wakePathFor([{ path: "/a
 check("an empty candidate list is not a handoff", wakePathFor([], 200), null);
 check("order decides, durable dir first", wakePathFor([{ path: "/dur", bytes: 300 }, { path: "/scratch", bytes: 900 }], 200), "/dur");
 check("index.ts imports the wake ACT, not the strings", index.includes("wakeRenewedSeat,"), true);
-// RE-PAIRED by leg 420 ACT B, NOT deleted. The shipped cell counted exactly one occurrence of a
-// one-line expression; ACT B moved that expression into `resumeScan()` and the count went to 0, which
+// RE-PAIRED by a prior leg PART B, NOT deleted. The shipped cell counted exactly one occurrence of a
+// one-line expression; PART B moved that expression into `resumeScan()` and the count went to 0, which
 // read as "the sharing was lost". It was not — `wakePathFor(resumeCandidates(), RESUME_MIN_BYTES)` is
 // still the gate's fast path and still the wake pointer's bar. So this pins the CALL, and the cell
 // below pins that the new matcher was given the SAME floor rather than a second one invented beside it.
@@ -500,7 +500,7 @@ check("index.ts no longer hand-rolls the wake itself", index.includes("next.send
 check("and no raw followUp literal came back with it", index.includes('{ deliverAs: WAKE_DELIVER_AS }'), false);
 check("a failed wake injection speaks on stderr (the act, where it now lives)", readFileSync(join(SRC, "laneadmin.ts"), "utf8").includes("wake injection FAILED"), true);
 
-// --- LEG D2: the wake act EXECUTED against a fake replacement session (a behavior proof, not a grep)
+// --- the wake act EXECUTED against a fake replacement session (a behavior proof, not a grep)
 const LA = readFileSync(join(SRC, "laneadmin.ts"), "utf8");
 check("the act lives in the tested module, not only in the importer", LA.includes("export const wakeRenewedSeat"), true);
 // 959: this call line grew a third argument — `wakeLegNote(path)` — so the literal moved. It is
@@ -530,11 +530,11 @@ const runWake = async (cands, opts = {}) => {
   return { r, sent, notes, errs };
 };
 
-const w1 = await runWake([{ path: "/dur/RESUME-flash5-09349c.md", bytes: 500 }]);
+const w1 = await runWake([{ path: "/dur/RESUME-lane5-09349c.md", bytes: 500 }]);
 check("EXECUTED: with a handoff, exactly one line is delivered", w1.sent.length, 1);
-check("EXECUTED: that line carries the path", w1.sent[0].content.includes("/dur/RESUME-flash5-09349c.md"), true);
+check("EXECUTED: that line carries the path", w1.sent[0].content.includes("/dur/RESUME-lane5-09349c.md"), true);
 check("EXECUTED: delivered as the named class, not a steer", w1.sent[0].o.deliverAs, WAKE_DELIVER_AS);
-check("EXECUTED: the act reports the path back", w1.r, { sent: true, path: "/dur/RESUME-flash5-09349c.md" });
+check("EXECUTED: the act reports the path back", w1.r, { sent: true, path: "/dur/RESUME-lane5-09349c.md" });
 check("EXECUTED: and tells the operator on the terminal", w1.notes[0].t.includes("wake line sent"), true);
 
 const w2 = await runWake([{ path: "/dur/x.md", bytes: null }, { path: "/scratch/x.md", bytes: 3 }]);
@@ -553,7 +553,7 @@ check("EXECUTED: nothing was notified as success after a failure", w3.notes.leng
 const w4 = await runWake([{ path: "/dur/x.md", bytes: 500 }], { sendThrows: true, stackEnvOn: true });
 check("EXECUTED: the opt-in really does add the trace", w4.errs.some((e) => e.includes("at ")), true);
 
-// --- THE HARNESS-ARTIFACT HALF (owner report on flash5's renew: node stack frames as lane text) --
+// --- THE HARNESS-ARTIFACT HALF (a report from a renew: node stack frames as lane text) ---------
 check("a named error prints name and message", errOneLine(new TypeError("ctx is not active")), "TypeError: ctx is not active");
 check("a message with embedded newlines stays ONE line", errOneLine(new Error("line one\nline two")), "Error: line one line two");
 check("an empty message still names the error", errOneLine(new RangeError("")), "RangeError");
@@ -567,29 +567,29 @@ check("the inbound belt no longer interpolates e.stack into its one-line notice"
 check("the inbound belt prints only the one-line form", index.includes("${errOneLine(e)} (topic ${topic})"), true);
 check("a full trace is opt-in, never the default", index.includes('process.env.TABICHAT_ERR_STACK === "1"'), true);
 
-// --- LEG H: the lead hold, and the lead's own wake line (a lead that renews silently loses verdicts) --
-check("a lead seat renewing itself must hold the room", shouldHoldBeforeRenew("wren", "wren"), true);
-check("a worker seat renewing must NOT publish to @all", shouldHoldBeforeRenew("flash5", "wren"), false);
-check("an empty self is never a lead", shouldHoldBeforeRenew("", "wren"), false);
-check("an empty lead nick holds nothing (no accidental @all when LEAD_NICK is unset)", shouldHoldBeforeRenew("wren", ""), false);
-check("surrounding spaces do not defeat the match", shouldHoldBeforeRenew(" wren ", "wren"), true);
-check("a different nick that merely contains the lead's does not match", shouldHoldBeforeRenew("wren2", "wren"), false);
-check("the hold names who is going away", leadHoldLine("wren").includes("wren refreshing"), true);
-check("the hold states the restore condition, not a time", leadHoldLine("wren").includes("until the restore line lands"), true);
-check("the hold says work does NOT stop (it is not a stall order)", leadHoldLine("wren").includes("Work does NOT stop"), true);
-const lw = wakeDirective("/r/RESUME-wren-abcd.md", "wren");
+// --- SECTION H: the lead hold, and the lead's own wake line (a lead that renews silently loses verdicts) --
+check("a lead seat renewing itself must hold the room", shouldHoldBeforeRenew("lane11", "lane11"), true);
+check("a worker seat renewing must NOT publish to @all", shouldHoldBeforeRenew("lane5", "lane11"), false);
+check("an empty self is never a lead", shouldHoldBeforeRenew("", "lane11"), false);
+check("an empty lead nick holds nothing (no accidental @all when LEAD_NICK is unset)", shouldHoldBeforeRenew("lane11", ""), false);
+check("surrounding spaces do not defeat the match", shouldHoldBeforeRenew(" lane11 ", "lane11"), true);
+check("a different nick that merely contains the lead's does not match", shouldHoldBeforeRenew("lane11z", "lane11"), false);
+check("the hold names who is going away", leadHoldLine("lane11").includes("lane11 refreshing"), true);
+check("the hold states the restore condition, not a time", leadHoldLine("lane11").includes("until the restore line lands"), true);
+check("the hold says work does NOT stop (it is not a stall order)", leadHoldLine("lane11").includes("Work does NOT stop"), true);
+const lw = wakeDirective("/r/RESUME-lane11-abcd.md", "lane11");
 check("lead wake line tells it to publish the restore line", lw.includes("FIRST ACT: publish the restore line"), true);
-check("lead wake line quotes the restore wording lanes are trained on", lw.includes("lead seat restored — comms with wren open again"), true);
-check("lead wake line still names the handoff", lw.includes("/r/RESUME-wren-abcd.md"), true);
+check("lead wake line quotes the restore wording lanes are trained on", lw.includes("lead seat restored — comms with lane11 open again"), true);
+check("lead wake line still names the handoff", lw.includes("/r/RESUME-lane11-abcd.md"), true);
 check("lead wake line orders the re-ship duty explicitly", lw.includes("re-ship every dispatch that has an ack and no report"), true);
-const lwn = wakeDirective(null, "wren");
+const lwn = wakeDirective(null, "lane11");
 check("lead with NO handoff: restore first, then admit it woke blank", lwn.includes("FIRST ACT: publish the restore line") && lwn.includes("NO handoff"), true);
 check("lead with no handoff is told not to self-assign", lwn.includes("Do not pick your own next task"), true);
 check("a LANE wake line does NOT tell it to broadcast to the room", wakeDirective("/p", "").includes("restore line"), false);
 check("lane wake line is unchanged for workers (no @all noise)", wakeDirective("/p", "").includes("renewed, holding"), true);
-const w5 = await runWake([{ path: "/dur/RESUME-wren-123456.md", bytes: 500 }], { leadNick: "wren" });
+const w5 = await runWake([{ path: "/dur/RESUME-lane11-123456.md", bytes: 500 }], { leadNick: "lane11" });
 check("EXECUTED as lead: delivered line is the lead form", w5.sent[0].content.includes("FIRST ACT: publish the restore line"), true);
-check("EXECUTED as lead: handoff path present", w5.sent[0].content.includes("RESUME-wren-123456.md"), true);
+check("EXECUTED as lead: handoff path present", w5.sent[0].content.includes("RESUME-lane11-123456.md"), true);
 const w6 = await runWake([{ path: "/dur/x.md", bytes: 500 }], {});
 check("EXECUTED as worker: line is the lane form", w6.sent[0].content.includes("renewed, holding"), true);
 check("EXECUTED as worker: line carries no restore instruction", w6.sent[0].content.includes("restore"), false);
@@ -601,7 +601,7 @@ check("the hold goes out steered and room-wide", index.includes('to: "all", stee
 check("the hold publish failure is LOUD and does not block the renew", index.includes("lead hold NOT published") && index.includes("the renew proceeds"), true);
 check("the lead's nick is threaded into the wake act", index.includes('leadNick: shouldHoldBeforeRenew(nick, LEAD_NICK) ? nick : ""'), true);
 
-// --- LEG E: site-wide auto-renew (a seat may renew ITSELF; the policy is set once for the venue) --
+// --- SECTION E: site-wide auto-renew (a seat may renew ITSELF; the policy is set once for the venue) --
 check("bool slot: true word", parseBoolSlot("true"), true);
 check("bool slot: 1 / on / yes all mean on", ["1", "on", "yes"].map((v) => parseBoolSlot(v)), [true, true, true]);
 check("bool slot: 0 / off / no all mean off", ["0", "off", "no"].map((v) => parseBoolSlot(v)), [false, false, false]);
@@ -618,7 +618,7 @@ check("flag OFF beats env ON and site ON", resolveAutoRenew({ flag: false, env: 
 check("an explicit --no-auto-renew is an ANSWER, not an absence", resolveAutoRenew({ flag: false, env: undefined, site: undefined }), false);
 check("env ON beats site OFF", resolveAutoRenew({ flag: undefined, env: "1", site: false }), true);
 check("site ON is the venue-wide yes with no per-seat flag at all", resolveAutoRenew({ flag: undefined, env: undefined, site: true }), true);
-check("nothing set = ON by owner order 2026-10-24", resolveAutoRenew({}), true);
+check("nothing set = ON by default", resolveAutoRenew({}), true);
 check("garbage at every layer falls through to the ON default", resolveAutoRenew({ flag: "", env: "maybe", site: "oen" }), true);
 check("the flag layer names itself", resolveAutoRenewLayered({ flag: true, env: "1", site: true }).source, `pi flag --${AUTO_RENEW_FLAG}`);
 check("the env layer names itself", resolveAutoRenewLayered({ env: "1", site: true }).source, `${AUTO_RENEW_ENV} env`);
@@ -651,11 +651,11 @@ check("the loop refusal names the cap", autoRenewVerdict({ ...AR_BASE, renewedTh
 check("no context reading yet = refuse", autoRenewVerdict({ ...AR_BASE, percent: null }).ok, false);
 check("a non-finite reading = refuse, not a NaN renew", autoRenewVerdict({ ...AR_BASE, percent: Number.NaN }).ok, false);
 check("the cap is checked before the handoff (a renewed seat is never blocked on its own file)", autoRenewVerdict({ ...AR_BASE, renewedThisBoot: true, resumeWritten: false }).reason.includes("once this boot"), true);
-// SOURCE SHAPE for Leg E: the policy must be read where pi can actually see flags, and the act must
+// SOURCE SHAPE for the policy half: the policy must be read where pi can actually see flags, and the act must
 // reuse the remote path rather than fork a second one.
 check("index.ts registers the auto-renew flag", index.includes(`pi.registerFlag("${AUTO_RENEW_FLAG}"`), true);
 check(
-  // MOVED at s138d (site-agnostic): index.ts no longer computes the site path itself. The whole
+  // MOVED for site-agnosticism: index.ts no longer computes the site path itself. The whole
   // point of that leg is that the location is computed in ONE function, so the cell now pins the
   // CALL — and the companion cell below proves the env read still happens, one file over, rather
   // than having quietly disappeared. (A site path nobody reads is a dead file, which is the failure
@@ -669,13 +669,13 @@ check("the site file is parsed by the tested parser", index.includes("parseSiteC
 check("layers are resolved at session_start, not in the factory", /pi\.on\("session_start"[\s\S]{0,2500}resolveAutoRenewLayered\(\{/.test(index), true);
 check("a site file that will not parse is LOUD at session_start", index.includes("was NOT read") && index.includes("siteConfigNote"), true);
 check("the resolved policy is stated with its layer", index.includes("auto-renew ON for this seat (from ${autoRenewSource})"), true);
-// MEASURED 2026-10-18 in the scratch-lane test: an "info" notify is transient in pi's TUI, so the
+// MEASURED in the scratch-lane test: an "info" notify is transient in pi's TUI, so the
 // policy line the seat prints at start was GONE before anyone read it, while the warning-level ctx
 // advisory beside it survived. A setting that decides whether a seat destroys its own session has to
 // be readable after the fact — hence both a persistent status entry and a warning-level notify.
 check("and it really passes warning (source-shape)", /auto-renew ON for this seat[\s\S]{0,500}"warning"/.test(index), true);
 check("and it sets a persistent footer status", index.includes('ctx.ui.setStatus("nick-tabichat", "\u{1F344} tabichat")'), true);
-// O224 — THE FOOTER ORDER IS A BEHAVIOR, NOT A COMMENT. pi sorts the status line by KEY with
+// BADGE — THE FOOTER ORDER IS A BEHAVIOR, NOT A COMMENT. pi sorts the status line by KEY with
 // `a.localeCompare(b)` and prints only the text, so the only honest proof of "the mushroom sits next to
 // the nick" is to run pi's own comparator over the key set pi will actually receive. The tabichat keys
 // are NOT typed here: every literal `setStatus("<key>"` is read out of `index.ts` and the constant key is
@@ -696,12 +696,12 @@ check("and it sets a persistent footer status", index.includes('ctx.ui.setStatus
   const sorted = [...keys].sort((a, b) => a.localeCompare(b));
   const i = sorted.indexOf("nick-tabichat");
   check(
-    "O224: pi's own comparator puts the mushroom immediately after the nick badge",
+    "BADGE: pi's own comparator puts the mushroom immediately after the nick badge",
     i > 0 && sorted[i - 1] === "nick" && sorted[i + 1] === "ponytail",
     true,
   );
   check(
-    "O224 NEGATIVE (the seed): the SAME predicate with the old key `renew` FAILS — so the check can bite",
+    "BADGE NEGATIVE (the seed): the SAME predicate with the old key `renew` FAILS — so the check can bite",
     (() => {
       const old = [...new Set([...keyLits.filter((k) => k !== "nick-tabichat"), "renew", holdKey, "ponytail"])]
         .sort((a, b) => a.localeCompare(b));
@@ -711,9 +711,9 @@ check("and it sets a persistent footer status", index.includes('ctx.ui.setStatus
     true,
   );
   check(
-    "O224: the key set this cell sorted is the real one, read from source (not typed by hand)",
-    // FLOOR MOVED 8 -> 7 AND THE CELL GOT STRONGER, both by owner order 2026-10-24, stated here because a
-    // widened bound is the exact shape this house forbids quiet weakening with. The owner removed TWO footer
+    "BADGE: the key set this cell sorted is the real one, read from source (not typed by hand)",
+    // FLOOR MOVED 8 -> 7 AND THE CELL GOT STRONGER, both stated here because a
+    // widened bound is the exact shape this house forbids quiet weakening with. TWO footer
     // entries today (`ctx`, then `resume`), so the set this cell reads out of source legitimately shrank by two.
     // The count floor was never the point — the membership checks are — so instead of just lowering it, the cell
     // now also pins that the two removed keys STAY removed: a seat that re-adds either one silently shifts the
@@ -724,22 +724,22 @@ check("and it sets a persistent footer status", index.includes('ctx.ui.setStatus
     true,
   );
   check(
-    "O224: the ctx entry the owner deleted is ABSENT from the shipped bytes",
+    "BADGE: the deleted ctx status entry is ABSENT from the shipped bytes",
     indexCode.includes('setStatus("ctx"'),
     false,
   );
   check(
-    "O224: the RESUME entry the owner deleted is ABSENT from the shipped bytes",
+    "BADGE: the deleted RESUME status entry is ABSENT from the shipped bytes",
     indexCode.includes('setStatus("resume"'),
     false,
   );
   check(
-    "O224: the old key is GONE from the shipped bytes — a half-moved badge would still sort wrong",
+    "BADGE: the old key is GONE from the shipped bytes — a half-moved badge would still sort wrong",
     indexCode.includes('setStatus("renew"'),
     false,
   );
 }
-// RE-PAIRED 2026-10-23 (leg 425), NOT weakened: the cell above used to assert `"auto-renew ON"` and now
+// RE-PAIRED, NOT weakened: the cell above used to assert `"auto-renew ON"` and now
 // asserts the shipped mushroom string, so a rename back to the old text fails the suite just as a
 // deletion of the status line always did. Written with a \u{1F344} escape rather than a literal glyph for
 // ONE honest reason: the escape is unambiguous in a diff and cannot be silently mangled by an editor or a
@@ -753,19 +753,19 @@ check("and it sets a persistent footer status", index.includes('ctx.ui.setStatus
 // glyph, so the raw read returned 3 and called correct bytes wrong — the same prose-versus-code trap this
 // fleet has now hit three times (lane_admin negative cell, the durable-default check, and here).
 check("and the status line is the ONLY place the mushroom ships", (indexCode.match(/\u{1F344} tabichat/gu) || []).length, 1);
-check("and the notify KEEPS its provenance words (status-only, owner's 'both' answer still owed)",
+check("and the notify KEEPS its provenance words (status-only, the 'both' answer is still owed)",
   index.includes("auto-renew ON for this seat (from ${autoRenewSource})") && index.includes('ctx.ui.setStatus("nick-tabichat", "\u{1F344} tabichat")'), true);
 check("OFF prints nothing (no fleet-wide 'auto-renew off' noise)", /if \(autoRenewArmed\) \{[\s\S]{0,600}"warning",\n\s*\);\n\s*\}/.test(index), true);
 check("self-renew travels the SAME runAdmin as a remote renew", index.includes('runAdmin("renew", "auto-renew", ctx)'), true);
 check("the process-scoped auto-renew cap is set BEFORE the dispatch, not after", /AUTO_RENEWED\.add\(nick\);[\s\S]{0,900}runAdmin\("renew"/.test(index), true);
 check("and the handler stops after renewing (no work behind a dying session)", /runAdmin\("renew", "auto-renew", ctx\);\s*\n\s*return;/.test(index), true);
 check("the floor is the forced-handoff number, not a new constant invented here", index.includes("floorPct: CTX_FORCE"), true);
-// the needle is the call as it is written in index.ts; leg 652 added the warn percent to it, so the
+// the needle is the call as it is written in index.ts; a prior leg added the warn percent to it, so the
 // text moved with it. The assertion is the ORDERING, and it still asserts exactly that.
 check("the verdict runs before the advisory early-return", index.indexOf("autoRenewVerdict({") < index.indexOf('const absDue = absoluteSessionDue(s, CTX_TOKENS, lastCtxWarnTokens, CTX_WARN);\n    if (!pctDue && !absDue) return;', 100), true);
 
 // --- tabichat#3: ONE renew, ONE session — the fork guard, both truth-table halves ---------
-// The runtime proof is the two-seat reproduction (s146): with the old bytes ONE publish of ONE
+// The runtime proof is the two-seat reproduction: with the old bytes ONE publish of ONE
 // request id reached the lane's handler TWICE — the driver stderr shows `inbound line dropped,
 // handler threw ... (topic chat/tlstest/_ctl)` beside the single accepted verdict — because the
 // seat subscribed to `_ctl` AND `_ctl/#` and mosquitto delivers one copy per matching subscription
@@ -797,13 +797,13 @@ check("the auto-renew cap reads the PROCESS store, not a per-factory `let`", !in
 
 // --- tabichat#2 blocker 1: the control tool must speak the transport the fleet actually runs ------
 // THE DEFECT: `lane_admin.mjs` called `mqtt.connect(broker.url)` with NO options. The fleet moved to
-// `mqtts://` on 2026-10-19, so every remote renew / compact / shutdown died at the broker BEFORE any
-// lane judged it. The s142 note named this; it was re-measured on this leg at `68e4973` against the
+// `mqtts://` on so every remote renew / compact / shutdown died at the broker BEFORE any
+// lane judged it. This was named before; it was re-measured on this leg at `68e4973` against the
 // throwaway fixture broker: rc 4, "broker error: self signed certificate in certificate chain", with
 // the TLS env exported and NEVER READ, because the file had no TLS code path to read it in. So #2's
 // "can be renewed by a peer" half was UNREACHABLE, not merely unproven.
 // THE FIX, held as a WIRING and not a fourth variant: the tool calls the SAME pure decision the lanes
-// run. The runtime proof for both halves was taken on the fixture in this leg (report §FIX): pre-fix
+// run. The runtime proof for both halves was taken on the fixture in this leg: pre-fix
 // bytes rc 4, handshake refused, nothing published; post-fix bytes rc 3 "NOTHING", which means it
 // CONNECTED, published, then told the truth about nobody answering. The greps below are SOURCE-SHAPE
 // and say so — they keep the shape after this leg; they are not the proof.
@@ -832,37 +832,37 @@ check("POSITIVE CONTROL: the same call yields tls once a readable CA is pinned",
 // would require that hand-typed lift to quote an id its author never saw. Both shipped texts already
 // carry a `ts` from the one clock this box runs, so stamp is the only handle both publishers actually
 // have. THE CHANNEL IS `comms:<target>` — the subject of the order, never its author — which is what
-// lets a hold from `wren` and a lift from `owner` order against each other. A same-sender guard would
+// lets a hold from `lane11` and a lift from `owner` order against each other. A same-sender guard would
 // have caught neither specimen on this row.
-const HOLD_WREN = { nick: "wren", message: leadHoldLine("wren") };
-const LIFT_WREN = {
+const HOLD_LEAD = { nick: "lane11", message: leadHoldLine("lane11") };
+const LIFT_LEAD = {
   nick: "owner",
-  message: "lead seat restored (s264) — comms with wren open again. Reports owed: 404, 406.",
+  message: "lead seat restored — comms with lane11 open again. Reports owed: 12, 13.",
 };
-check("a lead hold IS a control order, on the comms channel of the seat being held", controlChannelOf(HOLD_WREN),
-  { channel: "comms:wren", held: true, target: "wren" });
-check("a restore line IS a control order, and opens the SAME channel", controlChannelOf(LIFT_WREN),
-  { channel: "comms:wren", held: false, target: "wren" });
+check("a lead hold IS a control order, on the comms channel of the seat being held", controlChannelOf(HOLD_LEAD),
+  { channel: "comms:lane11", held: true, target: "lane11" });
+check("a restore line IS a control order, and opens the SAME channel", controlChannelOf(LIFT_LEAD),
+  { channel: "comms:lane11", held: false, target: "lane11" });
 // NEGATIVE HALVES. Anything that could become a control order by accident would supersede real orders,
 // so these are the load-bearing cells, not decoration.
-check("NEGATIVE: a lane merely TALKING about comms is not a control order", controlChannelOf({ nick: "flash6", message: "my comms with the lead are fine, no hold here" }), null);
-check("NEGATIVE: an ordinary dispatch line is not a control order", controlChannelOf({ nick: "wren", message: "@flash6 wren dispatch → flash6 (leg 406). Read the spec." }), null);
-check("NEGATIVE: a HOLD naming a different seat is a different channel — one bar cannot silence another", controlChannelOf({ nick: "wren", message: leadHoldLine("librarian") })!.channel, "comms:librarian");
-check("NEGATIVE: a line about the fleet as a whole names no seat, so it is not a comms order", controlChannelOf({ nick: "wren", message: "hold all work please, the box is rebooting" }), null);
-check("channel keys are case-folded — 'WREN' and 'wren' are one bar, not two ledgers", controlChannelOf({ nick: "wren", message: "hold all comms to WREN until the restore line lands" })!.channel, "comms:wren");
+check("NEGATIVE: a lane merely TALKING about comms is not a control order", controlChannelOf({ nick: "lane6", message: "my comms with the lead are fine, no hold here" }), null);
+check("NEGATIVE: an ordinary dispatch line is not a control order", controlChannelOf({ nick: "lane11", message: "@lane6 lane11 dispatch → lane6 (leg 406). Read the spec." }), null);
+check("NEGATIVE: a HOLD naming a different seat is a different channel — one bar cannot silence another", controlChannelOf({ nick: "lane11", message: leadHoldLine("lane15") })!.channel, "comms:lane15");
+check("NEGATIVE: a line about the fleet as a whole names no seat, so it is not a comms order", controlChannelOf({ nick: "lane11", message: "hold all work please, the box is rebooting" }), null);
+check("channel keys are case-folded — 'LANE11' and 'lane11' are one bar, not two ledgers", controlChannelOf({ nick: "lane11", message: "hold all comms to LANE11 until the restore line lands" })!.channel, "comms:lane11");
 
 // The ordering itself, both halves. `strictly older` is the bar: a tie never retires an order.
 const LED_BY_LIFT = { ts: 2_000, id: "owner-1-abc", nick: "owner", held: false };
 check("a NEWER line on a channel with nothing recorded yet is current", ctlAdmit(undefined, { ts: 1_000, id: "x" }), { kind: "current" });
 check("POSITIVE: a line newer than the recorded order is current", ctlAdmit(LED_BY_LIFT, { ts: 3_000, id: "y" }), { kind: "current" });
 check("and EQUAL stamps are current too — a tie must not silently retire an order", ctlAdmit(LED_BY_LIFT, { ts: 2_000, id: "y" }), { kind: "current" });
-check("NEGATIVE (the row's whole point): a line STRICTLY OLDER than the newest obeyed order is SUPERSEDED", ctlAdmit(LED_BY_LIFT, { ts: 1_500, id: "wren-36-old" }).kind, "superseded");
+check("NEGATIVE (the row's whole point): a line STRICTLY OLDER than the newest obeyed order is SUPERSEDED", ctlAdmit(LED_BY_LIFT, { ts: 1_500, id: "lane11-36-old" }).kind, "superseded");
 check("and the superseded verdict names WHAT beat it, so the lane can say why", (ctlAdmit(LED_BY_LIFT, { ts: 1_500, id: "z" }) as { by?: CtlEntry }).by!.nick, "owner");
-check("the label carries the winner's stamp and id, not just the word", /2\d{3}|1970/.test(supersededHeader("comms:wren", LED_BY_LIFT)) && supersededHeader("comms:wren", LED_BY_LIFT).includes("owner-1-abc"), true);
-check("the label says LABELLED NOT DROPPED, and never claims the line is gone", supersededHeader("comms:wren", LED_BY_LIFT).includes("do not act on it"), true);
+check("the label carries the winner's stamp and id, not just the word", /2\d{3}|1970/.test(supersededHeader("comms:lane11", LED_BY_LIFT)) && supersededHeader("comms:lane11", LED_BY_LIFT).includes("owner-1-abc"), true);
+check("the label says LABELLED NOT DROPPED, and never claims the line is gone", supersededHeader("comms:lane11", LED_BY_LIFT).includes("do not act on it"), true);
 
 // THE REPLAY TEST that would have caught a fooled receiver (row AC3), run as the wire delivered it:
-// hold at 08:37, lift at 08:58, and THEN the hold arrives again, hours late, from a different session.
+// hold first, lift second, and THEN the hold arrives again, hours late, from a different session.
 {
   const ledger = new Map<string, CtlEntry>();
   const apply = (line: { nick: string; message: string }, ts: number, id: string): string => {
@@ -872,15 +872,15 @@ check("the label says LABELLED NOT DROPPED, and never claims the line is gone", 
     ledger.set(c.channel, { ts, id, nick: line.nick, held: c.held });
     return "current";
   };
-  check("replay setup: the HOLD lands first and is obeyed", apply(HOLD_WREN, 1_000, "wren-36-hold"), "current");
-  check("then the LIFT lands from a DIFFERENT nick and is obeyed", apply(LIFT_WREN, 2_000, "owner-1-lift"), "current");
-  // This is the case a same-sender guard misses outright: the replayed hold is from `wren`, whose own
+  check("replay setup: the HOLD lands first and is obeyed", apply(HOLD_LEAD, 1_000, "lane11-36-hold"), "current");
+  check("then the LIFT lands from a DIFFERENT nick and is obeyed", apply(LIFT_LEAD, 2_000, "owner-1-lift"), "current");
+  // This is the case a same-sender guard misses outright: the replayed hold is from `lane11`, whose own
   // last recorded line would be… nothing, because the ledger's last writer on this channel was
   // `owner`. Keyed by SUBJECT, the late hold is recognised as retired.
-  check("AC3 NEGATIVE: the hold replayed HOURS LATE is refused as superseded, not obeyed", apply(HOLD_WREN, 1_000, "wren-36-hold"), "superseded");
-  check("AC3: and the late replay does NOT rewrite the ledger — the lift still stands", (ledger.get("comms:wren")!.id), "owner-1-lift");
-  check("AC3: a re-delivery of the LIFT is also superseded-by-itself-safe (equal stamp = current, idempotent)", apply(LIFT_WREN, 2_000, "owner-1-lift"), "current");
-  check("AC3: a genuinely NEW hold after the lift is obeyed — the guard is ordering, not a veto on holds", apply(HOLD_WREN, 5_000, "wren-1-hold2"), "current");
+  check("AC3 NEGATIVE: the hold replayed HOURS LATE is refused as superseded, not obeyed", apply(HOLD_LEAD, 1_000, "lane11-36-hold"), "superseded");
+  check("AC3: and the late replay does NOT rewrite the ledger — the lift still stands", (ledger.get("comms:lane11")!.id), "owner-1-lift");
+  check("AC3: a re-delivery of the LIFT is also superseded-by-itself-safe (equal stamp = current, idempotent)", apply(LIFT_LEAD, 2_000, "owner-1-lift"), "current");
+  check("AC3: a genuinely NEW hold after the lift is obeyed — the guard is ordering, not a veto on holds", apply(HOLD_LEAD, 5_000, "lane11-1-hold2"), "current");
 }
 check("AC4: the ledger is keyed on globalThis, so a renewed session in this process still has the answer",
   String(CTL_LEDGER_KEY.description), "tabichat.ctlLedger");
@@ -924,7 +924,7 @@ check("NEGATIVE: undefined and non-Errors do not crash the classifier", [isStale
   [false, false, true, true, false, false]);
 
 // parkInbound truth table — all four corners of (stale, handedOff).
-const P0 = { topic: "chat/tabith", payload: "{\"a\":1}", nick: "flash6", ts: 1 };
+const P0 = { topic: "chat/tabith", payload: "{\"a\":1}", nick: "lane6", ts: 1 };
 check("stale + not handed off -> parked", parkInbound([], P0, false, true).parked, true);
 check("handed off -> NOT parked (a replay of an owned line is a duplicate delivery)", parkInbound([], P0, true, true).parked, false);
 check("not stale -> NOT parked (the belt must not launder handler bugs)", parkInbound([], P0, false, false).parked, false);
@@ -980,7 +980,7 @@ check("#20 NEGATIVE: an unhook that throws on one event does not stop the other 
 })(), [3, 2]);
 check("#20 the handle key is a named process symbol, the house pattern for a cross-session store", typeof MQTT_CLIENT_KEY, "symbol");
 
-// STALLED CLOSE (leg 890's renewal, measured): a graceful close at shutdown leaves `disconnecting` set, and
+// STALLED CLOSE (a prior leg's renewal, measured): a graceful close at shutdown leaves `disconnecting` set, and
 // `end(true)` returns early on exactly that flag (mqtt client.js:818-820), so the force never reaches
 // `_cleanUp(forced)` and the transport stays open. The client is unhooked and hears nothing — which is why
 // the duplication is gone — but it still holds a descriptor and a broker session. The cells below name the
@@ -1245,38 +1245,38 @@ check("#20 wiring: a failed close is LOUD, not a silent shrug", /\[tabichat\]\[c
 // the gate reported green on a red run. Measured on this leg: two real FAILs, rc=0. The verdict now
 // lives at the foot of this file; do not move it back up.
 
-// --- tabichat §5 item 1 ACT B — the handoff bar is nick + FRESHNESS, not nick + boot tag ----------
+// --- tabichat PART B — the handoff bar is nick + FRESHNESS, not nick + boot tag ----------
 // THE RED PROOF, taken on this leg before the matcher existed and quoted in the report: a well-formed
-// 156-byte handoff sat at RESUME-flash9-OLDTAG.md while the seat's BOOT was NEWTAG, and the shipped
-// predicate answered `false` to it. The boot tag changes across EVERY renew (s136 measured
+// 156-byte handoff sat at RESUME-lane9-OLDTAG.md while the seat's BOOT was NEWTAG, and the shipped
+// predicate answered `false` to it. The boot tag changes across EVERY renew (measured:
 // …-01081a -> …-059820), so the old rule meant a renewed seat's NEXT renew is refused forever — the
-// second false-negative generator, and the reason the owner ordered ACT A to run before this half.
+// second false-negative generator, and the reason PART A runs before this half.
 // pickResumeHandoff is PURE (no fs, no clock), so all of this runs headless and cannot touch a real
 // RESUME dir. `started` below stands for the process's own start.
 const F = (name: string, bytes = 400, mtimeMs = 2_000): ResumeFileStat => ({ name, bytes, mtimeMs });
 const S = 1_000;
 check("ADMISSION (the false negative being cleared): a FRESH file with an OLD boot tag now ADMITS",
-  pickResumeHandoff([F("RESUME-flash9-OLDTAG.md")], "flash9", S).ok, true);
+  pickResumeHandoff([F("RESUME-lane9-OLDTAG.md")], "lane9", S).ok, true);
 check("and it is the same file the old rule refused — named, not silently accepted",
-  pickResumeHandoff([F("RESUME-flash9-OLDTAG.md")], "flash9", S).picked, "RESUME-flash9-OLDTAG.md");
+  pickResumeHandoff([F("RESUME-lane9-OLDTAG.md")], "lane9", S).picked, "RESUME-lane9-OLDTAG.md");
 check("NEGATIVE (the paired bar): an OLD-mtime file still REFUSES, and says it is stale",
-  pickResumeHandoff([F("RESUME-flash9-OLDTAG.md", 400, 500)], "flash9", S).ok, false);
+  pickResumeHandoff([F("RESUME-lane9-OLDTAG.md", 400, 500)], "lane9", S).ok, false);
 check("and the refusal names the reason rather than echoing 'no file'",
-  /STALE/.test(pickResumeHandoff([F("RESUME-flash9-OLDTAG.md", 400, 500)], "flash9", S).reason), true);
+  /STALE/.test(pickResumeHandoff([F("RESUME-lane9-OLDTAG.md", 400, 500)], "lane9", S).reason), true);
 check("NEGATIVE: a file at exactly the start instant is not 'newer than' it — the bar is strict",
-  pickResumeHandoff([F("RESUME-flash9-X.md", 400, S)], "flash9", S).ok, false);
+  pickResumeHandoff([F("RESUME-lane9-X.md", 400, S)], "lane9", S).ok, false);
 check("NEGATIVE: a stub under the floor still refuses, even when it is fresh — two mechanisms, two bars",
-  pickResumeHandoff([F("RESUME-flash9-FRESH.md", 199)], "flash9", S).ok, false);
+  pickResumeHandoff([F("RESUME-lane9-FRESH.md", 199)], "lane9", S).ok, false);
 check("and the stub refusal quotes the byte count and the floor, so it is not guessed at",
-  /199 bytes/.test(pickResumeHandoff([F("RESUME-flash9-FRESH.md", 199)], "flash9", S).reason) && /200-byte floor/.test(pickResumeHandoff([F("RESUME-flash9-FRESH.md", 199)], "flash9", S).reason), true);
+  /199 bytes/.test(pickResumeHandoff([F("RESUME-lane9-FRESH.md", 199)], "lane9", S).reason) && /200-byte floor/.test(pickResumeHandoff([F("RESUME-lane9-FRESH.md", 199)], "lane9", S).reason), true);
 check("NEGATIVE: another lane's handoff is never this lane's, by nick",
-  pickResumeHandoff([F("RESUME-flash8-OLDTAG.md")], "flash9", S).ok, false);
-check("NEGATIVE: the nick match is anchored — flash99's file is not flash9's",
-  pickResumeHandoff([F("RESUME-flash99-A.md")], "flash9", S).scanned, 0);
+  pickResumeHandoff([F("RESUME-lane8-OLDTAG.md")], "lane9", S).ok, false);
+check("NEGATIVE: the nick match is anchored — lane99's file is not lane9's",
+  pickResumeHandoff([F("RESUME-lane99-A.md")], "lane9", S).scanned, 0);
 check("NEGATIVE: a prefix-lookalike name that is not the pattern is skipped",
-  pickResumeHandoff([F("RESUME-flash9-x.txt"), F("resume-flash9-x.md"), F("NOTES-flash9-x.md")], "flash9", S).scanned, 0);
+  pickResumeHandoff([F("RESUME-lane9-x.txt"), F("resume-lane9-x.md"), F("NOTES-lane9-x.md")], "lane9", S).scanned, 0);
 check("no files at all says 'no file', not 'stale' — the two refusals stay distinguishable",
-  /no RESUME-<nick>-\*\.md file/.test(pickResumeHandoff([], "flash9", S).reason), true);
+  /no RESUME-<nick>-\*\.md file/.test(pickResumeHandoff([], "lane9", S).reason), true);
 
 // ORDERING IS CORRECTNESS: 88 RESUME files on this box, several may be this nick's.
 check("newest mtime wins among several of my own files",
@@ -1299,29 +1299,29 @@ check("not truncated when under the bound",
 
 // THE WIRING, labelled as source-shape (it is a grep and says so — the decision above is the runtime proof).
 // `cw_probe` above is the single ctxwarn read.
-check("ACT B wired: the bar calls the matcher, not the size-only probe",
+check("PART B wired: the bar calls the matcher, not the size-only probe",
   /const handoffOnDisk = \(\): boolean => resumeScan\(\)\.ok;/.test(indexCode), true);
 // The fast path IS the shared-bar call now, so this pins THAT rather than the hand-rolled `.find()`
 // my first draft wrote. Written as a code shape, not prose: it fails if the fast path is removed.
-check("ACT B wired: the exact boot-tag path is kept as the FAST path, so nothing that works today breaks",
+check("PART B wired: the exact boot-tag path is kept as the FAST path, so nothing that works today breaks",
   /const hit = wakePathFor\(resumeCandidates\(\), RESUME_MIN_BYTES\);\s*\n\s*if \(hit !== null\) return \{ ok: true/.test(indexCode), true);
-check("ACT B wired: the freshness floor is BOOT_AT_MS, a const, never the session-refreshed startedAt",
+check("PART B wired: the freshness floor is BOOT_AT_MS, a const, never the session-refreshed startedAt",
   /pickResumeHandoff\(files, nick, BOOT_AT_MS\)/.test(indexCode) && !/pickResumeHandoff\([^)]*startedAt/.test(indexCode), true);
-check("ACT B wired: BOOT_AT_MS is a const so a renew cannot move the floor forwards",
+check("PART B wired: BOOT_AT_MS is a const so a renew cannot move the floor forwards",
   /^\s*const BOOT_AT_MS = Date\.now\(\);/m.test(indexCode) && !/\n\s*let BOOT_AT_MS =/.test(indexCode), true);
-check("ACT B: the size floor was NOT retired alongside the matching change — both bars still exist",
+check("PART B: the size floor was NOT retired alongside the matching change — both bars still exist",
   cw_probe.includes("export const RESUME_MIN_BYTES = 200;") && /bytes < minBytes/.test(cw_probe), true);
-check("ACT B: and resumeWritten still exists for the tool-block gate (not quietly deleted to make the run green)",
+check("PART B: and resumeWritten still exists for the tool-block gate (not quietly deleted to make the run green)",
   cw_probe.includes("export const resumeWritten =") && indexCode.includes("resumeWritten(exists,"), true);
 
-// --- the `_ctl` precedence trap, pinned AS A TEST (leg 406's lesson, per this leg's spec) ----------
-// At leg 405 this seat learned that `resolveBrokerFromDisk` ranks the SITE FILE above MQTT_URL, so
+// --- the `_ctl` precedence trap, pinned AS A TEST (a prior leg's lesson, per this leg's spec) ----------
+// At a prior leg this seat learned that `resolveBrokerFromDisk` ranks the SITE FILE above MQTT_URL, so
 // "unset the env" is NOT "no broker" on a box that has a site file — and unsetting TABICHAT_CONFIG is
 // not "no site file" either: it selects the DEFAULT path, which exists here and names the LIVE broker.
 // One probe reached the live control topic that way. The lesson is a TEST, not a memory: a refusal
 // cell must be provably unable to touch production. The mechanism that buys that is a SPLIT — the pure
 // decision takes the parsed object, and only a caller that reads disk hands it over.
-check("ACT A: the pure resolver takes (env, parsed-site) and touches NO fs — so it cannot reach a live broker",
+check("PART A: the pure resolver takes (env, parsed-site) and touches NO fs — so it cannot reach a live broker",
   cw_probe.includes("env: Record<string, string | undefined>,") &&
   cw_probe.includes("site?: Record<string, unknown> | null,") &&
   !/readFileSync|existsSync|statSync|mkdirSync/.test(cw_probe.split("export const resolveResumeDir")[1].split("export const fallbackNote")[0]),
@@ -1332,7 +1332,7 @@ check("index.ts feeds it the siteConfig it ALREADY parsed — the disk read is o
   /resolveResumeDir\([\s\S]{0,120}siteConfig,[\s\S]{0,10}\)/.test(indexCode), true);
 // THE FOSSIL IS GONE FROM THE CODE AND STILL PRESENT IN THE PROSE THAT EXPLAINS IT — so this strips
 // comments first. A grep over the raw file would read the explanatory quote as the defect surviving,
-// which is the same prose-vs-code trap this leg hit at leg 405 with a negative cell on `lane_admin.mjs`.
+// which is the same prose-vs-code trap this leg hit at a prior leg with a negative cell on `lane_admin.mjs`.
 const cw_code = cw_probe.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 const idx_code_only = indexCode;  // indexCode is already comment-stripped above
 check("the dead durable default is GONE from the CODE (comments stripped — the prose quotes it on purpose)",
@@ -1362,7 +1362,7 @@ check("#10 and it is CALLED at all five publish sites (room leaf, room flat, con
   (index.match(/watchSend\(/g) || []).length, 5);
 check("#10 NEGATIVE: no site hand-rolls the watch — `watchAck(ackWatch` exists only inside the registrar",
   (index.match(/watchAck\(ackWatch/g) || []).length, 1);
-// iid 21 finding 1 (leg 926): the two room sites gained the publish's OWN id, because `chat/<room>`
+// iid 21 finding 1: the two room sites gained the publish's OWN id, because `chat/<room>`
 // is the topic every lane writes to and a watch keyed on it can be settled by anybody's inbound. Only
 // the argument list moved. The guard this cell exists for is unchanged — register at the publish site,
 // on the topic ACTUALLY used, per-sender leaf AND flat — and it went RED at this tip before the line
@@ -1449,10 +1449,10 @@ check("#10 STRUCTURE NEGATIVE: the settle block holds ONLY the settle — no lan
 check("#10 and the block stays tiny, so a future edit cannot quietly grow a hot path on every inbound line",
   settleBlock.split("\n").length <= 6, true);
 
-// ─── leg 496 AC4 — "no authority widened", measured by an instrument that CAN fire ───────────────
+// ─── a prior leg AC4 — "no authority widened", measured by an instrument that CAN fire ───────────────
 // 488's version of this claim compared `laneadmin.ts` base-vs-branch — but that file is NOT in the
 // 496 diff, so it compared a file with itself and returned 0 for every input. A proof that cannot
-// disagree with anything is not a proof (`flash2`'s review finding; the same class as a filter that
+// disagree with anything is not a proof (`lane2`'s review finding; the same class as a filter that
 // filters nothing). So the surface under test is taken from the BASE COMMIT as it ACTUALLY is —
 // `git show <base>:<path>` through a temp file — and the cell is seeded: a deliberate widening is
 // loaded the same way and MUST be reported as a difference.
@@ -1461,7 +1461,7 @@ ac4Cell: {
   const { execFileSync } = await import("node:child_process");
   // The pin MUST be a commit reachable from BOTH published faces (dev and main) — a history
   // rewrite deletes anything else, and a gate whose base lives only in a stale local venue is
-  // green for the venue and red for every fresh clone (leg 580).
+  // green for the venue and red for every fresh clone.
   const BASE_REF = process.env.TABICHAT_AC4_BASE ?? "d11cf3040a896ef2a74b4685156daed7991197f9";
   // Resolve the pin BEFORE mk(): an unreachable base must name itself, not die in a git 128 stack.
   const ac4Pin = (() => { try { return execFileSync("git", ["rev-parse", "--verify", "--quiet", `${BASE_REF}^{commit}`], { encoding: "utf8", cwd: join(SRC, "../..") }).trim(); } catch { return ""; } })();
@@ -1487,13 +1487,13 @@ ac4Cell: {
   const flat = (x: unknown) => JSON.stringify(x);
   let grid = 0, decisionDiff = 0, topicDiff = 0;
   const acts = ["renew", "compact", "shutdown", "reboot", ""] as const;
-  const bys = ["flash4", "wren", "dove", "steward", ""] as const;
-  const tos = ["flash4", "all", "", "!!!", undefined] as const;
+  const bys = ["lane4", "lane11", "lane18", "lane13", ""] as const;
+  const tos = ["lane4", "all", "", "!!!", undefined] as const;
   const envs = [{}, { LANE_ADMIN_RENEW: "1" }, { LANE_ADMIN_RENEW: "1", LANE_ADMIN_SELFRENEW: "1" }, { LANE_ADMIN_COMPACT: "1" }, { LANE_ADMIN_SHUTDOWN: "1" }] as const;
-  const allows = [["wren", "dust", "ultra", "courier", "dove"], [], ["flash4"]] as const;
+  const allows = [["lane11", "lane16", "lane10", "lane12", "lane18"], [], ["lane4"]] as const;
   for (const action of acts) for (const by of bys) for (const to of tos) for (const env of envs)
     for (const allow of allows) for (const idle of [true, false]) for (const rw of [true, false]) {
-      const i = { action, by, to, self: "flash4", allow: [...allow], env: { ...env }, idle, resumeWritten: rw };
+      const i = { action, by, to, self: "lane4", allow: [...allow], env: { ...env }, idle, resumeWritten: rw };
       const a = baseLane.adminVerdict(i), b = nowLane.adminVerdict(i);
       grid++;
       if (flat({ ...a, reason: 0 }) !== flat({ ...b, reason: 0 })) decisionDiff++;
@@ -1511,7 +1511,7 @@ check("AC4 the authority grid is the whole surface, not a sample", grid, 7500);
   mkdirSync(join(seedDir, "src"), { recursive: true });
   // 959: the seed is the CURRENT file with two hunks stubbed, so it must sit beside the CURRENT
   // siblings, not baseDir's. It used to land in baseDir and that was invisible while laneadmin.ts
-  // imported nothing new; leg 959 adds `currentLeg`/`handoffContentVerdict` to that import list, and
+  // imported nothing new; a prior leg adds `currentLeg`/`handoffContentVerdict` to that import list, and
   // the base ctxwarn.ts does not export them — the seed died on a missing export, an instrument fault
   // wearing a verdict. Same rule as the comment above, applied to the other copy.
   for (const sib of ["mention.ts", "ctxwarn.ts", "roommsg.ts"])
@@ -1528,14 +1528,14 @@ check("AC4 the authority grid is the whole surface, not a sample", grid, 7500);
   let seedDiff = 0;
   for (const action of ["compact", "shutdown"] as const)
     for (const env of envs) {
-      const i = { action, by: "flash4", to: "flash4", self: "flash4", allow: [...allows[0]], env: { ...env }, idle: true, resumeWritten: true };
+      const i = { action, by: "lane4", to: "lane4", self: "lane4", allow: [...allows[0]], env: { ...env }, idle: true, resumeWritten: true };
       if (flat({ ...nowLane.adminVerdict(i), reason: 0 }) !== flat({ ...seedLane.adminVerdict(i), reason: 0 })) seedDiff++;
     }
   check("AC4 SEED: a deliberate widening IS reported by the same instrument (so the 0 above can bite)", seedDiff > 0, true);
   check("AC4 and the seed is loud in the right direction — the widened build ACCEPTS what the shipped one refuses",
-    seedLane.adminVerdict({ action: "compact", by: "flash4", to: "flash4", self: "flash4", allow: ["wren"], env: { LANE_ADMIN_COMPACT: "1" }, idle: true, resumeWritten: true }).ok, true);
+    seedLane.adminVerdict({ action: "compact", by: "lane4", to: "lane4", self: "lane4", allow: ["lane11"], env: { LANE_ADMIN_COMPACT: "1" }, idle: true, resumeWritten: true }).ok, true);
   check("AC4 the shipped build refuses it (the behaviour the grid protects)",
-    nowLane.adminVerdict({ action: "compact", by: "flash4", to: "flash4", self: "flash4", allow: ["wren"], env: { LANE_ADMIN_COMPACT: "1" }, idle: true, resumeWritten: true }).ok, false);
+    nowLane.adminVerdict({ action: "compact", by: "lane4", to: "lane4", self: "lane4", allow: ["lane11"], env: { LANE_ADMIN_COMPACT: "1" }, idle: true, resumeWritten: true }).ok, false);
   // The topic builders DID change — that is the leg. Say which way, exactly, so a reader cannot
   // mistake "no authority change" for "no change".
   for (const [name, before, after] of [
@@ -1543,18 +1543,18 @@ check("AC4 the authority grid is the whole surface, not a sample", grid, 7500);
     ["adminResultTopic", "chat/tabith/_ctl/admin/<id>", "chat/tabith/_ctl/<answerer>/admin/<id>"],
   ] as const)
     check(`AC4 ${name}: shape (ii) moved the writer into the leaf (${before} -> ${after})`,
-      [ackTopic("tabith", "wren", "m1").startsWith("chat/tabith/_ctl/wren/"),
-        adminResultTopic("tabith", "wren", "m1").includes("/wren/admin/")].every(Boolean), true);
+      [ackTopic("tabith", "lane11", "m1").startsWith("chat/tabith/_ctl/lane11/"),
+        adminResultTopic("tabith", "lane11", "m1").includes("/lane11/admin/")].every(Boolean), true);
   check("AC4 and authorVerdict's rule is untouched by a topic move — it reads the msg/+ tree, not _ctl",
-    [authorVerdict("chat/tabith/msg/wren", "tabith", "wren").ok,
-      authorVerdict("chat/tabith/msg/wren", "tabith", "flash6").ok], [true, false]);
+    [authorVerdict("chat/tabith/msg/lane11", "tabith", "lane11").ok,
+      authorVerdict("chat/tabith/msg/lane11", "tabith", "lane6").ok], [true, false]);
   rmSync(baseDir, { recursive: true, force: true });
   rmSync(seedDir, { recursive: true, force: true });
 }
 
-// --- F2 (s269) — the wake pointer admits a fresh nick-scanned handoff, under the RENEWING floor ---
-// THE RED PROOF of the shipped defect, taken before the fix existed: flash4's guinea renew at 12:48Z
-// woke told "NO RESUME file was found" while RESUME-flash4-01a173.md sat on disk, 1,484 B, 3.5 min
+// --- F2 — the wake pointer admits a fresh nick-scanned handoff, under the RENEWING floor --------
+// THE RED PROOF of the shipped defect, taken before the fix existed: lane4's guinea renew at 12:48Z
+// woke told "NO RESUME file was found" while RESUME-lane4-01a173.md sat on disk, 1,484 B, 3.5 min
 // old. Two causes: (a) the pointer probed ONLY the exact `RESUME-<nick>-<BOOT>.md` name — a tag that
 // cannot pre-exist the replacement — and (b) any scan it did run would have used a floor re-minted
 // AFTER the handoff was written. The cells below hold both halves, and the paired refusals.
@@ -1563,50 +1563,50 @@ check("AC4 the authority grid is the whole surface, not a sample", grid, 7500);
   mkdirSync(f2dir, { recursive: true });
   // The handoff the OLD (renewing) session wrote, named the way a lane really names it — from its
   // session id, not from the NEW seat's BOOT tag.
-  const handoffName = "RESUME-flash2-01a173.md";
+  const handoffName = "RESUME-lane2-01a173.md";
   const handoffPath = join(f2dir, handoffName);
   writeFileSync(handoffPath, "x".repeat(400));
   const st = statSync(handoffPath);
   // The exact-name candidate the renewed seat's BOOT mints — the file the old pointer searched for,
   // which cannot exist before the renew.
-  const exactMiss = [{ path: join(f2dir, "RESUME-flash2-NEWBOOT.md"), bytes: null }];
+  const exactMiss = [{ path: join(f2dir, "RESUME-lane2-NEWBOOT.md"), bytes: null }];
   const files = [{ name: handoffName, bytes: st.size, mtimeMs: st.mtimeMs }];
   const pathOf = new Map([[handoffName, handoffPath]]);
   const renewingBoot = st.mtimeMs - 60_000; // the renewing run started BEFORE the handoff was written
   const remintedFloor = st.mtimeMs + 60_000; // what a re-minted (post-replacement) BOOT_AT_MS looks like
-  check("F2 RED (the shipped defect, re-run as a cell): the exact-name probe alone says null — this is what told flash4 'no RESUME file'",
+  check("F2 RED (the shipped defect, re-run as a cell): the exact-name probe alone says null — this is what told lane4 'no RESUME file'",
     wakePathFor(exactMiss, 200), null);
   check("F2 GREEN (cause a): exact-name miss + fresh nick-scan hit -> the pointer returns THAT PATH (required negative cell, made positive)",
-    wakePickPath(exactMiss, 200, files, pathOf, "flash2", renewingBoot), handoffPath);
+    wakePickPath(exactMiss, 200, files, pathOf, "lane2", renewingBoot), handoffPath);
   check("F2 NEGATIVE (cause b kept honest): the SAME file refuses under a re-minted post-renew floor — proof the fix is the CARRIED floor, not a deleted bar",
-    wakePickPath(exactMiss, 200, files, pathOf, "flash2", remintedFloor), null);
+    wakePickPath(exactMiss, 200, files, pathOf, "lane2", remintedFloor), null);
   check("F2 and the refusal is a stale verdict, not silence — pickResumeHandoff still names it",
-    /STALE/.test(pickResumeHandoff(files, "flash2", remintedFloor).reason), true);
+    /STALE/.test(pickResumeHandoff(files, "lane2", remintedFloor).reason), true);
   check("F2 NEGATIVE: another lane's handoff is never this seat's wake path",
-    wakePickPath(exactMiss, 200, files, pathOf, "flash3", renewingBoot), null);
+    wakePickPath(exactMiss, 200, files, pathOf, "lane3", renewingBoot), null);
   check("F2 NEGATIVE: a stub under the byte bar does not open the pointer",
-    wakePickPath(exactMiss, 200, [{ name: handoffName, bytes: 199, mtimeMs: st.mtimeMs }], pathOf, "flash2", renewingBoot), null);
+    wakePickPath(exactMiss, 200, [{ name: handoffName, bytes: 199, mtimeMs: st.mtimeMs }], pathOf, "lane2", renewingBoot), null);
   check("F2 NEGATIVE: a pick with no entry in the path map degrades to null, never a phantom path",
-    wakePickPath(exactMiss, 200, files, new Map(), "flash2", renewingBoot), null);
+    wakePickPath(exactMiss, 200, files, new Map(), "lane2", renewingBoot), null);
   const consults: number[] = [];
   const w4 = await runWake([], {
     fallbackPick: () => {
       consults.push(1);
-      return wakePickPath(exactMiss, 200, files, pathOf, "flash2", renewingBoot);
+      return wakePickPath(exactMiss, 200, files, pathOf, "lane2", renewingBoot);
     },
   });
   check("F2 EXECUTED: with a fallback, the renewed seat's line carries the scanned path",
     w4.sent[0].content.includes(handoffPath), true);
   check("F2 EXECUTED: and the act reports it, so the operator sees WHICH file armed the wake",
     w4.r, { sent: true, path: handoffPath });
-  const w5 = await runWake([{ path: "/dur/RESUME-flash2-HIT.md", bytes: 500 }], {
+  const w5 = await runWake([{ path: "/dur/RESUME-lane2-HIT.md", bytes: 500 }], {
     fallbackPick: () => {
       consults.push(2);
       return "never-reached";
     },
   });
   check("F2: the exact-name FAST PATH still wins — the fallback is not consulted when the tag hits",
-    w5.r.path, "/dur/RESUME-flash2-HIT.md");
+    w5.r.path, "/dur/RESUME-lane2-HIT.md");
   check("F2 NEGATIVE: a fallback that throws cannot eat the wake line — the seat still wakes, told there is no handoff",
     (await runWake(exactMiss, { fallbackPick: () => { throw new Error("ENOENT raced"); } })).sent[0].content.includes("NO RESUME file"), true);
   rmSync(f2dir, { recursive: true, force: true });
@@ -1618,7 +1618,7 @@ check("F2 wired: the gate's own floor is UNCHANGED — still BOOT_AT_MS, never a
 check("F2 wired: gate and fallback share ONE disk walk (resumePathsOf), so they cannot scan two different worlds",
   (indexCode.match(/resumePathsOf\(\)/g) ?? []).length >= 2, true);
 
-// ─── iid 17 / leg 959 — the handoff audit, on a real temp dir ──────────────────────
+// ─── iid 17 — the handoff audit, on a real temp dir ──────────────────────
 // The row's defect, reproduced at this face rather than asserted: a sheet that is fresh by mtime and
 // over the byte floor, written for a leg that is already finished, used to be admitted for the leg about
 // to be lost. Every fixture below is written by THIS block into its own directory and removed at the end,
@@ -1630,48 +1630,48 @@ console.log("\n== iid 17: auditHandoff, adminVerdict, autoRenewVerdict — the s
 const says = (name: string, hay: string, needle: string) => check(name, hay.includes(needle), true);
 const A9 = join(tmpdir(), `959-audit-${process.pid}`);
 mkdirSync(A9, { recursive: true });
-const GOOD9 = `flash3 resume: leg 959 — the audit is wired\nleg 959 — both doors answer\n  venue: /tabith/work5-tabichat-959 (my clone)\n  task and the spec path it came from: wave47-specs-20261104/flash3-handoff-bar-by-leg-959.md\n  branch tip 580572c, nothing uncommitted or unpushed\n  mid-flight right now: the stage run, then the report\n  next steps: faces 2 to 8, then push both faces\n  report path: wave47-specs-20261104/flash3-handoff-bar-by-leg-959-report.md\n  HOLD flags — no merge, no tag, no deploy verb at the live destination\n`;
-writeFileSync(join(A9, "RESUME-flash3-0554ee.md"), GOOD9);
-writeFileSync(join(A9, "RESUME-flash9-0554ee.md"), "x".repeat(400));
-writeFileSync(join(A9, "RESUME-flash8-0554ee.md"), "# handoff\n" + RESUME_TEMPLATE + "\n");
-writeFileSync(join(A9, "RESUME-flash6-0554ee.md"), "leg 954 — the previous task, already closed\n  venue: /tabith/work5-tabichat-954\n  task and the spec path: the leg before this one\n  branch tip 650ded2, nothing uncommitted\n  mid-flight: nothing in flight, the leg is closed\n  next steps: none, this seat is idle\n  report path: the 954 report\n  HOLD flags — hold for a dispatch\n");
-mkdirSync(join(A9, "RESUME-flash7-0554ee.md")); // a DIRECTORY wearing the name: not a candidate, not a refusal
+const GOOD9 = `lane3 resume: leg 959 — the audit is wired\nleg 959 — both doors answer\n  venue: work9/tabichat-959 (my clone)\n  task and the spec path it came from: specs/handoff-bar-959.md\n  branch tip 580572c, nothing uncommitted or unpushed\n  mid-flight right now: the stage run, then the report\n  next steps: faces 2 to 8, then push both faces\n  report path: specs/handoff-bar-959-report.md\n  HOLD flags — no merge, no tag, no deploy verb at the live destination\n`;
+writeFileSync(join(A9, "RESUME-lane3-0554ee.md"), GOOD9);
+writeFileSync(join(A9, "RESUME-lane9-0554ee.md"), "x".repeat(400));
+writeFileSync(join(A9, "RESUME-lane8-0554ee.md"), "# handoff\n" + RESUME_TEMPLATE + "\n");
+writeFileSync(join(A9, "RESUME-lane6-0554ee.md"), "leg 954 — the previous task, already closed\n  venue: work9/tabichat-954\n  task and the spec path: the leg before this one\n  branch tip 650ded2, nothing uncommitted\n  mid-flight: nothing in flight, the leg is closed\n  next steps: none, this seat is idle\n  report path: the 954 report\n  HOLD flags — hold for a dispatch\n");
+mkdirSync(join(A9, "RESUME-lane7-0554ee.md")); // a DIRECTORY wearing the name: not a candidate, not a refusal
 
-check("PASSES: a current sheet for the leg the seat declares", auditHandoff({ nick: "flash3", dirs: [A9], leg: "959" }),
-  { audited: true, ok: true, picked: "RESUME-flash3-0554ee.md", reason: "handoff RESUME-flash3-0554ee.md names leg 959 and answers 7/7 blocks" });
-const stale9 = auditHandoff({ nick: "flash6", dirs: [A9], leg: "959" });
+check("PASSES: a current sheet for the leg the seat declares", auditHandoff({ nick: "lane3", dirs: [A9], leg: "959" }),
+  { audited: true, ok: true, picked: "RESUME-lane3-0554ee.md", reason: "handoff RESUME-lane3-0554ee.md names leg 959 and answers 7/7 blocks" });
+const stale9 = auditHandoff({ nick: "lane6", dirs: [A9], leg: "959" });
 check("RENEW REFUSED: the row's own case — a fresh, over-floor sheet for leg 954, seat on leg 959", stale9.ok, false);
 says("...and it says WHICH leg the sheet is really for", stale9.reason ?? "", "leg 954");
 says("...and which leg is about to be lost", stale9.reason ?? "", "leg 959");
 check("RENEW REFUSED: a 400-byte sheet with nothing answered (clears the 200-byte floor, not this one)",
-  auditHandoff({ nick: "flash9", dirs: [A9], leg: "" }).ok, false);
+  auditHandoff({ nick: "lane9", dirs: [A9], leg: "" }).ok, false);
 check("RENEW REFUSED: the FORCED HANDOFF notice copied out verbatim is unfilled slots, not a handoff",
-  auditHandoff({ nick: "flash8", dirs: [A9], leg: "" }).ok, false);
+  auditHandoff({ nick: "lane8", dirs: [A9], leg: "" }).ok, false);
 check("NEGATIVE: no sheet for this nick is NOT audited, and never refused — an instrument fault is not a verdict",
-  auditHandoff({ nick: "flash5", dirs: [A9], leg: "959" }).audited, false);
+  auditHandoff({ nick: "lane5", dirs: [A9], leg: "959" }).audited, false);
 check("...and a directory wearing the RESUME name contributes no candidate (and no refusal)",
-  auditHandoff({ nick: "flash7", dirs: [A9], leg: "959" }).audited, false);
+  auditHandoff({ nick: "lane7", dirs: [A9], leg: "959" }).audited, false);
 check("...and neither does a dir that is not there at all",
-  auditHandoff({ nick: "flash3", dirs: [`${A9}-absent`], leg: "959" }).audited, false);
+  auditHandoff({ nick: "lane3", dirs: [`${A9}-absent`], leg: "959" }).audited, false);
 check("the byte floor still bites INSIDE the audit — nothing was weakened to reach green",
-  auditHandoff({ nick: "flash3", dirs: [A9], leg: "959", minBytes: 5000 }).ok, false);
+  auditHandoff({ nick: "lane3", dirs: [A9], leg: "959", minBytes: 5000 }).ok, false);
 check("handoffDirs takes the declared durable dir, and only it", handoffDirs({ MQTT_CTX_RESUME_DIR: A9 }), [A9]);
 check("...and with nothing declared it names the scratch fallback ONCE, never twice", handoffDirs({}), ["/tmp/tabichat"]);
 
 const R9 = { LANE_ADMIN_RENEW: "yes", LANE_ADMIN_COMPACT: "1", LANE_ADMIN_SHUTDOWN: "on" };
 const renewStale = adminVerdict({
-  action: "renew", by: "lead-agent", to: "flash6", self: "flash6", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
+  action: "renew", by: "lead-agent", to: "lane6", self: "lane6", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
   idle: true, resumeWritten: true, resumeSearched: [A9],
 });
 check("the REMOTE renew bar refuses the stale sheet the byte bar used to admit", renewStale.ok, false);
 says("...and the lane says so out loud (speak, not silence)", String((renewStale as { speak?: boolean }).speak), "true");
 const renewGood = adminVerdict({
-  action: "renew", by: "lead-agent", to: "flash3", self: "flash3", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
+  action: "renew", by: "lead-agent", to: "lane3", self: "lane3", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
   idle: true, resumeWritten: true, resumeSearched: [A9],
 });
 check("...and honours the same request for the seat whose sheet IS current", renewGood.ok, true);
 const compactStale = adminVerdict({
-  action: "compact", by: "lead-agent", to: "flash6", self: "flash6", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
+  action: "compact", by: "lead-agent", to: "lane6", self: "lane6", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
   idle: true, resumeWritten: true, resumeSearched: [A9],
 });
 check("★ NEGATIVE THAT IS THE POINT: compact keeps the session, so the SAME stale sheet does NOT hold it",
@@ -1679,27 +1679,27 @@ check("★ NEGATIVE THAT IS THE POINT: compact keeps the session, so the SAME st
 check("...and the new bar widened nothing on the door it was never for (the shipped ok shape is intact)",
   compactStale.ok === true && (compactStale as { action?: string }).action === "compact", true);
 const noDirs = adminVerdict({
-  action: "renew", by: "lead-agent", to: "flash6", self: "flash6", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
+  action: "renew", by: "lead-agent", to: "lane6", self: "lane6", allow: ALLOW, env: { ...R9, MQTT_LEG: "959" },
   idle: true, resumeWritten: true,
 });
 check("a caller with NO dirs gets the shipped verdict: the audit never reads an ambient /tmp",
   noDirs.ok, true);
 check("★ and the per-boot loop brake still fires FIRST — good sheet, stale sheet, it is the brake that answers",
-  autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: true, resumeWritten: true, nick: "flash6", env: { MQTT_LEG: "959" }, dirs: [A9] }).reason,
+  autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: true, resumeWritten: true, nick: "lane6", env: { MQTT_LEG: "959" }, dirs: [A9] }).reason,
   "already auto-renewed once this boot — no renew loop");
-check("the self-renew door honours a current sheet", autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: false, resumeWritten: true, nick: "flash3", env: { MQTT_LEG: "959" }, dirs: [A9] }).ok, true);
-check("...and refuses the stale one, same bar as the remote gate", autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: false, resumeWritten: true, nick: "flash6", env: { MQTT_LEG: "959" }, dirs: [A9] }).ok, false);
+check("the self-renew door honours a current sheet", autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: false, resumeWritten: true, nick: "lane3", env: { MQTT_LEG: "959" }, dirs: [A9] }).ok, true);
+check("...and refuses the stale one, same bar as the remote gate", autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: false, resumeWritten: true, nick: "lane6", env: { MQTT_LEG: "959" }, dirs: [A9] }).ok, false);
 check("NEGATIVE: with no nick named it does not go looking — a gate that read the developer's home dir would be green here and wrong there",
   autoRenewVerdict({ armed: true, percent: 90, floorPct: 75, renewedThisBoot: false, resumeWritten: true }).ok, true);
 check("wakeLegNote prints the leg the pointed-at sheet names, to the seat that has to judge it",
-  wakeLegNote(join(A9, "RESUME-flash3-0554ee.md"), {}).includes("It names leg 959"), true);
-check("...and it says plainly when that is READ rather than CHECKED", wakeLegNote(join(A9, "RESUME-flash6-0554ee.md"), {}).includes("READ, not checked"), true);
-check("...and it refuses to pretend when the sheet disagrees with the seat", wakeLegNote(join(A9, "RESUME-flash6-0554ee.md"), { MQTT_LEG: "959" }).includes("Do NOT obey it"), true);
+  wakeLegNote(join(A9, "RESUME-lane3-0554ee.md"), {}).includes("It names leg 959"), true);
+check("...and it says plainly when that is READ rather than CHECKED", wakeLegNote(join(A9, "RESUME-lane6-0554ee.md"), {}).includes("READ, not checked"), true);
+check("...and it refuses to pretend when the sheet disagrees with the seat", wakeLegNote(join(A9, "RESUME-lane6-0554ee.md"), { MQTT_LEG: "959" }).includes("Do NOT obey it"), true);
 check("NEGATIVE: no file, no note — it never invents a leg", wakeLegNote(`${A9}/RESUME-nope-000000.md`, {}), "");
 check("...and no path at all is still no note", wakeLegNote(null, {}), "");
 check("the wake line still carries the shipped sentence, with the leg note added beside it",
-  [wakeDirective(join(A9, "RESUME-flash3-0554ee.md"), "", wakeLegNote(join(A9, "RESUME-flash3-0554ee.md"), {})).includes("it does not say what you are authorised to do next"),
-    wakeDirective(join(A9, "RESUME-flash3-0554ee.md"), "", wakeLegNote(join(A9, "RESUME-flash3-0554ee.md"), {})).includes("It names leg 959")],
+  [wakeDirective(join(A9, "RESUME-lane3-0554ee.md"), "", wakeLegNote(join(A9, "RESUME-lane3-0554ee.md"), {})).includes("it does not say what you are authorised to do next"),
+    wakeDirective(join(A9, "RESUME-lane3-0554ee.md"), "", wakeLegNote(join(A9, "RESUME-lane3-0554ee.md"), {})).includes("It names leg 959")],
   [true, true]);
 // A grep, labelled as one, same as the other wiring cells in this file: the bar only bites if the caller
 // hands the gate the dirs, and index.ts is the only production caller.
@@ -1724,7 +1724,7 @@ check("...and the window is bounded, so a nick belonging to some later call cann
   /autoRenewVerdict\(\{[\s\S]{0,2000}nick:/.test(indexCode.replace(/\n\s*nick: nick,/, "\n")), false);
 rmSync(A9, { recursive: true, force: true });
 
-// ─── iid 17 / leg 982 — the AGE rule has ONE support, and it is not the audit ───────────────────
+// ─── iid 17 — the AGE rule has ONE support, and it is not the audit ───────────────────
 // F5, measured by the reviewer of the merged door: on a sheet whose mtime is older than the seat's
 // own start, the CALLER's floor (`resumeWritten`) refuses, the DOOR's own audit says ok, and the
 // renew does not happen. So the age rule is standing on one leg: if `resumeWritten` ever stops
@@ -1735,18 +1735,18 @@ rmSync(A9, { recursive: true, force: true });
 // invent refusals for exactly the pre-renew sheets the wake path must admit. The last two cells here
 // are the tripwire against that forbidden edit, and they are labelled as source-shape because that
 // is what they are: a grep, and a runtime plant for everything else.
-console.log("\n== iid 17 / leg 982: the age rule, its one support, and the plant that proves it ==");
+console.log("\n== iid 17: the age rule, its one support, and the plant that proves it ==");
 {
   const AGE = join(tmpdir(), `982-age-${process.pid}`);
   const AGE_EMPTY = join(AGE, "empty");
   mkdirSync(AGE, { recursive: true });
   mkdirSync(AGE_EMPTY, { recursive: true });
-  const NICK = "flash982";
+  const NICK = "lane982";
   // A sheet that answers every block and names the leg its seat is on, so NOTHING but its AGE can
   // be the reason anything here refuses. That isolation is the whole point of the block.
   writeFileSync(
     join(AGE, `RESUME-${NICK}-0a982f.md`),
-    `flash982 report: leg 982 — the age rule and its one support\nleg 982 — one cell, no behaviour change\n  venue: /tabith/work2-tabichat-982 (my clone, branch feature/door-age-rule-pair-cell-17)\n  task and the spec file path it came from: wave47-specs-20261104/flash2-door-age-rule-pair-cell-982.md\n  branch, tip commit a372013, and NOTHING uncommitted or unpushed\n  what is mid-flight right now: the stage run of tools/test_laneadmin.ts\n  next steps, in order: gate at tip, gate at base, md5 the destination, push both faces\n  report path: wave47-specs-20261104/flash2-door-age-rule-pair-cell-982-report.md\n  HOLD flags — no merge, no tag, no deploy at the live destination, iid 17 stays open\n`,
+    `lane982 report: leg 982 — the age rule and its one support\nleg 982 — one cell, no behaviour change\n  venue: work2/tabichat-982 (my clone, branch feature/door-age-rule-pair-cell-17)\n  task and the spec file path it came from: specs/door-age-rule-pair-cell-982.md\n  branch, tip commit a372013, and NOTHING uncommitted or unpushed\n  what is mid-flight right now: the stage run of tools/test_laneadmin.ts\n  next steps, in order: gate at tip, gate at base, md5 the destination, push both faces\n  report path: specs/door-age-rule-pair-cell-982-report.md\n  HOLD flags — no merge, no tag, no deploy at the live destination, iid 17 stays open\n`,
   );
   const BOOT = Date.now(); // this seat's start, the same value index.ts mints as BOOT_AT_MS
   const STALE_AT = BOOT - 3_600_000; // written an hour before this run began: a prior task's sheet
@@ -1813,7 +1813,7 @@ console.log("\n== iid 17 / leg 982: the age rule, its one support, and the plant
     /resumeWritten: handoffOnDisk\(\)/.test(arvSite[0]), true);
   check("982 STRUCTURAL: POSITIVE CONTROL — that predicate reads NO when the block carries a literal instead of the verdict",
     /resumeWritten: handoffOnDisk\(\)/.test(arvSite[0].replace("resumeWritten: handoffOnDisk(),", "resumeWritten: true,")), false);
-  // The forbidden fix, pinned. §1 of the leg bars it, so it is worth a cell that reddens when someone
+  // The forbidden fix, pinned. The leg bars it, so it is worth a cell that reddens when someone
   // does it anyway: `autoRenewVerdict` must not hand the audit a floor of its own.
   const arvAudit = /export const autoRenewVerdict[\s\S]*?\n\};/.exec(
     LA.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")) ?? [""];

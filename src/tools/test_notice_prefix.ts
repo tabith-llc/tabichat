@@ -10,14 +10,14 @@
 // Ruling 2: a subsystem notice carries the product tag FIRST: "[tabichat][ctx]",
 //           "[tabichat][exitlog]", "[tabichat][steer]". One bracket
 //           of provenance on every line this extension prints.
-//           ("ask_owner" left this list with the tool itself, owner order 2026-10-08; the four
+//           ("ask_owner" left this list with the tool itself; the four
 //           subsystems that still print a notice are all still checked.)
 //           UPSTREAM is the one subsystem that carries the tag as "[tabichat] " plus a prose cause
-//           instead of a second bracket: owner ruling of 2026-10-25 (Q8) requires the product tag
+//           instead of a second bracket: the rule requires the product tag
 //           AT THE FRONT AND ONLY THERE, with UPSTREAM named as the cause and the provider payload
-//           left out. LEG 537 shipped the tag trailing; that form is reversed and the emit-site
+//           left out. The earlier form shipped the tag trailing; that is reversed and the emit-site
 //           cells below lock the front position. Rule 2's own requirement — tag first — is what
-//           that ruling agrees with, so no cell here was loosened.
+//           that rule agrees with, so no cell here was loosened.
 //
 // Both halves are required: every rule gets the case that must pass AND the case that must be
 // rejected, otherwise a scanner that always answers "clean" would keep this gate green.
@@ -83,15 +83,15 @@ const index = readFileSync(join(DIR, "index.ts"), "utf8");
 const roomCount = count(index, `${PRODUCT} `);
 check(`room notices still carry [tabichat] (>= ${ROOM_FLOOR})`, roomCount >= ROOM_FLOOR, true);
 check("no bare subsystem tag survives in index.ts", bareSubsystemTags(index), []);
-// LEG 542 (owner ruling of 2026-10-25, Q8): the product tag must be AT THE FRONT and the notice
+// The product tag must be AT THE FRONT and the notice
 // must carry no provider payload. The tag now lives in buildNote, so BOTH surfaces (the footer
 // status and this toast) read one string and cannot drift — which is the failure this pair locks:
 // a call site that re-adds or moves a tag would produce two different shapes from one event.
-// Both halves were negative-controlled against the bytes at `c84b15f` (the leg 537 face, tag
+// Both halves were negative-controlled against the bytes at `c84b15f` (the earlier face, tag
 // TRAILING): re-apply `notify(`${note} [tabichat]`, "warning")` and cell 1 goes got:true/want:false
 // while cell 2 goes got:false/want:true; revert buildNote to the leading-tag form and cell 3 reddens.
 check(
-  "the upstream call site carries no trailing tag (the leg 537 shape is reversed)",
+  "the upstream call site carries no trailing tag (the earlier trailing-tag shape is reversed)",
   /notify\(`\$\{note\}[^`]*\[tabichat\]/.test(index),
   false,
 );
@@ -116,8 +116,8 @@ check(
   false,
 );
 
-// OWNER BUG REPORT 2026-10-24 — "this is written in your harness where normally the user would type!
-// UNACCEPTABLE!" The line was `[tabichat][ack-board] cleared 1 of my own retained receipt older than
+// THE OPERATOR'S TERMINAL IS NOT A LOG. A housekeeping line was being printed where a person
+// types. The line was `[tabichat][ack-board] cleared 1 of my own retained receipt older than
 // 3600000ms`: an hourly timer cleaning THIS seat's own expired retained receipts, announced as an operator
 // notice. Two rules come out of it, and BOTH cells were negative-controlled against the shipped bytes at
 // `main` (`1b69e32`) before they were written — predicate | on my branch | on `main`: fallback-inside-catch

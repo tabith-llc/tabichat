@@ -80,7 +80,7 @@ export default function (pi: ExtensionAPI) {
 	let cfg: FsGateConfig = defaultConfig(HOME);
 	let remembered: string[] = [];
 	const sessionDirs = new Set<string>();
-	// exact paths approved for THIS process only (owner, 2026-10-07): nothing is written to disk,
+	// exact paths approved for THIS process only: nothing is written to disk,
 	// a restart clears it, and it can never make a deny yield
 	const sessionExact = new Set<string>();
 	let disabled = process.env.FS_GATE === "off";
@@ -88,8 +88,8 @@ export default function (pi: ExtensionAPI) {
 	const auditMaxBytes = 5_000_000; // patch 6: unbounded append was a known gap
 	const audit = (e: Record<string, unknown>) => {
 		try {
-			// pid attribution: the log is shared by every pi process on montana and had no lane
-			// field — this morning's 38 `"/"` grants could not be attributed from evidence
+			// pid attribution: the log is shared by every pi process on the host and had no lane
+			// field — grants could not be attributed from evidence without it
 			try {
 				const size = existsSync(AUDIT_PATH) ? statSync(AUDIT_PATH).size : 0;
 				if (size > auditMaxBytes) renameSync(AUDIT_PATH, `${AUDIT_PATH}.1`); // keep one previous file
@@ -180,9 +180,9 @@ export default function (pi: ExtensionAPI) {
 			const verdicts = args.map((a) => ({
 				arg: a,
 				path: a.unresolved ? a.abs : canonicalize(a.abs, cwd, HOME, (p) => realpathSync(p)),
-				// an expression we cannot expand is READ, not automatically questioned (owner friction
-				// 2026-10-07): the literal pieces go against the rulebook, and only an unknown root or a
-				// hidden file type still comes to the owner
+				// an expression we cannot expand is READ, not automatically questioned: the literal
+				// pieces go against the rulebook, and only an unknown root or a hidden file type still
+				// comes to the human
 				hit: a.unresolved ? classifyUnresolved(a.abs, cwdReal, cfg, HOME) : classify(canonicalize(a.abs, cwd, HOME, (p) => realpathSync(p)), cwdReal, cfg, HOME),
 			}));
 
@@ -282,7 +282,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Show gate state; subcommands: `sessions clear`, `config reload`",
 		handler: async (args, ctx) => {
 			const sub = String(args ?? "").trim();
-			// Patch 5: the lever this morning lacked — session grants live in the extension
+			// Patch 5: the missing lever — session grants live in the extension
 			// runtime's closure; clearing them here revokes them without a process restart.
 			if (sub === "sessions clear") {
 				const n = sessionDirs.size + sessionExact.size;

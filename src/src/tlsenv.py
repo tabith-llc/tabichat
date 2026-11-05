@@ -15,7 +15,7 @@ the human side, one holds the agent side, and `tools/test_tlsenv.py` (pure pytho
 WHAT THIS COVERS: `MQTT_URL`-style input split into host/port/scheme, plus the three credential
 PATHS a mTLS client needs. It returns a dict of the keyword arguments `paho` takes; the CALLER does
 the socket work. Nothing here reads a file — that is the point, so this is testable on a box with
-no paho and no broker, which is exactly what idaho is.
+no paho and no broker, which any development machine is.
 
 NO SECRET IS EVER RETURNED OR PRINTED. Values are paths. A password would be a secret in a launch
 line, and shape (B) was chosen over a shared password precisely so the sheet stays path-only

@@ -1,6 +1,6 @@
 # TLS in production — what actually has to happen, in what order
 
-Written 2026-10-19 after the first fleet-wide TLS cutover was rehearsed on this box. The env-var
+Written after the first fleet-wide TLS cutover was rehearsed on a live box. The env-var
 reference lives in [`../README.md`](../README.md); this file is about **sequence and failure modes**,
 because every one of the traps below was hit for real and none of them produces a useful error
 message at the moment it happens.
@@ -155,8 +155,8 @@ the ACL file and the topic strings. The order is:
 **migrate clients to per-nick writes → confirm readers have migrated → apply the per-nick ACL → set
 `MQTT_SENDER_TOPIC=1`.** Never two of those at once.
 
-**A third migration rides the same rule, and it is the receipts board (tabichat#10 shape (ii), owner
-`"ii."` 2026-10-24).** Receipts moved from `chat/<room>/_ctl/<message-id>` to
+**A third migration rides the same rule, and it is the receipts board (tabichat#10 shape (ii)).**
+Receipts moved from `chat/<room>/_ctl/<message-id>` to
 `chat/<room>/_ctl/<nick>/<message-id>` — and lane-admin answers to
 `chat/<room>/_ctl/<nick>/admin/<message-id>` — so that a per-nick grant can *own* the leaf a lane writes
 and refuse every other one. Same order, same reason, and the pass-1/pass-2 split is what an operator

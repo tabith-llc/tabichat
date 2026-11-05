@@ -24,7 +24,7 @@
 # The PKI is throwaway material this script mints into a mktemp dir with the project's own
 # mint-tabichat-pki.sh, valid for 2 days, and DESTROYED on `down`. It is never the fleet's CA.
 # Key CONTENTS are never read, printed or copied by this script — only paths are handled, per the
-# fleet law of 2026-10-18 that key-file content is one designated lane's work alone.
+# fleet law of that key-file content is one designated lane's work alone.
 #
 #   sh broker-fixture.sh up [phase1|phase2]   # start; prints FIXTURE_* lines on stdout
 #   sh broker-fixture.sh down                 # stop + destroy the fixture dir
@@ -40,7 +40,7 @@ ARTIFACT_ACL1="$REPO/docs/broker/acl-phase1.conf"
 # `test_broker_auth.ts` runs its own `up`/`down` pair, so any seat that had a fixture running found
 # its broker stopped and its record deleted by a neighbour's teardown — and the victim's own test
 # then correctly reported NOT RUN, which reads like a product failure. Measured and reproduced by
-# the lead on 2026-10-19, twice, deterministically. Same disease as a host-wide pattern kill: a
+# the lead on twice, deterministically. Same disease as a host-wide pattern kill: a
 # teardown that acts on whatever it finds rather than on what it started.
 # `default` keeps the hand-run recipe working: `up` with no env and `python3
 # test_tlsenv_paho.py` with no env agree on one file. A test file that manages its own fixture sets
@@ -51,7 +51,7 @@ STATE="${TMPDIR:-/tmp}/tabichat-fixture-${OWNER}.state"
 OWNER_PREFIX="tabichat-fixture-"
 IMAGE="${TABICHAT_FIXTURE_IMAGE:-eclipse-mosquitto:2}"
 ROOM="${TABICHAT_FIXTURE_ROOM:-fixture}"
-# Site-neutral by default (leg 539). The broker takes the nick from the certificate subject
+# Site-neutral by default. The broker takes the nick from the certificate subject
 # (`use_subject_as_username true`), so minting a real lane's name means the throwaway broker will
 # accept that name — and a demo authenticating as a live lane is the thing this harness exists to
 # avoid. A cell that NEEDS specific identities declares them itself (test_broker_auth.ts and
@@ -132,7 +132,7 @@ start() {
 
   # 3. the daemon in this image drops to the `mosquitto` user, which cannot traverse a 0700 mktemp
   #    dir or read a 0600 agent-owned key, so the tree the CONTAINER sees is opened. Throwaway
-  #    material, rm -rf'd on `down`, never the fleet CA and never the owner's desk keys. Only the
+  #    material, rm -rf'd on `down`, never a certificate authority and never a person's own keys. Only the
   #    SERVER key needs to be readable by the daemon; CLIENT keys stay 0600 and are opened by the
   #    test client process, which runs as the lane user.
   chmod 755 "$FIX" "$FIX/config" "$FIX/pki" "$FIX/pki/ca" "$FIX/pki/server" "$FIX/pki/clients"

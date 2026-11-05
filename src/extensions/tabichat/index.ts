@@ -137,8 +137,8 @@ import {
   STEER_NICKS_ENV,
   wantsSteer,
 } from "./steer.ts";
-// option B (owner 2026-10-09): collapse the visible pending-mention stack. Pure module,
-// tests in tools/test_mentionq.ts; the WHY is in the header of that file.
+// Mid-run mentions are held and the visible pending-mention stack is collapsed to a badge. Pure
+// module; tests in tools/test_mentionq.ts, whose header states the mechanism.
 import {
   holdBadge,
   holdsId,
@@ -224,22 +224,22 @@ import {
 // pi.sendUserMessage(). A line that does not address this lane is kept in the buffer for
 // chat_read only — it is NEVER injected (the rule lives in roommsg.ts:planInbound), so
 // a mention arrives alone, with its own provenance tag.
-// A mention that arrives while the lane is mid-run is HELD by tabichat (option B, mentionq.ts)
+// A mention that arrives while the lane is mid-run is HELD by tabichat (mentionq.ts)
 // and drained when the run settles, so it does not stack in the visible queue; the optional
 // `steer` flag (steer.ts, lead + owner only) delivers it as an interrupt instead.
 //
-// (2026-10-11 correction: the hold used to be gated on pi's queue depth, which is empty exactly
-// when a lane is busy — the gate never fired, and every mid-run mention rendered as its own
-// block. It now gates on the lane's run state.)
+// The hold gates on the lane's RUN STATE, never on pi's queue depth: that queue is empty exactly
+// when a lane is busy, so a depth-based gate cannot fire and every mid-run mention renders as its
+// own block.
 //
-// PUBLISHING IS EXPLICIT (owner + lead ruling 2026-10-05, P1): nothing the lane
+// PUBLISHING IS EXPLICIT: nothing the lane
 // prints to its own terminal ever enters the room. Room text leaves this
 // extension only through chat_post (or a human's /say). The former agent_end
 // auto-publish is removed: it put terminal prose in front of the room against
 // the lane's stated intent, and a lane that believes it is silent must be silent.
 // Opt-in: the whole extension is inert unless pi runs with --tabichat.
 // PROCESS-SCOPED STORE KEYS (tabichat#3). The factory body RE-RUNS on every session replacement —
-// that re-run is what mints a new BOOT tag (measured s146: one renew, three boots, one process).
+// that re-run is what mints a new BOOT tag (one renew can produce three boots in one process).
 // So a closure `let` is per-SESSION, whatever its comment claims, and two decisions must survive a
 // replacement and be visible to EVERY instance in this process: the auto-renew once-per-boot cap
 // (AC3 — a fork must not get a fresh cap per fork) and the renew in-flight latch (AC1 — one
@@ -250,15 +250,15 @@ const AUTO_RENEWED_KEY = Symbol.for("tabichat.autoRenewed");
 
 /**
  * THE THREE SHAPES A LINE CAN TAKE, named (audit `iid 11`). The row was filed against an emitter that
- * recorded `error` lines and quieted everything else; reading the file for this leg turned up a third
- * shape nobody had written down — a failure that is real, consequence-bearing, kept in the durable
+ * recorded `error` lines and quieted everything else; enumerating the call sites turned up a third
+ * shape — a failure that is real, consequence-bearing, kept in the durable
  * file, and deliberately NOT printed where a human types. So the decision is stated once, as data:
  *
  *   record-and-present  an error the operator must see AND a post-mortem must be able to grep;
  *   present-only        a warning or an informative line — the UI, and nothing else (the rule from
- *                       the 2026-10-24 report about the place a human types);
+ *                       the rule about the place a human types);
  *   record-only         an internal fault: kept, never shown. Whether a given one SHOULD be shown is
- *                       a decision of its own (report piece 5), so this leg promotes nothing.
+ *                       a decision of its own, so nothing is promoted here.
  *
  * Exported, so a gate can enumerate the arms and what each one touches instead of trusting one call
  * site's wording — the table is the claim, and `tools/test_diaglog_routing.ts` runs it.
@@ -328,7 +328,7 @@ export const emitNotice = (
  * which is where they were always kept.
  *
  * Exported at module scope so a gate can ENUMERATE the kinds and EXECUTE the teller with an injected
- * redactor and budget — the same posture `emitNotice` took in leg 954, and for the same reason: a claim
+ * redactor and budget — `emitNotice` takes the same posture, for the same reason: a claim
  * that is only readable as prose at one call site is a belief, not a control.
  */
 export const LOSS_KINDS = [
@@ -428,7 +428,7 @@ export default function (pi: ExtensionAPI) {
   // lane must write a RESUME file before it may keep using its tools; MQTT_CTX_FORCE overrides, and it
   // is never below the warn threshold
   const CTX_FORCE = ctxForceThreshold(process.env.MQTT_CTX_FORCE, CTX_WARN);
-  // --- auto-renew, site-wide layer (s136 Leg E) -------------------------------------------------
+  // --- auto-renew, site-wide layer ---------------------------------------------------------------
   // Read ONCE at setup. A policy file that changes mid-session is not a thing a seat should chase.
   const sitePath = siteConfigPath(process.env);
   let siteConfig: Record<string, unknown> = {};
@@ -442,8 +442,7 @@ export default function (pi: ExtensionAPI) {
     // still answer. A file that EXISTS and does not parse is the loud case, handled at session_start.
   }
 
-  // --- DIAGNOSTIC SINK (leg 517, owner order 2026-10-24: "can we not figure out how to keep errors
-  // out of the place the owner types?") ----------------------------------------------
+  // --- DIAGNOSTIC SINK: errors stay out of the place a human types ------------------------------
   // Read ONCE at setup beside the site config, because the destination is a policy, not a per-line
   // choice. The precedence and the refusal text live in diaglog.ts; this is only the wiring.
   const DIAG = makeDiagSink(
@@ -458,7 +457,7 @@ export default function (pi: ExtensionAPI) {
   );
   /**
    * One machine-readable diagnostic to the durable file, NEVER to the terminal. A failed write is
-   * NOT retried onto stderr — that fallback is the exact bug this leg ends — but it is said ONCE,
+   * NOT retried onto stderr — that fallback is the flood this sink exists to stop — but it is said ONCE,
    * because "your diagnostics are being dropped" is consequence-bearing while "a line was parked" is
    * not, and saying it per line would rebuild the flood we just removed.
    */
@@ -471,7 +470,7 @@ export default function (pi: ExtensionAPI) {
     }
   };
 
-  // --- ROOM JOURNAL (leg 800) ---------------------------------------------------------------
+  // --- ROOM JOURNAL -------------------------------------------------------------------------------
   // The journal's destination is resolved at session_start, once the ROOM is known (the default
   // file name carries the room leaf); everything else — precedence, refusals, caps, trim — lives
   // in roomlog.ts and is unit-gated there. This is only the wiring, same split as DIAG above.
@@ -497,7 +496,7 @@ export default function (pi: ExtensionAPI) {
       text: l.message,
       dir,
     };
-    // APPEND-ONLY hot path (leg 804 D2): one O_APPEND record, never a read/rewrite cycle, so no
+    // APPEND-ONLY hot path: one O_APPEND record, never a read/rewrite cycle, so no
     // writer can land on another's bytes. The cap is enforced at boot, in this seat's own file.
     const r = appendRoomLogRecord(ROOMLOG_IO, roomLogTarget.path, rec);
     if (!r.ok) {
@@ -510,11 +509,11 @@ export default function (pi: ExtensionAPI) {
     }
   };
 
-  // durable RESUME location (venue law: /tmp is temporary). tabichat §5 ITEM 1 / leg 420 ACT A: the
-  // old shape was `MQTT_CTX_RESUME_DIR ?? "/media/dust/dust-ext1/tabith/resume"` with a `/tmp/tabichat`
-  // scratch on the next line — a MONTANA path that does not exist on this box and cannot be created by
-  // the lane user, so EVERY lane fell through to tmpfs in SILENCE on EVERY boot. There is no new
-  // hardcoded default here, deliberately: a second fossil just moves the same bug somewhere quieter.
+  // durable RESUME location (/tmp is temporary, so it is never the answer). The old shape was an
+  // environment default pointing at one machine's private mount, with a `/tmp/tabichat` scratch on the
+  // next line: wherever that mount was absent — which is every box that is not that one — EVERY lane
+  // fell through to tmpfs in SILENCE on EVERY boot. There is no new hardcoded default here,
+  // deliberately: a second fossil just moves the same bug somewhere quieter.
   // The order is env → site-config "resumeDir" → REFUSE naming both knobs (ctxwarn.ts:resolveResumeDir).
   const RESUME_RES = resolveResumeDir(
     process.env as Record<string, string | undefined>,
@@ -541,8 +540,7 @@ export default function (pi: ExtensionAPI) {
   // never make a turn larger than the batch the lane already agreed to receive.
   const lossTeller = makeLossTeller(HELD_FLUSH_MAX_CHARS, redactUrl);
 
-  // --- remote lane administration (PROTOTYPE port, owner order 2026-10-08: "prototype with 1 + 2 + 3";
-  //     ported onto current main 2026-10-09 with the owner's "ok"). Three routes — compact, shutdown,
+  // --- remote lane administration. Three routes — compact, shutdown,
   //     renew — each OFF unless its own LANE_ADMIN_* flag says otherwise in THIS lane. Authority is the
   //     steer allowlist (lead + owner + MQTT_STEER_NICKS), and every decision is a pure function in
   //     laneadmin.ts so the gate can hold both truth-table halves without a terminal.
@@ -637,7 +635,7 @@ export default function (pi: ExtensionAPI) {
   };
 
   /** The handoff bar: a RESUME file for THIS seat, big enough to count. Same test the forced-handoff
-   *  gate applies before it blocks tools — reused, not reinvented. ACT B: the dirs searched are the
+   *  gate applies before it blocks tools — reused, not reinvented. The dirs searched are the
    *  configured durable dir and the scratch, and the ORDER is what the refusal text prints, so a lane
    *  refused for a file it believes it wrote can see which dir it was actually looked for in. */
   const resumeSearchDirs = (): string[] =>
@@ -654,14 +652,14 @@ export default function (pi: ExtensionAPI) {
     });
 
   /**
-   * ACT B — the handoff bar by **nick + freshness**, not by boot tag. Reads what is actually on disk in
+   * The handoff bar by **nick + freshness**, not by boot tag. Reads what is actually on disk in
    * the searched dirs and asks `pickResumeHandoff`, which is pure and headless-testable.
    *
-   * WHY THE TAG STOPPED BEING THE KEY, measured on this leg before the change: a well-formed 156-byte
-   * handoff at `RESUME-flash9-OLDTAG.md` was refused for a seat whose BOOT was `NEWTAG`, and the boot
-   * tag changes across every renew (s136: `…-01081a` → `…-059820`). Requiring it meant a renewed seat's
-   * NEXT renew is refused forever — the second false-negative generator the owner ordered cleared
-   * before a force envelope exists. `startedAt` is this process's own session start (set in the
+   * WHY THE TAG STOPPED BEING THE KEY: a well-formed 156-byte handoff named for an OLD boot tag was
+   * refused for a seat whose BOOT was a NEW tag, and the boot tag is re-minted by every renew.
+   * Requiring it meant a renewed seat's
+   * NEXT renew is refused forever — the second false-negative generator, which had to be cleared
+   * before a force envelope existed. `startedAt` is this process's own session start (set in the
    * session_start handler beside the exit-log breadcrumb), so a file older than it describes a DIFFERENT
    * task and still refuses: that is the paired negative, not an accident.
    *
@@ -672,14 +670,14 @@ export default function (pi: ExtensionAPI) {
     // FAST PATH, and it keeps the SHARED byte bar shared: `wakePathFor` is the same predicate the wake
     // pointer uses, so the gate and the pointer still cannot disagree about what counts as a handoff.
     // That sharing used to be a one-line expression, and a shipped cell pinned it by LITERAL; the
-    // literal moved with ACT B and the cell now pins the call. Deleting the shared bar to get green
+    // literal moved and the cell now pins the call. Deleting the shared bar to get green
     // would have been the weaken-the-check class; keeping the bar and re-pinning the call is not.
-    // F2: the exact-hit branch lives in wakePickPath now; the shipped cell pins THAT call instead.
+    // The exact-hit branch lives in wakePickPath now; the shipped cell pins THAT call instead.
     const hit = wakePathFor(resumeCandidates(), RESUME_MIN_BYTES);
     if (hit !== null) return { ok: true, picked: hit, reason: "exact boot-tag match", truncated: false };
     // The floor is BOOT_AT_MS — the moment this SESSION RUN started (the factory re-runs per
     // replacement, tabichat#3, so this is per-run, NOT process-wide; the earlier wording here claimed
-    // "this PROCESS" and is corrected forward, F2 leg). A previous session's handoff is therefore
+    // "this PROCESS" and is corrected forward). A previous session's handoff is therefore
     // refused by this gate, and that refusal is the deliberate law (a prior session cannot arm a
     // later one) — the wake pointer is where a pre-renew handoff must be admitted, see resumePickAt.
     const files = resumePathsOf().files;
@@ -687,7 +685,7 @@ export default function (pi: ExtensionAPI) {
   };
 
   /** The same disk walk the gate does, hoisted so the gate and the wake fallback cannot scan two
-   *  differently-shaped dirs (F2 leg, s269). Returns stats by name AND a name->full-path map,
+   *  differently-shaped dirs. Returns stats by name AND a name->full-path map,
    *  because `pickResumeHandoff` is pure and returns a NAME — the pointer needs a PATH. */
   const resumePathsOf = (): { files: ResumeFileStat[]; pathOf: Map<string, string> } => {
     const files: ResumeFileStat[] = [];
@@ -697,7 +695,7 @@ export default function (pi: ExtensionAPI) {
       try {
         names = readdirSync(d);
       } catch (e) {
-        // A dir that is not there is the ACT A case and is said by ACT A; here it only means this dir
+        // A dir that is not there is the missing-dir case, named in the refusal text; here it only means this dir
         // contributes no candidates. Keep the failure local and non-fatal.
         continue;
       }
@@ -720,14 +718,14 @@ export default function (pi: ExtensionAPI) {
   };
 
   /**
-   * F2 FIX — WHICH file the renewed seat's wake line points at, under an EXPLICIT floor.
+   * WHICH file the renewed seat's wake line points at, under an EXPLICIT floor.
    * Exact boot-tag hit first (fast path, unchanged predicate, shared byte bar); on a miss the
    * nick+freshness scan answers, because a lane may name its handoff from its session id, and the
    * boot tag the probe holds is the RENEWING run's — a name that cannot reliably pre-exist.
    * The floor is carried in (the caller passes the renewing session's BOOT_AT_MS at renew-request
    * time), NOT read from whatever closure happens to be live at callback time: the law is "written
    * during the session that asked to be replaced", and pinning it as a parameter keeps a future
-   * refactor from silently swapping in the new run's boot — the exact re-mint defect F2(b) named.
+   * refactor from silently swapping in the new run's boot — the exact re-mint defect this shape names.
    */
   const resumePickAt = (floorMs: number): string | null => {
     const { files, pathOf } = resumePathsOf();
@@ -766,8 +764,8 @@ export default function (pi: ExtensionAPI) {
     }
     // renew: the MQTT callback's context has no newSession(), but the COMMAND context does, and
     // pi's gate runs an extension command when expandPromptTemplates is set. So dispatch our own
-    // /renew rather than claim the route is closed (s135 finding; the ceiling asserted in the old
-    // text of this file was a misreading of a correct type fact).
+    // /renew rather than claim the route is closed. The ceiling asserted in the old
+    // text of this file was a misreading of a correct type fact.
     //
     // TWO THINGS THIS OWES, both measured against pi's 1.3.0 source, not assumed:
     //  1. await, because sendUserMessage runs the whole prompt path — including waitForIdle() and
@@ -803,17 +801,18 @@ export default function (pi: ExtensionAPI) {
       env: process.env,
       idle: ctx.isIdle(),
       resumeWritten: handoffOnDisk(),
-      // ACT A loud place (c) wired at the REMOTE bar only. The self-renew site keeps the shipped
+      // The loud refusal (c) is wired at the REMOTE bar only. The self-renew site keeps the shipped
       // sentence, because that lane is asking about its own dir and already printed the forced-handoff
       // path beside it; the remote case is the one where the asker is a different seat and the refused
       // seat must say WHERE it looked.
       resumeSearched: resumeSearchDirs(),
     });
-    // THE ANSWER (row 2, R3). The requester can only see that a publish happened, so the lane that
+    // THE ANSWER. The requester can only see that a publish happened, so the lane that
     // judged the request says what it decided, pinned to the request's own id. No id, nothing to
     // correlate — an old client's publish stays as unobservable as it was, and that is said in the
     // report rather than papered over. Bystander lanes answer nothing: the recipient field already
-    // decided they are not the addressee, and nine answers to one request is the noise Leg A ended.
+    // decided they are not the addressee, and nine answers to one request is the noise the bystander
+    // rule exists to end.
     const answerAdmin = (outcome: AdminOutcome, reason: string) => {
       const rid = typeof msg.id === "string" ? msg.id : "";
       if (!rid || !room) return;
@@ -837,7 +836,7 @@ export default function (pi: ExtensionAPI) {
     };
     if (!v.ok) {
       // speak=false means the recipient field named another lane: this seat is a bystander and
-      // stays silent, so one targeted request cannot make nine terminals talk (s136 Leg A).
+      // stays silent, so one targeted request cannot make nine terminals talk.
       if (v.speak) {
         ctx.ui.notify(`[tabichat][laneadmin] refused — ${v.reason}`, "warning");
         answerAdmin("refused", v.reason);
@@ -862,7 +861,7 @@ export default function (pi: ExtensionAPI) {
   let lastCtxWarnTokens = -1;
   // Lane breadcrumb state: how the newest turn ended, and when this session started.
   let lastTurn: EndState = "unknown";
-  // leg 907: the upstream-error OBSERVATION, held until the boundary that can report it.
+  // The upstream-error OBSERVATION, held until the boundary that can report it.
   // `agent_end` hands the messages but not the retry decision (`AgentEndEvent` has no
   // `willRetry`, and pi schedules the retry after this emit returns), so the note is built
   // there and printed at `agent_settled`. Every `agent_end` overwrites it, which is what
@@ -870,10 +869,9 @@ export default function (pi: ExtensionAPI) {
   let pendingUpstreamNote: string | null = null;
   let startedAt = 0;
   const EXIT_LOG = process.env.MQTT_EXIT_LOG || EXIT_LOG_DEFAULT;
-  // ask_owner was removed here (owner order 2026-10-08). An owner ask is plain text typed in the
-  // lane's own terminal — the owner's own ruling, decisions.md 2026-10-07: "i HATE the ask_owner
-  // tool". Nothing registers that tool name any more, and no other file in this extension uses
-  // the "[ask_owner]" notice tag.
+  // The `ask_owner` tool is deliberately absent. An owner ask is plain text typed in the
+  // lane's own terminal, not a registered tool. Nothing registers that tool name any more, and no other file in
+  // this extension uses the "[ask_owner]" notice tag.
 
   // Model-facing room access. /say and /room are human-typed slash commands,
   // which an agent cannot invoke; these tools are the agent's path to the room.
@@ -1046,7 +1044,7 @@ export default function (pi: ExtensionAPI) {
         }
         if (scope === "peers") {
           // the board, not the bare rows: this scope is the one a seat acts on, so it travels with
-          // the sentence naming what was measured (R-2717 item 3)
+          // the sentence naming what was measured
           return {
             content: [{ type: "text", text: renderPeersBoard([...peers.entries()], Date.now(), nick, room) }],
           };
@@ -1135,7 +1133,7 @@ export default function (pi: ExtensionAPI) {
         const lines = buffer.slice(-n);
         // showing them here counts as having seen them, so a later unseen_only
         // read does not hand the same lines over twice — the boundary is the STAMP, not the position
-        // (leg 804: a saturated window shifts; an index would silently eat later lines forever)
+        // (a saturated window shifts; an index would silently eat later lines forever)
         readCursor = lastSeq(buffer);
         return {
           content: [
@@ -1241,9 +1239,9 @@ export default function (pi: ExtensionAPI) {
   // The precedence itself lives in laneadmin.ts:resolveAutoRenewLayered — one implementation, both
   // truth-table halves tested there. A local copy here would be a second policy that can drift.
   // one per boot, hard: a seat that wakes and immediately sits back over the floor must not renew
-  // forever. Only a new process clears it — and PROCESS is now the literal word (tabichat#3 AC3).
+  // forever. Only a new process clears it — and PROCESS is now the literal word (tabichat#3).
   // The old closure `let autoRenewedThisBoot` reset on every replacement, because the factory body
-  // RE-RUNS then (measured s146: one renew, three BOOT tags, one process); a forked seat therefore
+  // RE-RUNS then (one renew, three BOOT tags, one process); a forked seat therefore
   // held a FRESH cap per fork and could renew once per copy. Both stores below live on globalThis
   // (keys declared above the factory), so the cap and the in-flight latch are true facts about the
   // PROCESS, not about whichever session is newest.
@@ -1271,7 +1269,7 @@ export default function (pi: ExtensionAPI) {
 
   // iid 20 — the socket handle, process-scoped for the same reason as the four stores above: the
   // factory body RE-RUNS on a session replacement, so a closure binding is per-RUN and the run that
-  // comes next cannot reach what this run left connected. Measured on one unchanged seat (leg 871):
+  // comes next cannot reach what this run left connected. Measured on one unchanged seat:
   // four established sockets and four live `message` handlers in one pi process, so every room line
   // was handled four times. `client` below is this run's view of that ONE holder, which is what lets
   // the incoming run close its predecessor's socket instead of racing a shutdown handler for it.
@@ -1285,9 +1283,9 @@ export default function (pi: ExtensionAPI) {
   // (see the first line of that handler), and the socket's callbacks read it through liveCtx()
   // — so the prior-client teardown below closes the socket and never the context.
   //
-  // CORRECTED BY MEASUREMENT 2026-10-18 — "EVERY session_start" was the wrong half. A session
+  // CORRECTED BY MEASUREMENT — "EVERY session_start" was the wrong half. A session
   // REPLACED by newSession() does NOT re-fire session_start in this process, so the handle kept the
-  // dead ctx and worker1 died on the very next inbound line (assertActive → uncaughtException → pi
+  // dead ctx and a seat died on the very next inbound line (assertActive → uncaughtException → pi
   // exits). The live context is handed to the `withSession` callback of newSession/fork/
   // switchSession (types.d.ts:292-335), and the /renew handler re-arms there. Two belts now: that
   // re-arm, and a try/catch around the inbound handler so a context mistake can never be a crash.
@@ -1375,14 +1373,13 @@ export default function (pi: ExtensionAPI) {
    * through here, because a security notice that kills the lane it is warning is worth nothing.
    *
    * WHAT ACTUALLY REACHES WHOM. The sentence here used to read "the message always reaches stderr,
-   * where a stale context cannot take it away", and `07b2bbd` made it false: the operator gets one
+   * where a stale context cannot take it away", and that became false: the operator gets one
    * line on the UI when the UI is reachable, and stderr carries it ONLY when it is not — the `catch`
    * in `emitNotice` decides that, and it is a fallback, never a second publish. The history of the
    * duplicate is worth keeping where it was made: this line used to go to the UI AND to
    * `console.error` on every call, which is how routine internal events ended up printed in the
-   * operator's input area (owner report 2026-10-24, verbatim: "this is written in your harness where
-   * normally the user would type! UNACCEPTABLE!"). The instinct behind it — never lose a warning, the
-   * lesson of the deaf-seat outage — was sound, but "never lose it" is a FALLBACK rule, not a
+   * operator's input area — an unacceptable face for a routine event. The instinct behind it — never
+   * lose a warning — was sound, but "never lose it" is a FALLBACK rule, not a
    * double-publish rule. An `error` line is additionally kept in the durable diagnostic file BEFORE
    * the UI is touched, so a seat with a dead UI still leaves a greppable record behind. A `warning` or
    * `info` line does neither: shown, not kept, and never echoed to the terminal.
@@ -1394,10 +1391,10 @@ export default function (pi: ExtensionAPI) {
   const buffer: RoomLine[] = [];
   // the mentions this lane actually received (@nick or @all), newest last. This is the answer to
   // "did that message arrive / how many times did it arrive", which a lane otherwise asserts from
-  // memory — and on 2026-10-08 a fresh lane asserted six re-dispatches that never reached the wire.
+  // memory — and a fresh lane once asserted six re-dispatches that never reached the wire.
   const inbox: RoomLine[] = [];
   // mentions received while the lane was BUSY, held here instead of stacking as one visible pi
-  // queue block each (option B; mentionq.ts). Drained oldest-first at `agent_settled`.
+  // queue block each (mentionq.ts). Drained oldest-first at `agent_settled`.
   const held: HeldMention[] = [];
   // the lane's RUN STATE, and the thing option B actually gates on. True between `agent_start` and
   // `agent_settled` — pi emits the settle from the run's `finally`, so the two are paired — and
@@ -1414,7 +1411,7 @@ export default function (pi: ExtensionAPI) {
   const acks: Ack[] = [];
   // who we believe is in the room, per-nick presence record, from beats + LWTs (P5)
   const peers = new Map<string, PeerSeen>();
-  // forced-handoff state (2026-10-07): fires once per crossing, lifts when the file exists, and gives
+  // forced-handoff state: fires once per crossing, lifts when the file exists, and gives
   // up loudly rather than hanging a lane
   let forced = false;
   let gaveUp = false;
@@ -1424,9 +1421,9 @@ export default function (pi: ExtensionAPI) {
   // how far chat_read has already shown the buffer (P3: unseen-since-cursor)
   let readCursor = 0;
   // The moment THIS factory run started, in ms — i.e. PER SESSION RUN, not per process: the factory
-  // body re-runs on every replacement and re-mints this const along with BOOT (tabichat#3, measured
-  // s146). The wording here used to claim "THIS process", and the F2 guinea run (s269) proved
-  // the contradiction with a BOOT face-change; corrected forward, digits unchanged. What the
+  // body re-runs on every replacement and re-mints this const along with BOOT (tabichat#3). The
+  // wording here used to claim "THIS process", which a BOOT face-change contradicted; corrected
+  // forward, digits unchanged. What the
   // floor really is: the start of the run that OWNS this closure. That is exactly right twice over —
   // the auto-renew gate refuses a handoff older than its own run (a prior session cannot arm a
   // later one, the deliberate law), and the wake callback closes over the RENEWING run's value, so
@@ -1499,7 +1496,7 @@ export default function (pi: ExtensionAPI) {
     // every room publish already mints its id here (`msgId(nick, ++msgSeq, BOOT)`), and a second
     // id-space would be a second answer to the same question.
     const sendId = typeof payload.id === "string" ? payload.id : "";
-    // leg 800, ONE tail for both publish branches: journal this send, keep the board tail, and —
+    // ONE tail for both publish branches: journal this send, keep the board tail, and —
     // only with the flag — publish the retained board. Kept out of the branch shape so the #10
     // gate's "registers on the topic it ACTUALLY used" structure stays byte-recognisable.
     const afterRoomSend = () => {
@@ -1575,8 +1572,8 @@ export default function (pi: ExtensionAPI) {
   /**
    * Pin a receipt to its own retained board, one topic per message id (P6). The
    * flat publish above only reaches whoever is connected at that moment; MQTT
-   * replays the retained copy to anyone who subscribes later, so a restarted lead
-   * can still answer "did worker1 get lead-agent-17?".
+   * replays the retained copy to anyone who subscribes later, so a restarted lane
+   * can still answer "did that recipient acknowledge message <id>?".
    */
   const publishCtlRetained = (id: string, payload: unknown) => {
     if (!room) return;
@@ -1626,7 +1623,7 @@ export default function (pi: ExtensionAPI) {
     for (const x of clear) client.publish(x.topic, clearPayload(), { retain: true });
     // NO OPERATOR LINE. This sweep is an hourly timer clearing THIS seat's own expired receipts — it needs
     // nothing from anyone, its effect is observable on the board itself, and announcing it into the UI (and
-    // previously into stderr too) is exactly the noise the owner reported on 2026-10-24 as a release blocker.
+    // previously into stderr too) is exactly the noise an hourly timer must not make.
     // The two lines that DO carry consequences stay: the watch-cap note above (`passed the ${ACK_RETAIN_MAX}-entry
     // watch cap`) and the ack-watch loss below (`[tabichat][ack-watch]`, an error). Silence here is not a lost alarm.
   };
@@ -1668,11 +1665,11 @@ export default function (pi: ExtensionAPI) {
     if (!peerRecordWins(peers.get(who), incoming)) return;
     peers.set(who, incoming);
   };
-  // ids already taken into the buffer (2026-10-07): one message must read as ONE line however
+  // ids already taken into the buffer: one message must read as ONE line however
   // many times it arrives - stacked handlers, retained replay, or a redelivery after a reconnect
   let seenRoomIds: string[] = [];
   // the SAME ledger for lane-admin requests (tabichat#3): one request id is one dispatch, however
-  // many copies the broker delivers or a reconnect redelivers. Room lines got this in 2026-10-07;
+  // many copies the broker delivers or a reconnect redelivers. Room lines had this;
   // control lines did not, and the missing half was the fork. A request with NO id (an older
   // client) can never be a repeat, so it is never deduped — noteRoomId says that, and says it
   // already at both halves.
@@ -1693,7 +1690,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     // #585 FIRST ACT, before every guard below: the handle is refreshed on every session start that
     // DOES fire, so a restart of the lane hands the live context to the callbacks the socket already
-    // holds. What this line does NOT cover (measured 2026-10-18, and the reason /renew has its own
+    // holds. What this line does NOT cover (and the reason /renew has its own
     // re-arm): a session replaced by newSession() inside this same process never re-fires here.
     currentCtx = ctx;
     // defensive reset: a restart inside the same process is not mid-run, whatever the last session
@@ -1701,7 +1698,7 @@ export default function (pi: ExtensionAPI) {
     runActive = false;
     // flag values are only readable from session_start (not the factory)
     if (pi.getFlag("tabichat") !== true) return;
-    // Owner ask 2026-10-07: the human loses track of which seat is which nick. Stamp this
+    // A person loses track of which seat is which nick. Stamp this
     // lane's own room nick in the footer (key sorts between "fs-gate" and "upstream"), set
     // before the client guard so a session restart inside the same process re-labels it.
     ctx.ui.setStatus("nick", `@${nick}`);
@@ -1722,7 +1719,7 @@ export default function (pi: ExtensionAPI) {
             `the flag/env layers only. Fix the file; a silently ignored policy file is how a box stops agreeing with itself.`,
           "warning",
         );
-      // TWO CHANNELS, deliberately, because a finding from the s136 scratch-lane test: pi's
+      // TWO CHANNELS, deliberately, because a scratch-lane run showed that pi's
       // "info"-level notify is TRANSIENT (a toast that clears), so the policy line I printed first
       // never reached the owner's reading of the screen while the warning-level ctx advisory beside
       // it stayed in scrollback. A setting that decides whether a seat destroys its own session must
@@ -1730,28 +1727,24 @@ export default function (pi: ExtensionAPI) {
       // "warning" (survives scrollback). OFF prints nothing — silence is the correct face for the
       // default, and thirteen seats printing "auto-renew off" is noise the recipient-field law exists
       // to prevent.
-      // THE STATUS LINE reads `tabichat 🍄`, not `auto-renew ON` (owner order 2026-10-23, verbatim:
-      // "i also want the tabichat mushroom feature implemented!", lifting his own 2026-10-19 park; the
-      // wording he asked for first was 2026-10-19 s143, verbatim: "when auto renew on, instead of saying
-      // in the harness \"auto-renew ON\" say \"tabichat 🍄\""). THE NOTIFY KEEPS ITS WORDS. It is the only
-      // printed answer to "why is this seat allowed to end its own session" — it names the CONFIG LAYER
-      // that armed the policy and the threshold — and the status-only reading is what is shipped while the
-      // owner's answer on "both" is outstanding. Restoring text here is a provenance decision, not a
-      // revert: if he says both, the layer + threshold need a new home, and that is his word to give.
+      // THE STATUS LINE reads `tabichat 🍄`, not `auto-renew ON`. THE NOTIFY KEEPS ITS WORDS. It is the
+      // only printed answer to "why is this seat allowed to end its own session" — it names the CONFIG
+      // LAYER that armed the policy and the threshold — and the status-only reading is what is shipped
+      // while the question "both surfaces?" is outstanding. Restoring text here is a provenance
+      // decision, not a revert: if both is chosen, the layer + threshold need a new home.
       // This is the FIRST emoji in a shipped UI string in this repo (`git grep -lP '[\x{1F300}-\x{1FAFF}]'`
       // → 0 files at `c51ec6d`), so its rendering is asserted by a human seat, not by this suite.
-      // O224 — THE KEY IS THE POSITION, so the key is part of the wording decision. pi sorts the footer's
+      // THE KEY IS THE POSITION, so the key is part of the wording decision. pi sorts the footer's
       // status line by KEY (`a.localeCompare(b)`, `dist/modes/interactive/components/footer.js:256` at
       // 1.4.0) and prints only the TEXT, so a badge's place on that line is decided by a string nobody
-      // sees. The old key `renew` sorted AFTER ponytail's `ponytail`, which parked the mushroom near the
-      // far right — the exact end of the line that `truncateToWidth` (`:260`) cuts FIRST on a narrow
+      // sees. The old key `renew` sorted AFTER the `ponytail` plugin's key, which parked the mushroom near
+      // the far right — the exact end of the line that `truncateToWidth` (`:260`) cuts FIRST on a narrow
       // terminal. `nick-tabichat` sorts immediately AFTER `nick`, so the seat reads `@<nick> tabichat 🍄
-      // … ponytail …`, which is the order the owner asked for (verbatim: "i need this changed to `@flash4
-      // tabichat (mushroom) -- ponytail plugin stuff`"). It is asserted by a cell in
+      // … ponytail …`. It is asserted by a cell in
       // tools/test_laneadmin.ts that runs THE SAME comparator over the REAL key set, not by this comment.
       // Do not "tidy" this key back to `renew`: it is not a name clash, it is a sort slot. This comment
       // sits ABOVE the `if` on purpose — the `OFF prints nothing` cell reads that block within a bounded
-      // window, and burying this note inside it would have silently broken a check that was not about me.
+      // window, and burying this note inside it would silently break a check that is not about it.
       if (autoRenewArmed) {
         ctx.ui.setStatus("nick-tabichat", "🍄 tabichat");
         ctx.ui.notify(
@@ -1760,17 +1753,16 @@ export default function (pi: ExtensionAPI) {
           "warning",
         );
       }
-      // ORDER CHANGED BY OWNER ORDER 2026-10-24, verbatim: "move the mushroom! \"@flash2 (MUSHROOM IF AUTORENEW
-      // ON) tabichat\"" — glyph first, then the word. THE KEY IS UNCHANGED (`nick-tabichat`), so O224's sort slot
-      // and its neighbours are untouched; only the printed text moved. Re-paired in tools/test_laneadmin.ts (:656,
-      // :734, :736) rather than weakened: those cells still require exactly ONE mushroom in the shipped bytes and
-      // still require the persistent footer status to exist. NOTE WHERE THIS COMMENT SITS: below the `if`, on
-      // purpose — the `OFF prints nothing` cell reads the block ABOVE within a bounded window, and the six lines I
-      // first put in there broke that cell (rc 1) before I moved them. The warning at the top of that block was
-      // true of me specifically.
+      // ORDER: glyph first, then the word. THE KEY IS UNCHANGED (`nick-tabichat`), so the sort slot
+      // and its neighbours are untouched; only the printed text moved. Re-paired in
+      // tools/test_laneadmin.ts rather than weakened: those cells still require exactly ONE mushroom in
+      // the shipped bytes and
+      // still require the persistent footer status to exist. NOTE WHERE THIS COMMENT SITS: below the
+      // `if`, on purpose — the `OFF prints nothing` cell reads the block ABOVE within a bounded window,
+      // and prose placed inside that block breaks the cell.
     }
-    // ACT A loud place (a): a seat says at START, on the two channels that survive scrollback, where its
-    // handoffs will go and whether that place is durable. The status line is the one the owner can read
+    // A seat says at START, on the two channels that survive scrollback, where its
+    // handoffs will go and whether that place is durable. The status line is the one a person can read
     // after the fact; stderr is the one a later audit can grep. Before this, the whole question was
     // invisible: a lane wrote its handoff into tmpfs on a box whose configured dir could not be created,
     // and nothing anywhere said that the notes would not outlive the boot.
@@ -1783,8 +1775,8 @@ export default function (pi: ExtensionAPI) {
       // told its log is broken.
       if (!DIAG.target.ok && !DIAG.target.deliberate)
         ctx.ui.notify(`[tabichat][diag] ${DIAG.target.reason}`, "warning");
-      // THE FOOTER ENTRY IS GONE — owner order 2026-10-24, verbatim: "GET RID OF THIS: 'RESUME /tabith/resume'
-      // WHY IS THIS IN THERE?! it does not need to be printed!" What REMAINS is the loud half, and it is the
+      // THE FOOTER ENTRY IS GONE: a status line has no business printing a filesystem path.
+      // What REMAINS is the loud half, and it is the
       // half that matters: a refusal still goes to stderr (greppable by a later audit) AND to a session-start
       // notify, and a non-durable dir still goes to stderr. The footer only ever displayed a path that is
       // already in the launcher env and in every lane's own RESUME filename; the durable-vs-tmpfs fact is
@@ -1796,7 +1788,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`[tabichat][ctx] ${fallbackNote(RESUME_SCRATCH)}`, "warning");
       } else if (!durable) {
         // Consequence-bearing, so it stays operator-visible — on the NOTIFY surface plus the file,
-        // not as raw text in the input area, which is what the owner's order is about (leg 517).
+        // not as raw text in the input area, which is the point of keeping it off that surface.
         const nonDurableNote = `[tabichat][ctx] ${fallbackNote(RESUME_DIR)}`;
         diag("WARN", nonDurableNote);
         ctx.ui.notify(nonDurableNote, "warning");
@@ -1818,7 +1810,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify("[tabichat] --tabichat given but no room: pass --room <name> or set MQTT_ROOM", "warning");
       return;
     }
-    // ROOM JOURNAL, resolved and replayed BEFORE the socket can deliver a live line (leg 800).
+    // ROOM JOURNAL, resolved and replayed BEFORE the socket can deliver a live line.
     // The rules are in roomlog.ts; this block is the wiring and the one load-bearing act: take the
     // newest lines back into the buffer as HISTORY — no injection, no re-journal, cursor past them.
     {
@@ -1833,7 +1825,7 @@ export default function (pi: ExtensionAPI) {
         // Either way NOTHING is written and the reason says which knob answered.
         diag(roomLogTarget.deliberate ? "INFO" : "ERROR", `[tabichat][roomlog] ${roomLogTarget.reason}`);
       } else {
-        // boot order is the CONTRACT (leg 804 D2): modes first (`ensure`, dir 0700 / file 0600),
+        // boot order is the CONTRACT: modes first (`ensure`, dir 0700 / file 0600),
         // then the cap trim of THIS seat's own file (the single-writer moment), then the replay.
         try {
           ROOMLOG_IO.ensure(roomLogTarget.path);
@@ -1864,7 +1856,7 @@ export default function (pi: ExtensionAPI) {
           added++;
         }
         // history is not news: the first unseen read must start AFTER this block. The boundary is
-        // the newest STAMP, not an array position (leg 804 D1), and it moves only when the block
+        // the newest STAMP, not an array position, and it moves only when the block
         // actually added lines — a same-process re-start where everything deduped must not silently
         // mark still-unread LIVE lines as seen.
         if (added > 0) readCursor = lastSeq(buffer);
@@ -1893,7 +1885,7 @@ export default function (pi: ExtensionAPI) {
       );
     }
     // A transport refusal is LOUD and it is FINAL: no socket, no retry, and the reason printed on
-    // two channels (a transient notify is unreadable after the fact — the s136 finding that made
+    // two channels (a transient notify is unreadable after the fact — the finding that made
     // the renew notice go to setStatus as well). A lane that is offline and says why is recoverable;
     // a lane that is plaintext and believes it is encrypted is the thing the feature row exists to
     // stop, and it is the one configuration a mis-launched seat cannot detect from the inside.
@@ -1931,15 +1923,15 @@ export default function (pi: ExtensionAPI) {
     const prior = endPriorClient(MQTT_CLIENT, "session_start, before connect");
     client = null;
     if (prior.unhooked || !prior.ended || prior.destroyed) diag("WARN", `[tabichat][client] ${prior.note}`);
-    // iid 20, leg 889 Cell B — a MEASUREMENT, not a behaviour change: what the holder held when this
+    // iid 20 — a MEASUREMENT, not a behaviour change: what the holder held when this
     // run arrived, beside how many sockets THIS PROCESS holds to the broker right now. Zero `[tabichat][client]`
     // rows means two different things without it — an empty store is what a working shutdown-first renewal
     // leaves behind AND what a channel the run could never reach looks like — so `storeShared=false count=2`
     // is the guinea's own face, printed by the code rather than inferred from silence. The tag is
-    // `[tabichat][client-face]`, deliberately NOT `[tabichat][client]`, so leg 888's two greps keep their
-    // meaning; grep `storeShared=` to read this one. `count` comes from node's own handle list rather than
+    // `[tabichat][client-face]`, deliberately NOT `[tabichat][client]`, so the two greps that read the
+    // latter keep their meaning; grep `storeShared=` to read this one. `count` comes from node's own handle list rather than
     // an `ss` shell-out, because `node:child_process` has no stub in this repo's scoped typecheck and the
-    // two ways to make it compile (a new stub, or a new APPROVED entry) are both outside this leg's fence;
+    // two ways to make it compile (a new stub, or a new APPROVED entry) are both outside this file's fence;
     // `process._getActiveHandles()` is this pid's view, needs no import, and answers "?" when no port is
     // present rather than inventing one. shortcut: counts connected handles on the broker PORT only, no
     // host check; upgrade if a seat ever faces two brokers on one port.
@@ -1991,10 +1983,10 @@ export default function (pi: ExtensionAPI) {
       if (HIST_BOARD) client!.subscribe(histWild(room));
       // ONE control filter, not two (tabichat#3). MQTT 3.1.1 §4.7: `sport/#` ALSO matches `sport`,
       // and mosquitto 2.1.2 delivers one copy PER matching subscription — measured on the two-seat
-      // fixture (s146): subscribing to BOTH `_ctl` and `_ctl/#` yields 2 copies of every control
+      // fixture: subscribing to BOTH `_ctl` and `_ctl/#` yields 2 copies of every control
       // message; `_ctl/#` alone yields 1. The seat used to hold both filters, so every lane-admin
       // request was adjudicated TWICE; on a heavy seat both dispatches beat the stale-ctx window
-      // and ran two concurrent newSession() calls — the fork of s145 (three live sessions, three
+      // and ran two concurrent newSession() calls — a fork (three live sessions, three
       // boot tags, every @all line paid per copy). Requests, receipts and boards all live UNDER
       // `_ctl`, so the wildcard alone hears the whole control tree, exactly once each.
       client!.subscribe(`${controlTopic(room)}/#`);
@@ -2003,7 +1995,7 @@ export default function (pi: ExtensionAPI) {
       beat();
       if (!hb) hb = setInterval(beat, HB_MS);
       // #10: sweep on a fraction of the window so a loss is named close to the window, not one full
-      // window late. "Window 0 starts no timer" was TRUE at 488 and became a leak the moment shape (ii)
+      // window late. "Window 0 starts no timer" became a leak the moment shape (ii)
       // made this timer the board's ONLY clear path — so it is started unconditionally and its period
       // is a third of the tightest live window. A lane that silences the alarm still clears receipts.
       if (!ackSweep) {
@@ -2031,10 +2023,10 @@ export default function (pi: ExtensionAPI) {
       // every socket callback to read the handle, and the belt is what makes reading it safe.
       notifySafely(liveCtx(), `[tabichat] error: ${redactUrl(String(err?.message ?? err))}`, "error");
     });
-    // A stale or broken context inside this callback must never end the seat. On 2026-10-18 a
-    // remote renew replaced the session, the handle kept the dead ctx, `liveCtx().isIdle()` threw
-    // `assertActive` in here, and the throw escaped through the MQTT emitter as an uncaughtException
-    // — pi exited and the lane's work stopped mid-turn. The fix for THAT is the withSession re-arm
+    // A stale or broken context inside this callback must never end the seat. A remote renew can
+    // replace the session while this handle keeps the dead ctx, `liveCtx().isIdle()` then throws
+    // `assertActive` in here, and the throw escapes through the MQTT emitter as an uncaughtException
+    // — pi exits and the lane's work stops mid-turn. The fix for THAT is the withSession re-arm
     // above; this is the belt, because a socket callback is not allowed to be a crash vector. The
     // error is LOUD (full text on stderr) and the line is dropped, so the lane survives and the room
     // can still hear from it. This catches nothing of the ack/queue/bookkeeping logic's own correctness.
@@ -2043,12 +2035,12 @@ export default function (pi: ExtensionAPI) {
         handleInbound(topic, payload);
       } catch (e) {
         // ONE LINE, no stack. The first version of this belt printed `e.stack` and the lane's TUI
-        // rendered it as raw text — worker1's renew left "at Socket.ondata (node:internal/streams/
-        // readable:1009:22)" sitting in the harness (owner report, 2026-10-18). Those frames are
+        // rendered it as raw text — a renewed seat left "at Socket.ondata (node:internal/streams/
+        // readable:1009:22)" sitting in the harness. Those frames are
         // node internals: they name nothing about the lane and read like corruption of the seat.
         // The detail worth keeping is WHICH error on WHICH topic. TABICHAT_ERR_STACK=1 restores the
-        // full trace — into the FILE now, which is where a trace belongs and was always where a person
-        // reads one (leg 517; the gate in diaglog.ts is the same single `stackOn` switch).
+        // full trace — into the FILE now, which is where a trace belongs and is where a person
+        // reads one (the gate in diaglog.ts is the same single `stackOn` switch).
         noticeLost("inbound-handler-threw",
           `[tabichat] inbound line dropped, handler threw: ${errOneLine(e)} (topic ${topic})`,
           { stack: e instanceof Error ? e.stack ?? String(e) : String(e) },
@@ -2140,7 +2132,7 @@ export default function (pi: ExtensionAPI) {
         upsertPeer(msg.nick, msg.status, msg.ts);
         return;
       }
-      // A2 TAIL BOARD (leg 800, flag-gated): a peer's retained last-ten, merged as HISTORY — never
+      // TAIL BOARD (flag-gated): a peer's retained last-ten, merged as HISTORY — never
       // injected, never re-journaled, deduped against the live copy by the id ledger. Authorship is
       // the TOPIC leaf (what the broker's ACL let that certificate write), same rule as msg/<leaf>.
       if (topic.startsWith(`chat/${room}/hist/`)) {
@@ -2207,11 +2199,11 @@ export default function (pi: ExtensionAPI) {
         ...(inboundTo ? { to: inboundTo } : {}),
       };
       pushRoomLine(buffer, inboundLine, BUFFER_MAX);
-      // leg 800: every line the seat TAKES INTO the buffer is journaled — control receipts,
+      // every line the seat TAKES INTO the buffer is journaled — control receipts,
       // presence and boards returned above and never reach here.
       journalAppend("in", { id: msg.id ?? "", nick: from, to: inboundTo, ts: inboundLine.ts, message: text });
       upsertPeer(from, "online", Date.now());
-      // FIELD-FIRST, TEXT-FALLBACK (owner request 2026-10-16): a payload that carries a recipient
+      // FIELD-FIRST, TEXT-FALLBACK: a payload that carries a recipient
       // field is delivered by that field ALONE, so an address quoted in prose — the all-lanes value
       // included — decides nothing. Only a fieldless line (a human tabichat_cli.py post, /say, an older
       // client) still gets the whole-body scan, and that scan stays whole-token: "@allen" must not
@@ -2250,7 +2242,7 @@ export default function (pi: ExtensionAPI) {
         });
         if (v.kind === "superseded") {
           ctlHead = `${supersededHeader(ctl.channel, v.by)}\n`;
-          // TWO CHANNELS, the s136 rule: a notify is transient and this lane may never re-read the
+          // TWO CHANNELS: a notify is transient and this lane may never re-read the
           // body it is about to receive. stderr is what a later audit can still find.
           diag("INFO",
             `[tabichat][ctl] superseded control line from ${from} on "${ctl.channel}" ` +
@@ -2267,8 +2259,7 @@ export default function (pi: ExtensionAPI) {
       }
       const head =
         (cls === "steer" ? `${steerHeader(from)}\n\n` : "") + ctlHead;
-      // ONLY a line that addresses this lane reaches its context (roommsg.ts:planInbound, owner
-      // ruling 2026-10-08). An unaddressed line stays in the buffer, where chat_read can still
+      // ONLY a line that addresses this lane reaches its context (roommsg.ts:planInbound). An unaddressed line stays in the buffer, where chat_read can still
       // reach it, and is otherwise silent: no flood, and nothing to mistake for an instruction.
       const plan = planInbound({ mentioned, head, line: inboundLine });
       if (plan.kind === "buffer-only") return;
@@ -2276,8 +2267,7 @@ export default function (pi: ExtensionAPI) {
       if (inbox.length > BUFFER_MAX) inbox.shift();
       owedTurns++;
       if (owedTurns > 20) owedTurns = 20;
-      // OPTION B (owner 2026-10-09; gate corrected 2026-10-11). A busy lane no longer collects one
-      // visible pi queue block per mention: EVERY non-steer mention that arrives while the run is
+      // A busy lane collects no visible pi queue block per mention: EVERY non-steer mention that arrives while the run is
       // in flight waits HERE and shows as one footer line, then drains at `agent_settled` in
       // arrival order. Delivery is DEFERRED, never dropped: the line is already in `inbox`
       // (citable by chat_read) and the sender was acked above, before this decision. Honoured
@@ -2515,9 +2505,9 @@ export default function (pi: ExtensionAPI) {
   //   percent  — at or over CTX_WARN of the DECLARED window (useless if that declaration lies)
   //   tokens   — at or over the absolute floor MQTT_CTX_TOKENS sets, lifted to the part of a large
   //              declared window where a trip still means something (ctxEffectiveFloor)
-  // ROOM ONCE, to lead + owner. THE FOOTER WIDGET IS GONE — owner order 2026-10-24, verbatim: "GET RID OF THE
-  // CTX REPORT!" (his specimen bottom line read `ctx 10% (106k/977k) [tabichat] 1 mention(s) held — the lane is
-  // busy; chat_read scope=inbox @dove tabichat 🍄 RESUME /tabith/resume`). `ctxStatusText` stays exported and
+  // ROOM ONCE, to lead + owner. THE FOOTER WIDGET IS GONE: a footer entry that prints a measurement on
+  // every turn is noise on the line a person reads, and the number is available where it is asked for.
+  // `ctxStatusText` stays exported and
   // tested in ctxwarn.ts so the number is still one call away if the advisory needs it; only the always-on
   // footer entry is removed. A seat already booted keeps its old footer until it restarts — this is boot-time
   // wiring, not a live mutation, and the same is true of the badge key change in mentionq.ts.
@@ -2531,8 +2521,8 @@ export default function (pi: ExtensionAPI) {
     forced = rearmForce(forced, s.percent, CTX_FORCE);
     if (gaveUp && (s.percent ?? 0) < CTX_FORCE) gaveUp = false;
     if (forceDue(s, CTX_FORCE, forced) && !gaveUp) {
-      // ACT A loud place (b): the old loop tried each dir and fell through on ANY throw, in silence, so
-      // every lane on this box wrote its handoff into tmpfs without ever saying so. The dir that was
+      // The old loop tried each dir and fell through on ANY throw, in silence, so
+      // every lane wrote its handoff into tmpfs without ever saying so. The dir that was
       // chosen is now announced, and a scratch choice is announced AS scratch.
       let chosen = "";
       for (const d of [RESUME_DIR, RESUME_FALLBACK]) {
@@ -2574,12 +2564,12 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("[tabichat][ctx] forced handoff armed; no room connection, so nothing was posted", "warning");
       }
     }
-    // AUTO-RENEW (s136 Leg E): a seat renews ITSELF at the floor once its handoff exists. This runs
+    // AUTO-RENEW: a seat renews ITSELF at the floor once its handoff exists. This runs
     // BEFORE the advisory's early return, because "nothing to warn about" is exactly when the renew
     // decision still has to be made. The decision is a pure function (laneadmin.ts:autoRenewVerdict,
-    // both truth-table halves tested), and the ACT reuses runAdmin — the same path a remote renew
+    // both truth-table halves tested), and the action reuses runAdmin — the same path a remote renew
     // travels. That reuse is the safety property, not a shortcut: a self-renew inherits the context
-    // re-arm (Leg C) and the wake pointer (Leg D) because it is literally the same call, so there is
+    // re-arm and the wake pointer because it is literally the same call, so there is
     // no second, less-tested route to a replaced session.
     const arv = autoRenewVerdict({
       armed: autoRenewArmed,
@@ -2674,22 +2664,22 @@ export default function (pi: ExtensionAPI) {
   });
 
   // A provider error ends a run and leaves the process alive and quiet, which looks exactly
-  // like a lane that stopped working. This handler is the OBSERVATION only (leg 907). pi hands
+  // like a lane that stopped working. This handler is the OBSERVATION only. pi hands
   // the messages here but not the retry outcome: `AgentEndEvent` carries no `willRetry` field
   // (pi annotates only its own session-listener copy in `agent-session.js`), and the retry
   // decision runs in `_handlePostAgentRun()` AFTER this emit returns. So nothing user-visible
   // prints from here — the handler below at `agent_settled` carries the notice, the boundary
   // that promises no automatic retry, compaction or queued continuation will run.
   //
-  // What deliberately STAYS at agent_end (leg 907 AC4): `lastTurn = endStateOf(msgs)` and the
+  // What deliberately STAYS at agent_end: `lastTurn = endStateOf(msgs)` and the
   // exit breadcrumb beside it are per-run facts, and this is the boundary that receives the
   // run's messages. Nothing here goes to the room.
   //
-  // The 2026-10-25 Q8 ruling is unchanged and now reads at the emit site below: the
+  // The shape is unchanged and now reads at the emit site below: the
   // product tag AT THE FRONT, UPSTREAM named as the cause, and no restatement of the
   // provider's payload, which pi already prints. Both halves live in buildNote, so the footer
   // and the toast cannot drift into two shapes: neither site adds or moves a tag. This reverses
-  // the trailing-tag form shipped on 2026-10-25 (leg 537); see test_notice_prefix.ts for the
+  // the trailing-tag form shipped earlier; see test_notice_prefix.ts for the
   // emit-site lock.
   pi.on("agent_end", async (event) => {
     const msgs = ((event as { messages?: unknown }).messages ?? []) as EndMessage[];
@@ -2697,7 +2687,7 @@ export default function (pi: ExtensionAPI) {
     pendingUpstreamNote = upstreamErrorNote(msgs);
   });
 
-  // leg 907 — the notice's boundary. `agent_settled` is pi's final, notification-only event:
+  // The notice's boundary. `agent_settled` is pi's final, notification-only event:
   // "Fired after an agent run has fully settled and no automatic retry, compaction, or queued
   // continuation will run" (AgentSettledEvent, types.d.ts). That is the only point where a seat
   // may say anything about retries, and all it may say is what settle guarantees: nothing more
@@ -2835,10 +2825,10 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // The renewal door. Since s136 Leg B the REMOTE route dispatches this very command, so both
+  // The renewal door. The REMOTE route dispatches this very command, so both
   // doors run through the code below — which is why the ctx handling here is the careful kind.
   //
-  // THE 2026-10-18 LESSON, bought with worker1's session: `pi.on("session_start")` does NOT re-fire
+  // THE LESSON, bought with a real session: `pi.on("session_start")` does NOT re-fire
   // for the replacement session, so the #585 handle (`currentCtx`, refreshed there) stays bound to
   // the DEAD runner and the next inbound line throws `assertActive` out of the MQTT callback — no
   // catch, `uncaughtException`, pi exits. pi's own type says where the live context is handed over:
@@ -2862,10 +2852,10 @@ export default function (pi: ExtensionAPI) {
         const latch = renewInFlightRefusal(stamp, Date.now());
         if (!latch.ok) {
           ctx.ui.notify(`[tabichat][renew] ${latch.reason}`, "warning");
-          // TWO CHANNELS (the s136 finding, and this refusal is exactly its class): a transient
+          // TWO CHANNELS, and this refusal is exactly the class that needs them: a transient
           // toast is unreadable after the fact, and a REFUSAL is a decision somebody must be able
           // to find later. The second channel is the durable diagnostic file now, not the terminal
-          // the operator is typing into (leg 517).
+          // the operator is typing into.
           diag("WARN", `[tabichat][renew] ${latch.reason}`);
           return;
         }
@@ -2874,9 +2864,9 @@ export default function (pi: ExtensionAPI) {
       // THE LEAD HOLD, and it lives HERE rather than at each caller on purpose: the human typing
       // /renew, a remote admin request and auto-renew at the floor all land in this handler, so one
       // insertion covers all three doors. A lead seat that replaces its session without telling the
-      // room is the booked s108 failure produced automatically — lanes finish real work, address
-      // `lead-agent`, and the verdict lands nowhere. The requirement already existed as a promise in a seat
-      // contract; a promise this office has broken on the record is not a control.
+      // room is a failure this office has produced on the record — lanes finish real work, address
+      // the lead, and the verdict lands nowhere. The requirement already existed as a promise in a seat
+      // contract; a promise broken on the record is not a control.
       //
       // Awaited, deliberately: session_shutdown closes the socket after ~1 s per publish, and a
       // fire-and-forget hold would race the very session change that makes it necessary. to="all"
@@ -2895,7 +2885,7 @@ export default function (pi: ExtensionAPI) {
               (err) => (err ? reject(err) : resolve()),
             );
           });
-          // iid 29 (leg 998, C-2) — this hand-off IS a room line: `chat/<room>`, `to:"all"`, `steer:true`,
+          // iid 29 — this hand-off IS a room line: `chat/<room>`, `to:"all"`, `steer:true`,
           // minted by this seat, and it reaches the socket on its own callback rather than through
           // `publishRoom`, so the counter that decides the end-of-turn notice has to be moved by it too.
           // Without it the notice kept one known bypass: a lead whose turn produced only the hold was told
@@ -2936,15 +2926,15 @@ export default function (pi: ExtensionAPI) {
           // the dead `pi.sendUserMessage` and be re-parked instead of delivered.
           drainPark?.("renew re-arm");
           next.ui.notify("[tabichat][renew] new session started", "info");
-          // SECOND ACT, and this is the wake half (s136 Leg D): a renewed seat is an ERASED seat, and
-          // nothing above makes it read its own handoff — worker1 woke at a fresh prompt with
+          // This is the wake half: a renewed seat is an ERASED seat, and
+          // nothing above makes it read its own handoff — a seat woke at a fresh prompt with
           // RESUME-<lane>-*.md already on disk and pi told it "no prior context". The decision and the
           // delivery live in laneadmin.ts:wakeRenewedSeat so the gate can EXECUTE them against a fake
           // next, not grep for them; it never throws, so a cosmetic miss cannot become a dead seat.
           await wakeRenewedSeat(next, {
             resumeCandidates,
             minBytes: RESUME_MIN_BYTES,
-            // F2 FIX (a)+(b): on an exact-name miss the pointer runs the nick+freshness scan under
+            // On an exact-name miss the pointer runs the nick+freshness scan under
             // the FLOOR CARRIED FROM THIS RUN (the renewing session's BOOT_AT_MS). This closure is
             // the renewing run's — withSession is invoked later but the function object and its
             // lexical BOOT_AT_MS were minted here — and passing it explicitly makes that a contract

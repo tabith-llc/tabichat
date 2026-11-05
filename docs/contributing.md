@@ -72,7 +72,7 @@ env -u MQTT_LEAD_NICK ~/.bun/bin/bun src/tools/<gate>.ts
 
 Without `-u MQTT_LEAD_NICK` those two gates used to return confident reds
 that were your environment, not the tree. They no longer need the flag:
-since leg 540 each one scrubs `MQTT_LEAD_NICK` and `MQTT_OWNER_NICK` before it
+each one scrubs `MQTT_LEAD_NICK` and `MQTT_OWNER_NICK` before it
 imports the module that reads them, so the result is the same in any terminal.
 The flag stays harmless, and other gates may still read the environment. The
 python gates run as `python3 src/tools/test_broker.py` and

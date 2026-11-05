@@ -2,7 +2,7 @@
 // Licensed under the Business Source License 1.1 (the "License"); you may not use this file
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
-// one-shot lane admin request (PROTOTYPE, owner order 2026-10-08):
+// one-shot lane admin request:
 //   bun tools/lane_admin.mjs <by-nick> <target-nick> <renew|compact|shutdown>
 //
 // Publishes ONE control-topic request. It is a request, never a command: the lane that would
@@ -12,7 +12,7 @@
 // matching LANE_ADMIN_* flag must be on in that lane, and renew/shutdown additionally require a
 // RESUME file for that seat.
 //
-// `to` is REQUIRED and it is the only thing that decides delivery (s136 Leg A): pass a nick,
+// `to` is REQUIRED and it is the only thing that decides delivery: pass a nick,
 // a comma-separated list, or the literal `all` when fleet-wide is genuinely what you mean. A
 // publish that names nobody is inert on every lane by design — fan-out is never an accident.
 //
@@ -21,9 +21,9 @@
 // in a lane's mouth. This tool adds no new authority; it only speaks the admin dialect that
 // the receiving lane then judges against its own allowlist and flags.
 //
-// ─── IT SPEAKS THE SAME TRANSPORT AS THE LANES (ticket row 2, s142 blocker 1) ─────────────
-// Until 2026-10-23 this file called `mqtt.connect(broker.url)` with NO options at all. The fleet
-// moved to `mqtts://` on 2026-10-19, so every remote renew / compact / shutdown request died at the
+// ─── IT SPEAKS THE SAME TRANSPORT AS THE LANES (ticket row 2) ─────────────
+// Until this file called `mqtt.connect(broker.url)` with NO options at all. The fleet
+// moved to `mqtts://`, so every remote renew / compact / shutdown request died at the
 // broker — `broker error: self signed certificate`, rc 4 — BEFORE any lane ever judged it. Measured
 // again on this leg at `main` `68e4973` against the throwaway fixture broker: rc 4, same
 // message, with MQTT_TLS_CAFILE exported (the variable was never read, because there was no TLS
@@ -35,13 +35,13 @@
 // reason printed, because a control-channel tool that quietly falls back to plaintext is exactly the
 // silent downgrade the design row forbids.
 //
-// ─── IT REPORTS AN OUTCOME, NOT A PUBLISH (ticket row 2, R3) ─────────────────────────────
-// Until 2026-10-18 this printed `published lane-admin <action> ...` and exited 0 whatever
+// ─── IT REPORTS AN OUTCOME, NOT A PUBLISH (ticket row 2) ─────────────────────────────
+// Until this printed `published lane-admin <action> ...` and exited 0 whatever
 // happened, because publishing is the only thing a one-shot publisher can see. That lie cost a
 // seat: `lane_admin.mjs lead-agent lead-agent renew` was REFUSED by the self-address guard, the tool said
 // `published`, exit 0, and the lead planned on a refresh that had not happened
-// (RESUME-wren-015434 §9). The lead seat reproduced the face twice more on 2026-10-18 (worker1, refused
-// at the RESUME bar, same `published` + rc 0). So the request now carries an `id`, the lane that
+// (the sheet that lane wrote says so). The lead seat reproduced the face twice more — refused
+// at the RESUME bar, same `published` + rc 0. So the request now carries an `id`, the lane that
 // JUDGES it answers on `chat/<room>/_ctl/admin/<id>` (laneadmin.ts: adminResultPayload), and this
 // tool waits for that answer and exits on it:
 //
@@ -51,8 +51,8 @@
 //   NOTHING  no lane answered inside LANE_ADMIN_ACK_MS — unknown, NOT success   rc 3
 //
 // ARMED and RUN are still not proof the session changed. For renew that observable is the target's
-// BOOT TAG moving on its next post plus its own wake line (row 2, R4; proven live on a real seat
-// 2026-10-18 15:45). This tool says what the lane decided, never DONE.
+// BOOT TAG moving on its next post plus its own wake line (row 2; proven live on a real seat).
+// This tool says what the lane decided, never DONE.
 //
 // Exit codes: 0 taken · 1 refused · 2 usage · 3 no answer · 4 broker error (including no broker
 // configured — the refusal below, which is a broker error from the caller's point of view).
@@ -106,7 +106,7 @@ const room = process.env.MQTT_ROOM ?? "tabith";
 // so a request can never be confused with a room post's receipt. Sanitised by the same function
 // that builds the topic, so nothing here can address a level the id does not belong to.
 const id = `${by}-admin-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
-// SHAPE (ii), leg 496: the answer now lives under the ANSWERER's nick, so the requester subscribes the
+// SHAPE (ii): the answer now lives under the ANSWERER's nick, so the requester subscribes the
 // one-level wildcard and still correlates by the id in the payload. One subscription, one step — same
 // as before; what changed is only who owns the leaf that lands under it.
 const resultTopic = adminResultWild(room, id);

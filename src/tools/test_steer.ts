@@ -17,7 +17,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// TEST-ENV SENTRY (leg 540). These checks assert the DEFAULT lead nick, but `LEAD_NICK` is computed
+// TEST-ENV SENTRY. These checks assert the DEFAULT lead nick, but `LEAD_NICK` is computed
 // once at module load in ctxwarn.ts, so a seat whose shell exports MQTT_LEAD_NICK (every lead launch
 // line does) made 9 honest checks read RED with nothing wrong in the product. A static `import` is
 // hoisted above every statement in this file, so deleting the vars in the body cannot help — the
@@ -55,10 +55,10 @@ const never = (name: string, hay: string, needle: string) =>
 check("env var name is the documented one", STEER_NICKS_ENV, "MQTT_STEER_NICKS");
 check("floor is lead + owner", parseSteerNicks(undefined, "owner"), ["lead-agent", "owner"]);
 check("owner nick is taken as given", parseSteerNicks(undefined, "ops"), ["lead-agent", "ops"]);
-check("configured list ADDS, it does not replace", parseSteerNicks("flash1, flash2", "owner"),
-  ["lead-agent", "owner", "flash1", "flash2"]);
-check("a configured list cannot drop the lead", parseSteerNicks("flash1", "owner").includes("lead-agent"), true);
-check("space-separated works", parseSteerNicks("flash1 flash2", "owner"), ["lead-agent", "owner", "flash1", "flash2"]);
+check("configured list ADDS, it does not replace", parseSteerNicks("lane1, lane2", "owner"),
+  ["lead-agent", "owner", "lane1", "lane2"]);
+check("a configured list cannot drop the lead", parseSteerNicks("lane1", "owner").includes("lead-agent"), true);
+check("space-separated works", parseSteerNicks("lane1 lane2", "owner"), ["lead-agent", "owner", "lane1", "lane2"]);
 check("duplicates collapse", parseSteerNicks("lead-agent owner lead-agent", "owner"), ["lead-agent", "owner"]);
 check("blanks are dropped", parseSteerNicks(" , ,, ", "owner"), ["lead-agent", "owner"]);
 check("null env is not a crash", parseSteerNicks(null, "owner"), ["lead-agent", "owner"]);
@@ -85,7 +85,7 @@ check("busy + flag + lead = steer",
 check("busy + flag + owner = steer",
   deliveryClass({ idle: false, sender: "owner", flag: true, allow: ALLOW }), "steer");
 check("busy + flag + a worker = follow-up",
-  deliveryClass({ idle: false, sender: "flash1", flag: true, allow: ALLOW }), "followUp");
+  deliveryClass({ idle: false, sender: "lane1", flag: true, allow: ALLOW }), "followUp");
 check("busy + NO flag + lead = follow-up (the default is untouched)",
   deliveryClass({ idle: false, sender: "lead-agent", flag: false, allow: ALLOW }), "followUp");
 check("busy + flag + empty allowlist = follow-up",
@@ -93,7 +93,7 @@ check("busy + flag + empty allowlist = follow-up",
 check("an allowlist entry must match exactly",
   deliveryClass({ idle: false, sender: "Lead-Agent", flag: true, allow: ALLOW }), "followUp");
 check("an added nick is honoured",
-  deliveryClass({ idle: false, sender: "flash1", flag: true, allow: parseSteerNicks("flash1", "owner") }), "steer");
+  deliveryClass({ idle: false, sender: "lane1", flag: true, allow: parseSteerNicks("lane1", "owner") }), "steer");
 
 // --- what the interrupted lane is told ------------------------------------------------------
 const head = steerHeader("lead-agent");
@@ -115,7 +115,7 @@ says("refused note says it was not honoured", refusedNote, "NOT honoured");
 says("refused note names who may", refusedNote, "lead-agent");
 says("refused note says it queues", refusedNote, "queues");
 
-// --- LEAD_NICK: the environment path, both halves (2026-10-09) ------------------------------------
+// --- LEAD_NICK: the environment path, both halves () ------------------------------------
 // Why this section exists: one constant decides BOTH who receives a lane's context alarm and who is
 // allowed to interrupt a busy lane. It used to be a hard-coded literal, so a venue that renamed its lead
 // got a silent double failure — alarms addressed to a nick no seat publishes, and the real lead's
@@ -143,15 +143,15 @@ check(
 );
 check(
   "MQTT_LEAD_NICK retargets the lead AND the honoured floor together",
-  leadCase({ MQTT_LEAD_NICK: "wren" }),
-  ["wren", ["wren", "owner"]],
+  leadCase({ MQTT_LEAD_NICK: "lane11" }),
+  ["lane11", ["lane11", "owner"]],
 );
 // NEGATIVE HALF: a blank value in a launch line must NOT leave the lead out of the floor. Measured
 // against the plain `?? "lead-agent"` form, `MQTT_LEAD_NICK=` produced LEAD_NICK "" and a floor of
 // ["owner"] — no lead, no alarm target, no steering, nothing printed. The fallback is the fix.
 check(
   "a renamed lead drops the old name from the floor",
-  leadCase({ MQTT_LEAD_NICK: "wren" })[1].includes("lead-agent"),
+  leadCase({ MQTT_LEAD_NICK: "lane11" })[1].includes("lead-agent"),
   false,
 );
 check(
@@ -168,8 +168,8 @@ check(
 // --- the wiring in index.ts (static, greppable facts) ---------------------------------------
 const DIR = join(import.meta.dir, "..", "extensions", "tabichat");
 const index = readFileSync(join(DIR, "index.ts"), "utf8");
-// RE-PAIRED 2026-10-18 (lead pen, owner word "fix it"), NOT weakened. The recipient-field leg
-// (feature/structured-recipient-field-routing-s127 @ 7560af8) moved the steer literal OUT of
+// RE-PAIRED, NOT weakened. The recipient-field leg
+// (the structured-recipient-field routing branch @ 7560af8) moved the steer literal OUT of
 // index.ts into `roomPayload()` in roommsg.ts, so the flag now has ONE builder and one home. Two
 // of the cells below used to grep index.ts for that literal and read 0 while the behaviour was
 // intact -- proven intact by calling the moved function: roomPayload's output is byte-identical to
@@ -192,7 +192,7 @@ says("a steered line carries the header", index, "steerHeader(from)");
 says("the sender gets the honesty note", index, "steerNote({");
 says("the allowlist is built once at setup", index, "parseSteerNicks(");
 // the shipped behaviour must not be reachable by an UNCONDITIONAL literal any more: the class
-// decides the main delivery path. RE-PAIRED 2026-10-09 (option B), not weakened: the old check
+// decides the main delivery path. RE-PAIRED (option B), not weakened: the old check
 // said "zero occurrences anywhere", which is now false for one good reason — mentionq.ts keeps
 // exactly ONE deliberate follow-up literal, the session_shutdown safety valve, and it exists so a
 // held mention can never be discarded when a seat dies. The HOLD_MAX overflow needs NO literal:

@@ -5,7 +5,7 @@
 // Truth table for the fresh-session advisory.
 //   bun tools/test_ctxwarn.ts      (exit 1 on any failure)
 // Positive and negative halves both required.
-// TEST-ENV SENTRY (leg 540) — same reason and same form as tools/test_steer.ts: `LEAD_NICK` is
+// TEST-ENV SENTRY — same reason and same form as tools/test_steer.ts: `LEAD_NICK` is
 // frozen at module load, a lead seat's shell exports MQTT_LEAD_NICK, and 4 honest checks read RED.
 // Scrub first, then import the module-under-test dynamically (a static import hoists above the scrub).
 // `import type` below is erased at compile time, so it pulls in the type without evaluating the module.
@@ -35,7 +35,7 @@ const {
   resumePath,
   resumeWritten,
   freshSessionDue,
-  // iid 17 / leg 959 — the payload and leg bar
+  // iid 17 — the payload and leg bar
   currentLeg,
   LEG_ENV,
   RESUME_MIN_BYTES,
@@ -82,7 +82,7 @@ const lying = (tokens: number, declared = 262_144): CtxSample => ({
 });
 
 // threshold parsing (MQTT_CTX_WARN)
-check("threshold default is the 2026-10-07 owner number", ctxWarnThreshold(undefined), 60);
+check("threshold default is the shipped number", ctxWarnThreshold(undefined), 60);
 check("threshold override", ctxWarnThreshold("80"), 80);
 check("threshold zero allowed", ctxWarnThreshold("0"), 0);
 check("threshold clamped high", ctxWarnThreshold("150"), 99);
@@ -101,11 +101,11 @@ check("68% after a 90% advisory not due", freshSessionDue(sample(68), 65, 90), f
 check("60% below an 80% threshold not due", freshSessionDue(sample(60), 80, -1), false);
 
 // who gets told
-check("worker tells lead + owner", ctxWarnTargets("flash1", "owner"), ["lead-agent", "owner"]);
+check("worker tells lead + owner", ctxWarnTargets("lane1", "owner"), ["lead-agent", "owner"]);
 check("lead tells owner only", ctxWarnTargets("lead-agent", "owner"), ["owner"]);
 
 // the room line
-const worker = ctxWarnLine(sample(68), ctxWarnTargets("flash1", "owner"));
+const worker = ctxWarnLine(sample(68), ctxWarnTargets("lane1", "owner"));
 const lead = ctxWarnLine(sample(68), ctxWarnTargets("lead-agent", "owner"));
 check("worker line addresses lead and owner", worker.startsWith("@lead-agent @owner "), true);
 check("lead line addresses owner only", lead.startsWith("@owner "), true);
@@ -130,7 +130,7 @@ check("token threshold negative is off", ctxTokenThreshold("-5"), 0);
 check("absolute OFF means never due (negative half)", absoluteSessionDue(lying(500_000), 0, -1), false);
 check("absolute below the floor not due (negative half)", absoluteSessionDue(lying(199_999), 200_000, -1), false);
 check("absolute at the floor due (positive half)", absoluteSessionDue(lying(200_000), 200_000, -1), true);
-// THIS CELL WAS REVERSED, not deleted, at leg 652, and the reason is the defect it addressed: the same
+// THIS CELL WAS REVERSED, not deleted, at a prior leg, and the reason is the defect it addressed: the same
 // reading (a floor crossed at a fifth of the declared window) is the false alarm that was halting
 // staffed lanes, and the guard it was meant to provide is kept by the two cells under it — the lie
 // that is caught is one whose declaration puts it in the band, not one read at 20%.
@@ -157,8 +157,8 @@ check(
   true,
 );
 
-// --- LEG 652: the tripwire respects a window it cannot possibly be guarding --------------------
-// The field faces are the acceptance instrument (wren-652-note-false-positive-face-20261028.md):
+// --- the tripwire respects a window it cannot possibly be guarding ------------------------------
+// The field faces are the acceptance instrument (lane11-652-note-false-positive-face-20261028.md):
 // three published lines between 29% and 51% of a 1,000,000-token declaration that commanded a
 // restart which was NOT due, and two true faces — a seat renewal-due at 55% of that same window,
 // and a seat at 76% of a 262,144 declaration. Silencing all five would be a weakened check, so the
@@ -228,12 +228,12 @@ says("index reads MQTT_CTX_TOKENS", index, "process.env.MQTT_CTX_TOKENS");
 says("index asks the absolute rule", index, "absoluteSessionDue(");
 says("index names the model in the report", index, "ctxModelLabel(ctx.model)");
 says("index states the declaration at session start", index, "ctxDeclarationLine(");
-// OWNER ORDER 2026-10-24 ("GET RID OF THE CTX REPORT!"): the cell that used to sit here asserted the footer DID
+// OWNER ORDER ("GET RID OF THE CTX REPORT!"): the cell that used to sit here asserted the footer DID
 // carry the fraction. It is DELETED, not left to fail and not softened into a pass — an assertion that
 // contradicts an owner-ordered behaviour change is a false check, and the honest act is to remove it and say
 // so. BOTH halves of the new rule are stated so this file still bites: the widget must be ABSENT from
 // index.ts, and the advisory that replaced it must still be there.
-check("the footer NO LONGER sets a ctx status entry (owner order 2026-10-24)", index.includes('setStatus("ctx"'), false);
+check("the footer NO LONGER sets a ctx status entry", index.includes('setStatus("ctx"'), false);
 check("the ctx advisory still addresses lead + owner", index.includes("ctxWarnTargets("), true);
 check("ctxStatusText itself survives as an exported, tested helper", ctxStatusText(sample(68.7)), "ctx 68% (182k/256k)");
 says("both counters advance together", index, "lastCtxWarnTokens = s.tokens");
@@ -243,7 +243,7 @@ says("compaction resets the absolute counter", index, "lastCtxWarnTokens = -1");
 // lane must write a RESUME file; reads, writes to that file, and read-only git stay available; the block
 // lifts on its own once the file exists; and after three unanswered refusals the gate gives up loudly.
 const at = (pct: number) => ({ tokens: Math.round((pct / 100) * 262144), contextWindow: 262144, percent: pct });
-check("force default is the owner's 75", ctxForceThreshold(undefined, 60), 75);
+check("force default is the shipped 75", ctxForceThreshold(undefined, 60), 75);
 check("force override parses", ctxForceThreshold("80", 60), 80);
 check("force never sits BELOW the warn threshold", ctxForceThreshold("50", 60), 60);
 check("force clamped high", ctxForceThreshold("150", 60), 99);
@@ -255,7 +255,7 @@ check("no reading means not due", forceDue({ tokens: null, contextWindow: 262144
 check("pi compacting (percent well back) re-arms the force", rearmForce(true, 62, 75), false);
 check("a small drop does NOT re-arm (no second blocking in one decline)", rearmForce(true, 70, 75), true);
 check("an unarmed force stays unarmed", rearmForce(false, 10, 75), false);
-check("resume path is named by nick and boot tag", resumePath("/media/u/tabith/resume/", "flash1", "abc123"), "/media/u/tabith/resume/RESUME-flash1-abc123.md");
+check("resume path is named by nick and boot tag", resumePath("/home/u/resume/", "lane1", "abc123"), "/home/u/resume/RESUME-lane1-abc123.md");
 check("a missing file is not written", resumeWritten(false, 0), false);
 check("a stub file is not written (too small to help the next seat)", resumeWritten(true, 199), false);
 check("a real file counts", resumeWritten(true, 200), true);
@@ -269,30 +269,30 @@ check("git push is NOT read-only", bashAllowedWhileForced("git status && git pus
 check("a redirect out of git is not read-only", bashAllowedWhileForced("git status > /tmp/x"), false);
 check("an unrelated command is blocked", bashAllowedWhileForced("rm -rf build"), false);
 check("an empty command is blocked", bashAllowedWhileForced("   "), false);
-check("the block reason names the exact file to write", forceBlockNote("/media/u/tabith/resume/RESUME-ultra-0000aa.md").includes("RESUME-ultra-0000aa.md"), true);
+check("the block reason names the exact file to write", forceBlockNote("/home/u/resume/RESUME-lane10-0000aa.md").includes("RESUME-lane10-0000aa.md"), true);
 check("...and carries the template's HOLD-flag line", forceBlockNote("/x").includes("HOLD flags"), true);
 check("...and says nothing was killed", forceBlockNote("/x").includes("Nothing is lost and nothing was killed"), true);
 check("the template asks for uncommitted/unpushed state", RESUME_TEMPLATE.includes("uncommitted or unpushed"), true);
-check("the trigger line addresses the lead", forceRoomLine("flash1", at(76), 75, "/r/RESUME-flash1-000001.md", ["lead-agent", "dust"]).includes("@lead-agent"), true);
-check("...and carries the path", forceRoomLine("flash1", at(76), 75, "/r/RESUME-flash1-000001.md", ["dust"]).includes("/r/RESUME-flash1-000001.md"), true);
-check("the give-up line names the lane and the file", giveUpLine("flash1", 75, "/r/RESUME-flash1-000001.md").includes("did not write its RESUME file"), true);
+check("the trigger line addresses the lead", forceRoomLine("lane1", at(76), 75, "/r/RESUME-lane1-000001.md", ["lead-agent", "lane16"]).includes("@lead-agent"), true);
+check("...and carries the path", forceRoomLine("lane1", at(76), 75, "/r/RESUME-lane1-000001.md", ["lane16"]).includes("/r/RESUME-lane1-000001.md"), true);
+check("the give-up line names the lane and the file", giveUpLine("lane1", 75, "/r/RESUME-lane1-000001.md").includes("did not write its RESUME file"), true);
 
 
-// ─── iid 17 / leg 959 — the payload bar and leg currency ──────────────────────────────────────
+// ─── iid 17 — the payload bar and leg currency ──────────────────────────────────────
 // The row: the renew bar admitted a handoff by BOOT, so a sheet written early in a boot for an
 // earlier leg passed for the leg about to be lost, and a fresh file of headings with nothing under it
 // cleared the byte floor. Both halves get their refusal case AND their acceptance case here, and every
 // fixture is a string — this gate never reads the disk, so no cell can pass on one lane's /tmp.
 console.log("\n== iid 17: leg currency, read from the name and the head ==");
-check("a plain `leg 954` in a sentence answers", legInLine("flash3 resume: leg 954 — CLOSED, nothing in flight"), "954");
+check("a plain `leg 954` in a sentence answers", legInLine("lane3 resume: leg 954 — CLOSED, nothing in flight"), "954");
 check("the block form answers too", legInLine("leg 959"), "959");
 check("...and so does `Leg: 959 — verdict`", legInLine("Leg: 959 — verdict"), "959");
 check("NEGATIVE: a branch slug `by-leg-17` is NOT a leg — it would answer for the wrong number", legInLine("Branch `feature/handoff-bar-by-leg-17`"), null);
 check("NEGATIVE: a bare number with no leg word before it is not a leg either", legInLine("959-leg handoff"), null);
-check("a `-leg959` filename slug answers", legInName("RESUME-flash3-0554ee-leg959.md"), "959");
-check("a trailing all-digit component answers — this box has sheets named that way", legInName("RESUME-clerk-01a1a325-940.md"), "940");
-check("NEGATIVE: a hex BOOT tag is not a leg. That is the key this row says is the wrong key", legInName("RESUME-flash3-0554ee.md"), null);
-check("NEGATIVE: and digits nowhere in the name means no leg in the name", legInName("RESUME-flash3-next-s141.md"), null);
+check("a `-leg959` filename slug answers", legInName("RESUME-lane3-0554ee-leg959.md"), "959");
+check("a trailing all-digit component answers — this box has sheets named that way", legInName("RESUME-lane14-01a1a325-940.md"), "940");
+check("NEGATIVE: a hex BOOT tag is not a leg. That is the key this row says is the wrong key", legInName("RESUME-lane3-0554ee.md"), null);
+check("NEGATIVE: and digits nowhere in the name means no leg in the name", legInName("RESUME-lane3-next-s141.md"), null);
 check("legInHead reads in order and takes the first", legInHead("title line\nleg 959\nleg 12\n"), "959");
 check("currentLeg pulls the digits out of a hand-written launcher value", currentLeg({ MQTT_LEG: "leg-959" }), "959");
 check("...and the plain form", currentLeg({ MQTT_LEG: "959" }), "959");
@@ -323,14 +323,14 @@ check("NEGATIVE: the template copied out VERBATIM is unfilled slots, not answers
   resumeSectionsPresent("# handoff\n" + RESUME_TEMPLATE + "\n"), []);
 check("a heading is not a value", resumeSectionsPresent("next steps:\nvenue:\nreport:\nHOLD:\nbranch:\n"), []);
 
-const GOOD = `flash3 report: the renew bar is current by leg, not by boot
+const GOOD = `lane3 report: the renew bar is current by leg, not by boot
 leg 954 — payload floor and leg currency are in
-  venue: /tabith/work5-tabichat-959 (my tabichat clone, branch feature/handoff-bar-by-leg-17)
-  task and the spec path it came from: /tabith/wave47-specs-20261104/flash3-handoff-bar-by-leg-959.md
+  venue: work5/tabichat-959 (my tabichat clone, branch feature/handoff-bar-by-leg-17)
+  task and the spec path it came from: specs/handoff-bar-by-leg-959.md
   branch tip 580572c, nothing uncommitted or unpushed
   mid-flight right now: writing the cells, next command is the stage run
   next steps: faces 2 to 8, then the report, then push both faces
-  report path: /tabith/wave47-specs-20261104/flash3-handoff-bar-by-leg-959-report.md
+  report path: specs/handoff-bar-by-leg-959-report.md
   HOLD flags — no merge, no tag, no deploy verb at the live destination
 `;
 const NOLEG = GOOD.replace("leg 954 — payload floor and leg currency are in\n", "");
@@ -341,22 +341,22 @@ check("RESUME_MIN_SECTIONS is the derived 4, not a picked number", RESUME_MIN_SE
 check("and seven blocks are enumerated", RESUME_SECTIONS.length, 7);
 
 console.log("\n== iid 17: handoffContentVerdict — both doors, both ways ==");
-const stale = handoffContentVerdict("RESUME-flash3-0554ee.md", GOOD, "961");
+const stale = handoffContentVerdict("RESUME-lane3-0554ee.md", GOOD, "961");
 check("RENEW REFUSED: a sheet for leg 954 cannot stand for leg 961, same boot and all", stale.ok, false);
 says("...and the refusal prints the leg the sheet describes", stale.reason, "leg 954");
 says("...and the leg the seat is actually on", stale.reason, "leg 961");
 says("...and how to fix it", stale.reason, "Write a handoff for leg 961");
-const match = handoffContentVerdict("RESUME-flash3-0554ee.md", GOOD, "954");
+const match = handoffContentVerdict("RESUME-lane3-0554ee.md", GOOD, "954");
 check("PASSES: the same sheet, for the leg the seat is running", match.ok, true);
 says("...and the accepted reason says what it checked", match.reason, "names leg 954");
 check("a sheet that names NO leg is refused when the seat declares one",
-  handoffContentVerdict("RESUME-flash3-0554ee.md", NOLEG, "954").ok, false);
-const nolane = handoffContentVerdict("RESUME-flash3-0554ee.md", NOLEG, "");
+  handoffContentVerdict("RESUME-lane3-0554ee.md", NOLEG, "954").ok, false);
+const nolane = handoffContentVerdict("RESUME-lane3-0554ee.md", NOLEG, "");
 check("NEGATIVE: with no leg declared it is NOT refused — that would strand every lane on a box that never set MQTT_LEG",
   nolane.ok, true);
 says("...and the accept line says the leg was read, not compared", nolane.reason, "READ, not COMPARED");
 says("...and names the knob that would make it bite", nolane.reason, "MQTT_LEG=<n>");
-const padded = handoffContentVerdict("RESUME-flash3-0000aa.md", "x".repeat(400), "");
+const padded = handoffContentVerdict("RESUME-lane3-0000aa.md", "x".repeat(400), "");
 check("RENEW REFUSED: a 400-byte sheet that answers nothing — over the byte floor, under the payload one", padded.ok, false);
 says("...and the refusal lists what is missing", padded.reason, "venue");
 says("...and states that the byte floor was NOT the fix", padded.reason, "200 is unchanged on purpose");

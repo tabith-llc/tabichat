@@ -45,21 +45,21 @@ EXT="${EXT:-tabichat}"
 case "$EXT" in
   tabichat)
     # broker.ts sits AFTER laneadmin.ts because that is the direction it imports, and the rule of
-    # this list is "dependencies first, index.ts last". It was ADDED at s138d: index.ts now imports
+    # this list is "dependencies first, index.ts last". It was ADDED when index.ts began to import
     # ./broker.ts for the broker location, so a deploy that copied the old nine would have shipped an
     # extension whose first act is `Cannot find module "./broker.ts"` on every lane — a missing file
     # is the loud outcome, and the partial-tree check below is what catches it.
-    # tlsopts.ts joins it at s140 for the same reason: index.ts IMPORTS it, and this array is the
+    # tlsopts.ts joins it for the same reason: index.ts IMPORTS it, and this array is the
     # reason the deploy is safe — a file that is not listed here never moves, so an omitted sibling
     # lands an index.ts importing a module that is not in the live directory, and every lane starting
     # after it dies at import. ORDER STILL MATTERS: leaf modules first, index.ts last.
     FILES=(mention.ts ctxwarn.ts errnote.ts exitlog.ts roommsg.ts mentionq.ts laneadmin.ts broker.ts tlsopts.ts diaglog.ts roomlog.ts steer.ts index.ts)
-    # diaglog.ts joins FILES at leg 517 for the reason recorded above: index.ts IMPORTS it, and a file
+    # diaglog.ts joins FILES for the reason recorded above: index.ts IMPORTS it, and a file
     # not listed here never moves — so the deploy would ship an index.ts whose first act is
     # `Cannot find module "./diaglog.ts"` on every lane. test_diaglog_routing.ts ASSERTS both halves
     # of that (this gate is in GATES, and diaglog.ts is in FILES before index.ts), because a gate
     # nobody runs is decoration — audit `iid 13`.
-    # roomlog.ts joins FILES at leg 802 for the same recorded reason: index.ts IMPORTS it (leg 800
+    # roomlog.ts joins FILES for the same recorded reason: index.ts IMPORTS it (an earlier edit
     # added the module and missed this array — the miss is why tools/test_deploy_closure.ts now
     # derives the transitive closure instead of asserting one filename). Dependencies first:
     # roomlog.ts imports roommsg.ts only, so it sits right after diaglog.ts and before index.ts.
@@ -99,20 +99,20 @@ esac
 #   test_exit_class.ts       — the rule that a gate reports through its exit code, not process.exit
 #   test_lead_model.ts       — the lead-model extension's register contract
 GATES+=(test_400_meta_capture.ts test_exit_class.ts test_lead_model.ts)
-# leg 889: the realm gate joins the same stage, appended rather than folded into the literal above —
+# the realm gate joins the same stage, appended rather than folded into the literal above —
 # test_deploy_closure.ts reads that line by exact text and prints how many names it finds there, and a
-# registration that re-aims a pinned line is the mistake leg 825 booked once already. This one is the
+# registration that re-aims a pinned line is the mistake a prior leg booked once already. This one is the
 # only gate in the repo that LOADS index.ts in-process (the three package externals are stubbed at load
 # time, the store is not), because the question it answers — does a second factory pass in one process
-# see the same realm holder — has never been measurable from a source-shape cell, and leg 888 read 0
+# see the same realm holder — has never been measurable from a source-shape cell, and a prior leg read 0
 # teardown rows against a seat that had retained a socket.
 GATES+=(test_renewal_realm.ts)
-# iid 29, leg 992: the owed-turn notice joins the stage for the reason the census exists — a check in
+# iid 29: the owed-turn notice joins the stage for the reason the census exists — a check in
 # src/tools/ that no array names is run by nobody. This one LOADS index.ts and drives a real turn (arm,
 # publish, agent_end) against a stub socket, so it is the only gate that measures the sentence the seat
 # reads at end of turn rather than its text. It is GATES and not PHYSICAL: no broker, no fixture.
 GATES+=(test_owed_notice.ts)
-# iid 28, leg 995: the sink guard joins the stage because the census is the whole point of this row —
+# iid 28: the sink guard joins the stage because the census is the whole point of this row —
 # a check in src/tools/ that no array names is run by nobody, and the protection must be reachable by
 # every stage run rather than by a cell author's memory. Appended in the same shape as the lines above
 # so test_deploy_closure.ts keeps reading the `GATES=(…)` literal it pins by exact text.
@@ -164,7 +164,7 @@ if [ "$want_physical" = 1 ]; then
     # THE CAPTURE SITS INSIDE `if`, exactly the shape this file already uses at the shell-gate loop and at
     # the load-check. `out=$(...failing member...) ; rc=$?` DOES NOT WORK under `set -e`: the assignment is
     # a simple command whose status is the member's non-zero status, so the script ends AT THE ASSIGNMENT
-    # and neither the member's name nor its own words ever print. Measured at leg 976 on a cold box: the
+    # and neither the member's name nor its own words ever print. Measured on a cold box: the
     # header, 3 PASS, then silence at rc 1 — a red release gate that looked like a green one that had
     # simply stopped talking. The success case comes FIRST and the code is read in the `else`, never
     # `if ! out=$(...)`: `!` makes the tested status 0, so the `$?` in the body would print "exited 0" —
@@ -207,10 +207,10 @@ fi
 
 if [ "$gates" = 1 ]; then
   command -v "$BUN" >/dev/null 2>&1 || die "bun not found at $BUN — gates cannot be trusted"
-  # DETERMINISM, measured on this host 2026-10-09 and FIXED at the source on 2026-10-25 (leg 540):
+  # DETERMINISM, measured on this host and FIXED at the source on :
   # test_steer.ts and test_ctxwarn.ts assert the DEFAULT lead nick ("lead-agent"), and both read the
-  # module that honours MQTT_LEAD_NICK. An operator's shell may export MQTT_LEAD_NICK (on this box, ~/.bashrc:252, and
-  # the owner's aliases set it per seat), so a deploy fired from a shell that inherited it failed
+  # module that honours MQTT_LEAD_NICK. An operator's shell may export MQTT_LEAD_NICK (a launcher
+  # alias can set it per seat), so a deploy fired from a shell that inherited it failed
   # those two gates for a reason that had nothing to do with the code. Those two files now scrub the
   # variable themselves before importing the module-under-test, so the result no longer depends on
   # which terminal fired it. `env -u MQTT_LEAD_NICK` is kept here as a belt-and-braces guard for any
@@ -220,12 +220,12 @@ if [ "$gates" = 1 ]; then
     (cd "$BASE" && env -u MQTT_LEAD_NICK "$BUN" "tools/$t" >/dev/null) \
       || die "$t is not green; fix it instead of deploying around it"
   done
-  # The python room clients carry the SAME broker rule as the extension (the owner's ruling s138d
-  # covers the whole repo, and the python clients were three of the twelve files that shipped the
+  # The python room clients carry the SAME broker rule as the extension (that rule covers the whole
+  # repo, and the python clients were three of the twelve files that shipped the
   # address). This script does not deploy them, but a deploy that ignores their half of one rule is
   # how a repo ends up holding two answers. Skipped LOUDLY if the box has no python3.
   #
-  # WHY THIS IS AN ARRAY AND NOT ONE LINE (leg 506, 2026-10-24): `tools/test_wrap_rows.py` sat in the
+  # WHY THIS IS AN ARRAY AND NOT ONE LINE: `tools/test_wrap_rows.py` sat in the
   # tree unable to even import — it named four symbols no client has — and the gate read "13 of 13
   # green" all day, because the thirteen were the `.ts` GATES above and a python harness was only ever
   # run if a seat happened to run it. A check nobody runs is not a requirement, so every python harness
@@ -245,7 +245,7 @@ if [ "$gates" = 1 ]; then
   # client a human reads their missed messages with. All five were green standing alone before they were
   # named here, which is the only reason naming them is safe.
   PYGATES+=(test_tlsenv.py test_addressing.py test_paste.py test_presence.py test_tabichat_cli.py)
-  # THE PAHO-DEPENDENT SET, declared, leg 905 (F4). The exemption below used to name ONE file, and
+  # THE PAHO-DEPENDENT SET, declared (F4). The exemption below used to name ONE file, and
   # `test_tabichat_cli.py` joined PYGATES in this same release by the `+=` line above — so on a host whose
   # python3 has no paho the deploy died on the second name with an import traceback and no skip line, an
   # unrelated-looking refusal for a host shape that is normal. Measured at 4f97ada6 by running every member
@@ -262,75 +262,75 @@ if [ "$gates" = 1 ]; then
   # GATES would therefore red EVERY deploy with a parse error instead of gating anything — the same
   # reason PYGATES is its own array: a gate has to be run by an interpreter that can run it.
   SHGATES=(check_guard_armed.sh)
-  # leg 842: the enabler's truth table joins the same stage. Appended with +=, the shape leg 825
+  # the enabler's truth table joins the same stage. Appended with +=, the shape a prior leg
   # established in this same spot, because test_secret_guard.sh pins the line above by exact text and
   # a gate wiring must not re-aim a check that is already running.
   SHGATES+=(test_hook_chain.sh)
-  # leg 845: the two attribution checks join the same stage. Appended with +=, the shape leg 825
+  # the two attribution checks join the same stage. Appended with +=, the shape a prior leg
   # established at this exact spot for the same reason: test_secret_guard.sh pins the line above by its
   # full text, and folding new names into it re-aims a pin that is already doing its job.
   SHGATES+=(check_attributions.sh test_attribution_pins.sh)
-  # leg 851: the truth table for THIS loop, run in a scratch clone of the tree being deployed.
+  # the truth table for THIS loop, run in a scratch clone of the tree being deployed.
   SHGATES+=(test_gate_words.sh)
-  # leg 825: the subject-nickname guard joins the same stage, one appended registration and not two —
+  # the subject-nickname guard joins the same stage, one appended registration and not two —
   # test_secret_guard.sh counts the array across BOTH shapes, so a second line naming this file would
   # register the same check twice while the deploy still looks green.
   SHGATES+=(check_subject_armed.sh)
-  # leg 862: the subject guard's BEHAVIOUR test joins the same stage. C registered the armed check that
-  # asks whether the guard EXISTS; nothing asked whether it still DOES what it claims, and a check that
+  # the subject guard's BEHAVIOUR test joins the same stage. The armed check that asks whether the
+  # guard EXISTS was already registered; nothing asked whether it still DOES what it claims, and a check that
   # cannot tell a working guard from one that quietly stopped existing is the class this array exists for.
   # Appended at the END rather than inserted: the loop dies at the first refusal, so a registration's
-  # position decides which cells go red when something fails (leg 860's own finding), and the literal line
+  # position decides which cells go red when something fails (a prior leg's own finding), and the literal line
   # above is pinned by exact text in test_secret_guard.sh.
   #
   # Why its sibling file is NOT on this line: test_secret_guard.sh was measured here too, and it cannot be
   # a member of the array it counts while test_gate_words.sh — also registered — runs the deploy against a
   # scratch clone whose array it rewrites on purpose. The census then asserts one number about a tree that
   # holds another, and two further cells read pinned objects out of published history that a git-init clone
-  # cannot have. That registration was backed out on the lead's ruling and the durable shape is booked as
-  # the secret guard's own design leg; the measurement of both faces is in
-  # wave44-specs-20261101/flash1-gate-registration-862-report.md.
+  # cannot have. That registration was backed out — the census's own rule, not a preference — and the
+  # durable shape is booked as the secret guard's own design work; the measurement of both faces is
+  # recorded in the check's own header comment.
   SHGATES+=(test_subject_guard.sh)
-  # leg 944: the release-record check joins the same stage, appended at the END so every line above
+  # the release-record check joins the same stage, appended at the END so every line above
   # keeps the exact text another check pins it by. It reads the declared version and the newest
   # CHANGELOG section out of the same tree and refuses when they disagree — the invariant README.md
   # states in prose (tabichat iid 24). A shell check lives here, not in GATES, for the reason already
   # written above this array: bun parses a .sh as a module and stops at the first `case` arm, so a
   # shell name in GATES reddens every deploy with a parse error while gating nothing.
   SHGATES+=(check_release_record.sh)
-  # leg 955 (iid 13's coverage cell): the directory census and the one repaired truth table join the stage,
+  # iid 13's coverage cell: the directory census and the one repaired truth table join the stage,
   # appended at the END so every line above keeps the exact text another check pins it by.
   #   test_gate_coverage.sh — enumerates src/tools/ for `test_*`/`check_*` files and refuses any name that
   #     sits in no gate array and on no ruled exclusion. Nothing does this today: the arrays were counted by
   #     test_secret_guard.sh, and a count over arrays cannot see the file no array names — which is how
-  #     test_deploy_pi_nm.sh pinned a line leg 947 deleted and went rc 1 while the 37-line stage passed.
+  #     test_deploy_pi_nm.sh pinned a line a prior leg deleted and went rc 1 while the 37-line stage passed.
   #     It reads and refuses: it never edits an array and never runs this script, so unlike the two files
   #     below it, being a member of what it censuses asserts nothing about a tree it changed.
-  #   test_deploy_pi_nm.sh — re-pointed at the current load-check mechanism by leg 953, green at this base
+  #   test_deploy_pi_nm.sh — re-pointed at the current load-check mechanism by a prior leg, green at this base
   #     (rc 0, 76 cells), and measured under BOTH interpreters: `bash` rc 0 and `sh` rc 0, which is what this
   #     loop consults.
-  # test_paho_skip.sh now joins this array too — see the leg 958 registration below, and the leg 955 note
+  # test_paho_skip.sh now joins this array too — see the earlier registration below, and the earlier note
   # preserved there: it was the last bash-only file, and the fix was to port the file, not the loop.
   # test_secret_guard.sh remains out of this array for the mechanism reason recorded above it, and the census
   # carries that as a named exclusion with the reason printed, so an exclusion cannot silently become a habit.
   SHGATES+=(test_gate_coverage.sh test_deploy_pi_nm.sh)
-  # leg 958 (iid 13 finished): test_paho_skip.sh joins the same stage. It was the last bash-only file in the
+  # iid 13 finished: test_paho_skip.sh joins the same stage. It was the last bash-only file in the
   # directory — the shell loop consults `sh`, which is dash here, and its two `grep -vxF -f <(printf …)`
   # process substitutions stopped that file at parse time (rc 2, `Syntax error: "(" unexpected`) while bash ran
-  # it green. Leg 958 ported both to a temp-file set comparison, so the 34 cells now agree under `sh` and
+  # it green. a prior leg ported both to a temp-file set comparison, so the 34 cells now agree under `sh` and
   # `bash`, and the file can be registered without teaching this loop to sniff shebangs. It is not the
-  # self-census case leg 862 excluded: its planted faces strip the arrays inside ITS OWN scratch clone (see
+  # self-census case a prior leg excluded: its planted faces strip the arrays inside ITS OWN scratch clone (see
   # the guard below for why that still works), and its static cells read the shipped tree untouched.
   SHGATES+=(test_paho_skip.sh)
-  # leg 997 (iid 27): the face-cite check joins the same stage, appended at the END for the reason every
+  # iid 27: the face-cite check joins the same stage, appended at the END for the reason every
   # line above keeps the same shape — another check pins these registrations by exact text. It reads
   # pointers out of Markdown (or a diff on stdin) and prints, per cite: does it resolve, which refs carry
   # it, and for a tag name what it peels to. It exits non-zero for one case only — a cite that resolves
   # nowhere — because a cite that opens on the wrong release line is a writing problem a gate must not
   # settle by force. POSIX sh, and the loop's interpreter is `sh` (dash here), so `sh -n` was run on it.
   SHGATES+=(check_cite_faces.sh)
-  # AN EMPTY SHELL-GATE ARRAY IS NOT AN EMPTY RUN (leg 958, the class leg 949 closed for FILES and LOADCHECK).
-  # Measured at 955: every `SHGATES`/`SHGATES+=` registration line emptied to `()` gave rc 0, 29 gate lines,
+  # AN EMPTY SHELL-GATE ARRAY IS NOT AN EMPTY RUN (the class a prior leg closed for FILES and LOADCHECK).
+  # Measured here: every `SHGATES`/`SHGATES+=` registration line emptied to `()` gave rc 0, 29 gate lines,
   # zero shell gates, and `deployed set complete and identical` — ten checks deleted, nothing said so. A census
   # cannot close this from inside the array, because emptying the array also removes the census.
   # The position is deliberate and it is the paired negative: this sits at the REGISTRATION site, so deleting
@@ -339,7 +339,7 @@ if [ "$gates" = 1 ]; then
   # passes. Stripping ONE registration (what test_gate_words.sh does to close its own re-entrance) also passes:
   # ten members remain, and the guard asks only that the stage is not empty.
   [ "${#SHGATES[@]}" -gt 0 ] || die "SHGATES is empty — the shell-gate array registers nothing, so no shell check ran and a green deploy here would be silence wearing a completion line"
-  # WHAT THE LOOP NOW SAYS, and why it said something false before (leg 851). The old shape sent the
+  # WHAT THE LOOP NOW SAYS, and why it said something false before. The old shape sent the
   # check's ordinary output to /dev/null and then printed one fixed sentence about the hook path — so a
   # gate whose file was sitting in the clone and whose own words said something else was described by a
   # cause the loop had never observed, and the words that named the real reason were thrown away. Two
@@ -441,11 +441,11 @@ fi
 #
 # What it cannot prove is said rather than implied, and there are three items on that list:
 #   * it does not show pi's real pi-ai exports the same names as the stub — how pi's loader supplies that
-#     value was never established here, so the check no longer tries to guess it (leg 579's NODE_PATH
+#     value was never established here, so the check no longer tries to guess it (a prior leg's NODE_PATH
 #     derivation was the guess, and it refused a healthy deployment);
 #   * it does not CALL the factory. The set is imported, and a default export that is a function is what is
 #     asserted. Running the extension's real startup against a fake `pi` is a separate decision, recorded
-#     as open (leg 948's L-2), not quietly folded into a load check.
+#     as open (a prior leg's L-2), not quietly folded into a load check.
 #   * an UNUSED import is erased by the loader, so a dead specifier of an unshipped file is not something a
 #     lane can die from — and it is still named by the hermeticity scan below, because the scan reads the
 #     bytes and not the executed graph.
@@ -534,11 +534,11 @@ export default factory;
 STUB_MQ
   # The three known package specifiers, replaced in EVERY copied member, quote-paired by backreference and
   # global per line, and anchored on the `from`/`import` keyword so a data string that happens to read
-  # "mqtt" is not rewritten. That closes the sibling hole leg 948 measured (the rewrite used to touch only
+  # "mqtt" is not rewritten. That closes the sibling hole a prior leg measured (the rewrite used to touch only
   # the LOADCHECK entries, so a bare specifier reached from a sibling stayed bare and bun answered it from
   # the host cache), and it also closes the mirror failure: `from '@earendil-works/pi-ai'` in single quotes
   # and two specifiers on one line were left untouched by the old exact-text sed, which refused a VALID
-  # tree for a host reason — the leg-579 class on the opposite side. Today only `index.ts` carries any of
+  # tree for a host reason — the same class on the opposite side. Today only `index.ts` carries any of
   # the three (each token counted once across the 13 names, zero in the other twelve), so widening this
   # changes no current behaviour; it makes the guarantee structural instead of incidental.
   for m in "${FILES[@]}"; do
@@ -606,7 +606,7 @@ trap 'rm -rf "$stage" ${loadcheck_probe:+"$loadcheck_probe"}' EXIT
 loadcheck_probe=""
 for f in "${FILES[@]}"; do cp -p "$SRC/$f" "$stage/$f"; done
 
-# VERIFY BEFORE PUBLISHING (leg 947). The load-check used to run only after the `mv -f` loop below, so a
+# VERIFY BEFORE PUBLISHING. The load-check used to run only after the `mv -f` loop below, so a
 # refusal — which is the whole point of a check that can refuse — arrived after the shared load path had
 # already been replaced: measured at 21b34e1, the run that died on `Export named 'Type' not found` had left
 # 13 files in its destination. Same bytes, same assertion, one order change: the staged tree is checked
@@ -636,7 +636,7 @@ for f in "${FILES[@]}"; do
 done
 [ "$rc" = 0 ] || die "deploy is not complete — a lane must never start against this state"
 
-# LOAD THE DESTINATION, NOT THE SOURCE (leg 576, #12). `bun build` above compiles $SRC/index.ts,
+# LOAD THE DESTINATION, NOT THE SOURCE (#12). `bun build` above compiles $SRC/index.ts,
 # where every sibling exists on disk, so an omitted module in the directory a lane actually
 # starts from passes the build, passes every gate, and ships — the exact incident this script's
 # header records: "a new index.ts with no roommsg.ts beside it and dies at import". The
@@ -651,11 +651,11 @@ done
 # This runs whatever --no-gates said: "gates skipped" must never mean "destination skipped".
 # (--dry-run exits earlier and --physical exits before this point, so neither can reach it.)
 command -v "$BUN" >/dev/null 2>&1 || die "bun not found at $BUN — the deployed tree cannot be load-checked"
-# The NODE_PATH derivation this line replaces is the leg-579 shape: pi resolves bare specifiers from its
+# The NODE_PATH derivation this line replaces is the earlier shape: pi resolves bare specifiers from its
 # own install tree, so pointing the check at that tree refused a HEALTHY deployment (measured at 21b34e1,
 # and the earlier "host shape" reading of it was wrong in the benign direction). load_check_tree supplies
 # the three externals itself, so no resolution context is guessed. What that guarantee rests on is stated
-# with it, because the sentence below was written too broadly and leg 948 falsified the broad reading: a bare
+# with it, because the sentence below was written too broadly and a prior leg falsified the broad reading: a bare
 # specifier reached from a SIBLING file was not rewritten and bun answered it from this machine's
 # `~/.bun/install/cache`, so a host WAS the reason a tree passed — the opposite direction, same root cause.
 # The guard now rewrites every copied member and refuses unless the probe is hermetic (see load_check_tree),
@@ -668,4 +668,4 @@ load_check_tree "$TARGET" "the published destination"
 
 say "deployed set complete and identical: ${FILES[*]}"
 say "remember: lanes already running hold the PREVIOUS code in memory. It loads on"
-say "their restart, and a restart is the owner's call."
+say "their restart, and a restart is the operator's call."

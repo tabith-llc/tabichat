@@ -47,7 +47,7 @@ check("case is not significant", endStateOf([{ role: "assistant", stopReason: "E
 
 // --- the line itself ---
 const rec: ExitRecord = {
-  kind: "exit", pid: 1234, nick: "flash1", room: "tabith", reason: "quit",
+  kind: "exit", pid: 1234, nick: "lane1", room: "tabith", reason: "quit",
   lastTurn: "error", ctxPercent: 68.7, uptimeMs: 5000, at: 1791244000000,
 };
 const line = exitLine(rec);

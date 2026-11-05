@@ -3,12 +3,12 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * DEPLOY-SET CLOSURE (leg 802): every module reachable from the entry point through local imports
+ * DEPLOY-SET CLOSURE: every module reachable from the entry point through local imports
  * must be in the deploy script's FILES array, dependency-first, and the gates that guard them must
  * be in GATES.
  *   bun tools/test_deploy_closure.ts      (exit 1 on any failure)
  *
- * WHY A CLOSURE, NOT A NAME. Leg 800 added `roomlog.ts`, imported it from `index.ts`, and walked
+ * WHY A CLOSURE, NOT A NAME. a prior leg added `roomlog.ts`, imported it from `index.ts`, and walked
  * straight past the guard in `test_diaglog_routing.ts` — because that guard asserts ONE filename
  (`diaglog.ts`, the module of ITS leg). The deploy script's own comment names the incident class:
  * an index.ts shipped beside a missing dependency "dies at import on every lane", and the
@@ -65,7 +65,7 @@ const GATES = filesOf(tabichatCase, "GATES");
 /**
  * EVERY name the array ends up declaring: the arm's own literal plus every top-level `+=` registration.
  *
- * WHY THIS EXISTS (iid 13, leg 969). `filesOf` takes the FIRST single-line `KEY=(…)$` match and a `+=`
+ * WHY THIS EXISTS (iid 13). `filesOf` takes the FIRST single-line `KEY=(…)$` match and a `+=`
  * line never matches that shape at all, so `${GATES.length}` counted 17 while the tabichat stage declares
  * 21 `.ts` names — 17 in the literal and 4 appended after `esac`, which the shell adds to whichever arm
  * ran. The run was never lying about its own scope; the LABEL was, and a cold seat quoting it reports a
@@ -78,7 +78,7 @@ const GATES = filesOf(tabichatCase, "GATES");
  * gate into this one: one wrong number replaced by another, which is the failure this file exists to stop.
  */
 // `src` DEFAULTS to the shipped script, so every call site above reads the same bytes it always did.
-// The argument exists because leg 974's review returned D2: one cell asserted a de-duplication with a
+// The argument exists because a prior leg's review returned D2: one cell asserted a de-duplication with a
 // `Set` demo on two literal strings, never calling this reader, so it could not go red. A claim about
 // counting needs the counter. Widening a reader's reach is not widening a check — the assertion got
 // STRICTER (it now runs the shipped reader), and the plant in section 5 is the proof it can fail.
@@ -103,7 +103,7 @@ const STAGE_EXECUTED = GATES_ALL.length + PYGATES.length + SHGATES.length;
  * no more in a stage array than the first pair, and they are NOT the same file as a stage gate that
  * differs by a stem (`test_tlsenv_paho.py` against `PYGATES`'s `test_tlsenv.py`, `test_ack_watch_broker.ts`
  * against `GATES`'s `test_broker.ts`), so the arrays do not overlap and the gap is the whole of `PHYSICAL`.
- * "In no stage array" is NOT "never run": `deploy-tabichat.sh --physical` runs all four, and leg 976
+ * "In no stage array" is NOT "never run": `deploy-tabichat.sh --physical` runs all four, and a prior leg
  * measured them rc 0 at 20 / 15 / 57 / 19 cells on a broker it stood up. Counting the fs-gate arm's
  * `test_fsgate.ts` is the opposite error (it belongs to that arm's own `GATES=(…)`, and this instrument
  * reads only the slice it took). The tabichat-effective figure is neither: it is the union below.
@@ -115,7 +115,7 @@ const ARRAY_SUM = GATES_ALL.length + PYGATES.length + SHGATES.length + PHYSICAL.
  * THE GAP, AS ONE FUNCTION — the D1 fix, so that the sentence, the number and the instrument are one
  * object. The shipped form of this claim filtered a HAND-CARRIED list of two names, so its output could
  * never exceed 2: the reviewer planted a third never-executed `PHYSICAL` member, the union moved 43 -> 44,
- * and the cell printed its usual `ok` (leg 974, D1). A filter over names somebody copied out of an array
+ * and the cell printed its usual `ok` (D1). A filter over names somebody copied out of an array
  * cannot report a name nobody copied. This takes the arrays and returns the members that are in `PHYSICAL`
  * and in no stage array; section 5 asserts its LENGTH against the gap the same arrays print.
  */
@@ -128,7 +128,7 @@ const STAGE_SET = [...new Set([...GATES_ALL, ...PYGATES, ...SHGATES])];
 const STAGE_OVERLAP = GATES_ALL.length + PYGATES.length + SHGATES.length - STAGE_SET.length;
 
 /** TRANSITIVE closure over `from "./x.ts"` edges, starting at the entry module. One level would
- * have passed leg 800's FIRST draft two levels deep — roomlog.ts is imported by index.ts directly,
+ * have passed a prior leg's FIRST draft two levels deep — roomlog.ts is imported by index.ts directly,
  * but a future roomlog-imported leaf is the case that still bites, so the walk is proper BFS. */
 const localImportsOf = (src: string): string[] =>
   [...src.matchAll(/from\s+"(\.\/[^"]+\.ts)"/g)].map((m) => m[1].replace(/^\.\//, ""));
@@ -186,9 +186,9 @@ check("and the leg-800 room journal gate is IN GATES too", GATES.includes("test_
     REACHABLE.filter((m) => !filesOf(emptyArmFull, "FILES").includes(m)).includes("roomlog.ts"), true);
 }
 
-// 5. THE COUNT IS DERIVED, AND IT CAN MOVE (iid 13 / leg 969 — a count that cannot change is decoration)
+// 5. THE COUNT IS DERIVED, AND IT CAN MOVE (iid 13 — a count that cannot change is decoration)
 {
-  // D2 (leg 974): this asserted `union == literal + appended`, which is only true when NO name is in
+  // D2: this asserted `union == literal + appended`, which is only true when NO name is in
   // both forms — so the cell REFUSED the exact input the prose three lines below says it tolerates. The
   // honest claim is the containment, and the overlap is NAMED rather than rejected: a name in both forms
   // is a registration someone made twice, and the useful sentence says which one it is.
@@ -250,7 +250,7 @@ check("and the leg-800 room journal gate is IN GATES too", GATES.includes("test_
     REGISTERED.length <= ARRAY_SUM && REGISTERED.length >= GATES_ALL.length && STAGE_OVERLAP === 0, true);
   check(`...and every PHYSICAL member is IN the union — leaving them out is how ${STAGE_EXECUTED} gets printed for a registered set of ${REGISTERED.length}, and the difference is ${PHYSICAL_ONLY.length} names, not two`,
     PHYSICAL.every((n) => REGISTERED.includes(n)), true);
-  // D1 (leg 974), THE CELL THE REVIEW RETURNED. It read
+  // D1, THE CELL THE REVIEW RETURNED. It read
   //   ["test_broker_auth.ts","test_fixture_isolation.py"].filter(…).length, 2
   // — a filter over a HAND-CARRIED list of two names, so 2 was both its answer and its ceiling: the
   // reviewer's plant put a third never-executed member in PHYSICAL, the union moved 43 -> 44, and this

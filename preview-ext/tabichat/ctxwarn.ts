@@ -14,9 +14,10 @@
 
 /**
  * Advisory threshold, percent of the declared window. **60%** is the shipped default,
- * replacing the 77 of 2026-10-06. The higher number was chosen to stop early interruptions and it
- * backfired the next day: a lane at 78% kept working and produced the confusion the owner was chasing,
- * which is what an alarm at 77% looks like from the outside — it goes off when there is nothing left
+ * replacing an earlier 77. The higher number was chosen to stop early interruptions and it
+ * backfired almost immediately: a lane at 78% kept working and produced the confusion the alarm was
+ * meant to chase, which is what an alarm at 77% looks like from the outside — it goes off when there
+ * is nothing left
  * to do about it. On a 262,144-token window, 60% is ~157,300 tokens, which leaves roughly 88,000
  * tokens of runway: enough to finish the item in hand AND write the handoff. The paired hard action
  * sits at 75% (~196,600 tokens, see MQTT_CTX_FORCE), and pi's own compaction remains the last-resort

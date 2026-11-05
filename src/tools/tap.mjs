@@ -2,15 +2,15 @@
 // Licensed under the Business Source License 1.1 (the "License"); you may not use this file
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
-// persistent room tap: bun tools/tap.mjs — appends chat/<room> messages to
-// /tmp/opencode/lead.tap forever (my lead-agent ears during testing).
-// TAB_TAP=<path> redirects the file; /tmp is temporary and /tmp/opencode is abandoned (2026-10-06),
-// so point it at the workspace for anything you need to keep.
+// persistent room tap: bun tools/tap.mjs — appends chat/<room> messages to $TAB_TAP
+// (default /tmp/opencode/lead.tap, kept as the value the code reads).
+// TAB_TAP=<path> redirects the file. `/tmp` is tmpfs: a reboot clears it, and a tap you want to
+// keep is worth pointing at a workspace path.
 //
 // The message handler is registered ONCE, at top level. Registering it inside the `connect`
 // handler added a fresh handler on every reconnect, so every room line was appended once per
-// handler — same text, same timestamp, N entries, which is what read as "duplicate lines in the
-// room" on 2026-10-07. Ids are deduped through the same helper the lanes use, so a replayed or
+// handler — same text, same timestamp, N entries, which is what read as duplicate lines in the
+// room. Ids are deduped through the same helper the lanes use, so a replayed or
 // retained copy cannot be appended twice either.
 import fs from "fs";
 import mqtt from "mqtt";

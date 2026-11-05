@@ -59,7 +59,7 @@ function check(name: string, got: unknown, want: unknown) {
 let s = seat(BASE);
 check("no knob: lead offered", s.offered("lead-xhigh"), "xhigh");
 check("no knob: lead dispatched", s.dispatched("lead-xhigh"), "xhigh");
-// THE LEGACY ALIAS HALF (rename 2026-10-09): `tabith/lead-agent` must STILL resolve, at the same
+// THE LEGACY ALIAS HALF: `tabith/lead-agent` must STILL resolve, at the same
 // level, off the same env stem -- so no alias, seat or hand-typed launch that still carries the old
 // name strands mid-rename. Dropping the old id is a deliberate later step, never an accident.
 check("legacy alias offered", s.offered("lead-agent"), "xhigh");

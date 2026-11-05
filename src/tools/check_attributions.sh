@@ -3,7 +3,7 @@
 # Licensed under the Business Source License 1.1 (the "License"); you may not use this file
 # except in compliance with the License. You may obtain a copy of the License at the LICENSE
 # file in the repository root. SPDX-License-Identifier: BUSL-1.1
-# The attribution check root AGENTS.md sec.10 asks for, and R-2671 cl.3: no line in a public-facing
+# The attribution check the repo's own rule asks for: no line in a public-facing
 # repo credits a decision to a person or to a seat, and no co-author trailer is ever carried.
 # Exit 1 on a hit, so a deploy or a reviewer gets a refusal rather than an opinion.
 #   sh src/tools/check_attributions.sh [base]      base defaults to the merge-base with the published line
@@ -13,13 +13,12 @@
 #                                                  and the answer must not require moving the work tree.
 #
 # WHY THIS EXISTS. The rule was enforced by nobody: the thing that caught a violation of it was a grep
-# written in a report (F-no-check-enforces-the-attribution-ban-in-tabichat), and a rule with no
+# written in a report, and a rule with no
 # instrument is a wish — the same reason the subject guard exists. This is the instrument.
 #
 # SCOPE, and it is the load-bearing part. Only ADDED lines are read (`^+`, never `+++`), because the base
 # face already carries a population of these references — at the face this was written against:
-# index.ts 47, AGENTS.md 12, docs/use.md 11, recorded as
-# F-tabichat-base-face-carries-a-pre-existing-attribution-population and deliberately NOT swept here. A
+# index.ts 47, AGENTS.md 12, docs/use.md 11 — counted at that face, and deliberately NOT swept here. A
 # gate that arrives red gets widened to green, and that is the forbidden move; a gate that arrives green
 # because it judges only what this branch added is the one that survives contact with a convenient
 # reviewer. Sweeping the old population is its own leg, on its own face.
@@ -28,7 +27,7 @@
 # over the tree hits 410 lines at this face, and nearly all of them are the product's own vocabulary — an
 # env var, a payload field, a sentence about what the human's own posts may do. Banning the word would red
 # half the shipped docs and teach the next reviewer to reach for the one escape that hides everything. What
-# sec.10 bans is ATTRIBUTION: a decision credited to a person or a seat. So that is what the patterns name.
+# What the rule bans is ATTRIBUTION: a decision credited to a person or a seat. So that is what the patterns name.
 #
 # ONE MATCHER, NOT TWO. The file each hit came from is resolved by streaming the diff through awk into
 # `path<TAB>added line` pairs, and those pairs are then matched by grep alone. The first draft matched once
@@ -44,7 +43,7 @@
 #
 # THE ROSTER IS CLOSED, and that limit is named here rather than left to be discovered: a person or seat
 # whose name is not on the NAMES line is invisible to every form below, whatever verb or preposition it is
-# credited with. Leg 848 measured the blind faces this file used to have and leg 850 closed them; what
+# credited with. a prior leg measured the blind faces this file used to have and a prior leg closed them; what
 # remains is this sentence, not a surprise.
 set -u
 
@@ -77,7 +76,7 @@ PATTERN='[Oo]wner (direc[t]ive|direc[t]ed|rule[d]|order[s]|ordere[d]|wor[d]|aske
 # a different string. `NAMES` carries no credit preposition and `CRED` carries no person word, so the pair
 # exists only at run time — which is the same discipline the harness below uses for its planted fixtures.
 #
-# THE SEAT-NICK BRANCH SCOPES TO A CREDIT NOW (leg 906, F2). It used to end `PATTERN` above as a bare phrase, so it
+# THE SEAT-NICK BRANCH SCOPES TO A CREDIT NOW (F2). It used to end `PATTERN` above as a bare phrase, so it
 # refused any added line that merely CONTAINED the two-word term — and it caught honest test data doing it:
 # an assertion naming the variable concept under test, crediting nobody. That is the shape :31 warns about,
 # read the other way: a branch that bans a phrase rather than a credit reds the line that describes the thing
@@ -89,18 +88,18 @@ PATTERN='[Oo]wner (direc[t]ive|direc[t]ed|rule[d]|order[s]|ordere[d]|wor[d]|aske
 # bracketed here for the reason :41-44 gives: a comment that spelled the phrase would be refused by its own
 # file the day the wrap moved, and a gate that reds its own documentation teaches people to delete the gate.
 CRED='pe[r]|a[s] requested b[y]|a[s] ruled b[y]|a[s] directed b[y]|a[s] instructed b[y]|a[s] ordered b[y]|a[s] decided b[y]|a[s] approved b[y]|a[t] the request of|requeste[d] by|aske[d] by|rule[d] by|direc[t]ed by|instructe[d] by|ordere[d] by|approve[d] by|deci[d]ed by|according t[o]'
-# THE ROSTER. Two of its entries were blind when leg 850 arrived, and both are named here because a reader
+# THE ROSTER. Two of its entries were blind when a prior leg arrived, and both are named here because a reader
 # of a diff is the audience for that sentence:
 #   * `writter` — not an English word, so it could never fire, and it matched nothing while looking intact.
 #     It becomes `write[r]`: the entry's neighbours are all whoever-decided-something words, and a credit
 #     naming whoever wrote the line is the same class as a credit naming whoever ruled it.
-#   * `dust[y]` — this matched only the longer spelling, so the person §10 is about was the one name on the
+#   * `dust[y]` — this matched only the longer spelling, so the person this rule is about was the one name on the
 #     fleet this gate could not see. It becomes `dust[y]?`, which covers both spellings and nothing else.
 NAMES='write[r]|owne[r]|wr[e]n|ultr[a]|flas[h][1-7]|stewar[d]|cler[k]|libraria[n]|courie[r]|dust[y]?|hea[d] agent|leade[r]'
 NICKS="($CRED) +(the )?($NAMES)"
 # TWO MORE SHAPES, added because a credit does not have to arrive in the preposition's form to be a credit.
 #   NAMED    — the roster name is the SUBJECT of a decision verb, so `($NAMES)` then the verb, no preposition
-#              anywhere in the line (leg 848 planted one and got a CLEAN back).
+#              anywhere in the line (planted one and got a CLEAN back).
 #   POSSESS  — the decision arrives as a noun owned by a name: `($NAMES)` then `.s` then a decision noun, the
 #              `.` standing for the apostrophe in the same idiom `own[e]r.s` uses above, so neither line can
 #              match itself.
@@ -124,7 +123,7 @@ pairs=$(printf '%s\n' "$diff" | awk '
 scanned=$(printf '%s' "$pairs" | grep -c . || true)
 
 # All four lists are joined into the ONE matcher, and a list that is declared but not joined here is a dead
-# branch wearing a comment — which is the exact defect leg 850 came to close, so the harness asserts it.
+# branch wearing a comment — which is the exact defect a prior leg came to close, so the harness asserts it.
 hits=$(printf '%s\n' "$pairs" | grep -inE "$PATTERN|$NICKS|$NAMED|$POSSESS" || true)
 n=$(printf '%s' "$hits" | grep -c . || true)
 
@@ -133,7 +132,7 @@ if [ "$n" -gt 0 ]; then
     # grep's own `NN:` line-number prefix is dropped; what a reader needs is path, then the line as typed.
     printf '%s\n' "$hits" | sed 's/^[0-9]*://' | awk -F '\t' '{ printf "attributions:   %s\n                       %s\n", $1, $2 }' >&2
     printf 'attributions:   scanned %s added line(s); the base face'"'"'s pre-existing population is not in that count and is not this branch'"'"'s to fix.\n' "$scanned" >&2
-    printf 'attributions:   the rule is root AGENTS.md sec.10 and R-2671 cl.3: state what the code does, name the file, carry the ticket ref. Mechanism and urgency live in the ticket body and the ledger.\n' >&2
+    printf 'attributions:   the rule is the attribution ban: state what the code does, name the file, carry the ticket ref. Mechanism and urgency live in the ticket body and the ledger.\n' >&2
     printf 'attributions:   nothing was widened and no exclusion was added to make this pass. If a hit is genuinely not a credit to a person, that is a named pattern change with its reason written down — not a quiet exception.\n' >&2
     exit 1
 fi

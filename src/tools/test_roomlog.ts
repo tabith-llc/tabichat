@@ -10,7 +10,7 @@
  * got the paperwork of a conversation and never the conversation. The fix is an on-disk journal
  * replayed at session start as HISTORY, plus a retained per-lane board that ships dark. The
  * load-bearing rules: history/not-news (replayed lines never double, never surface as unseen, never
- * inject), per-SEAT files (leg 804 D2: one shared file under one uid lost 93 lines while every
+ * inject), per-SEAT files (D2: one shared file under one uid lost 93 lines while every
  * writer returned ok), an append-only hot path (read/rewrite cycles lose writers; only the boot
  * trim writes whole), and both rejection halves copied from diaglog exactly: an explicit `off` is
  * an answer, a garbage value is a refusal, never a quiet default.
@@ -88,7 +88,7 @@ const rec = (i: number, over: Partial<RoomLogRecord> = {}): RoomLogRecord => ({
 
 // --- 1. precedence, both rejection halves (copies diaglog's discipline) ---------------------
 const HOME = "/home/agent";
-const L = (over: Record<string, unknown> = {}) => ({ home: HOME, room: "tabith", nick: "flash1", ...over });
+const L = (over: Record<string, unknown> = {}) => ({ home: HOME, room: "tabith", nick: "lane1", ...over });
 check("env layer beats site and default",
   resolveRoomLogTarget(L({ env: "/srv/roomlog.jsonl", site: "/etc/other.jsonl" })).path,
   "/srv/roomlog.jsonl");
@@ -98,9 +98,9 @@ check("site layer answers when env is absent",
 check("empty env slot is an ABSENCE, next layer answers",
   resolveRoomLogTarget(L({ env: "  ", site: "/etc/venue.jsonl" })).path,
   "/etc/venue.jsonl");
-check("default is per SEAT per ROOM under the resolved home (leg 804 D2)",
+check("default is per SEAT per ROOM under the resolved home",
   resolveRoomLogTarget(L()).path,
-  `${HOME}/${ROOMLOG_DEFAULT_DIR_SUBPATH}/tabith/flash1.jsonl`);
+  `${HOME}/${ROOMLOG_DEFAULT_DIR_SUBPATH}/tabith/lane1.jsonl`);
 check("the nick leaf uses the ONE topic sanitiser, never a second filter",
   roomLogFileLeaf("my room/x!"),
   topicLeaf("my room/x!"));
@@ -115,9 +115,9 @@ check("the nick leaf uses the ONE topic sanitiser, never a second filter",
   check("bare true names no path and is NOT deliberate", [boolTrue.ok, boolTrue.deliberate], [false, false]);
   const junk = resolveRoomLogTarget(L({ env: "relative/path" }));
   check("a non-absolute value is REFUSED, not defaulted", [junk.ok, junk.path.includes(`${HOME}/`)], [false, false]);
-  const noHome = resolveRoomLogTarget({ home: "", room: "tabith", nick: "flash1" });
+  const noHome = resolveRoomLogTarget({ home: "", room: "tabith", nick: "lane1" });
   check("no home means no default and a refusal that names the knobs", [noHome.ok, noHome.reason.includes(ROOMLOG_ENV)], [false, true]);
-  const tmpHome = resolveRoomLogTarget({ home: "/tmp/agent", room: "tabith", nick: "flash1" });
+  const tmpHome = resolveRoomLogTarget({ home: "/tmp/agent", room: "tabith", nick: "lane1" });
   check("a tmpfs resolved home REFUSES the default (a reboot would eat it)", tmpHome.ok, false);
   const tmpExplicit = resolveRoomLogTarget(L({ env: "/tmp/x.jsonl" }));
   check("an explicit tmpfs path is used VERBATIM (diaglog precedence copied exactly, operator aimed it)",
@@ -130,11 +130,11 @@ check("the nick leaf uses the ONE topic sanitiser, never a second filter",
   const paths = nicks.map((n) => resolveRoomLogTarget(L({ nick: n })).path);
   check("distinct default paths across 8 seat nicks is 8 (was 1 at a0471508)", new Set(paths).size, 8);
   check("NEGATIVE-SHAPED ASSERT: two named seats never resolve to the same file",
-    resolveRoomLogTarget(L({ nick: "flash1" })).path === resolveRoomLogTarget(L({ nick: "flash2" })).path,
+    resolveRoomLogTarget(L({ nick: "lane1" })).path === resolveRoomLogTarget(L({ nick: "lane2" })).path,
     false);
   check("the SAME nick in a different room is a different file too",
-    [resolveRoomLogTarget(L({ nick: "flash1", room: "tabith" })).path, resolveRoomLogTarget(L({ nick: "flash1", room: "demo" })).path][0] ===
-      [resolveRoomLogTarget(L({ nick: "flash1", room: "tabith" })).path, resolveRoomLogTarget(L({ nick: "flash1", room: "demo" })).path][1],
+    [resolveRoomLogTarget(L({ nick: "lane1", room: "tabith" })).path, resolveRoomLogTarget(L({ nick: "lane1", room: "demo" })).path][0] ===
+      [resolveRoomLogTarget(L({ nick: "lane1", room: "tabith" })).path, resolveRoomLogTarget(L({ nick: "lane1", room: "demo" })).path][1],
     false);
   const noNick = resolveRoomLogTarget({ home: HOME, room: "tabith", nick: "" });
   check("an empty nick REFUSES the default rather than sharing one file between seats",
@@ -153,14 +153,14 @@ check("the nick leaf uses the ONE topic sanitiser, never a second filter",
   check("NEGATIVE: a path outside any tree is accepted verbatim", [miss.ok, miss.path], [true, "/srv/outside/journal.jsonl"]);
   const def = resolveRoomLogTarget(L(), inTree);
   check("NEGATIVE: the harness-dir default is accepted", def.ok, true);
-  const treeHome = resolveRoomLogTarget({ home: "/srv/repo", room: "tabith", nick: "flash1" }, inTree);
+  const treeHome = resolveRoomLogTarget({ home: "/srv/repo", room: "tabith", nick: "lane1" }, inTree);
   check("the default too: a home inside a tree is refused through the nick-keyed path", treeHome.ok, false);
 }
 
 // --- 3. the APPEND-ONLY hot path and the BOOT TRIM (D2 acceptance 3) ---------------------------
 {
   const { io, files, writes, appends } = mem();
-  const P = "/j/tabith/flash1.jsonl";
+  const P = "/j/tabith/lane1.jsonl";
   check("append lands one parseable record", appendRoomLogRecord(io, P, rec(1)), { ok: true });
   check("the record round-trips", parseRoomLogRecord(files.get(P)!.trim()), rec(1));
   appendRoomLogRecord(io, P, rec(2));
@@ -200,8 +200,8 @@ check("the nick leaf uses the ONE topic sanitiser, never a second filter",
   check("malformed lines are COUNTED and skipped, the good one stands", [bad.malformed, bad.records.length], [2, 1]);
   check("no file yet is an absence, not an error", loadRoomLogTail(io, "/j/none.jsonl", 50), { records: [], malformed: 0 });
   // a seat restarts and replays ITS OWN history: the file it reads is the one its nick names
-  const own = resolveRoomLogTarget(L({ nick: "flash1" }));
-  const other = resolveRoomLogTarget(L({ nick: "flash2" }));
+  const own = resolveRoomLogTarget(L({ nick: "lane1" }));
+  const other = resolveRoomLogTarget(L({ nick: "lane2" }));
   check("D2 acceptance 4: replay reads this seat's file, never a neighbour's", [own.ok, other.ok, own.path !== other.path], [true, true, true]);
 }
 
@@ -215,7 +215,7 @@ check("zero is not 'unlimited', it falls back", parseRoomLogCap("0", ROOMLOG_MAX
 // --- 6. the tail board: leaf, payload, and the shared sanitiser (A2, AC8) --------------------
 check("hist topic reuses the msgTopic leaf filter", histTopic("tabith", "seat-a"), "chat/tabith/hist/seat-a");
 check("an empty leaf after sanitising REFUSES the topic", histTopic("tabith", "///  "), "");
-check("NEGATIVE: a real leaf survives unchanged", topicLeaf("flash1"), "flash1");
+check("NEGATIVE: a real leaf survives unchanged", topicLeaf("lane1"), "lane1");
 check("the board read filter is one level", histWild("tabith"), "chat/tabith/hist/+");
 check("the board author comes from the topic", nickFromHistTopic("chat/tabith/hist/seat-a", "tabith"), "seat-a");
 check("a wild or nested topic is nobody's board", [nickFromHistTopic("chat/tabith/hist/+ ", "tabith"), nickFromHistTopic("chat/tabith/hist/a/b", "tabith")], ["", ""]);
@@ -264,7 +264,7 @@ check("seen ids from replay land in the id ledger (live redelivery cannot double
 check("unseen reads filter hist lines out — history is never news", idx.includes('got.lines.filter((l) => !l.hist)'), true);
 check("the board is on EXACTLY \"1\", not mere presence of the variable", idx.includes('process.env.MQTT_HIST_BOARD === "1"'), true);
 check("board publishes are gated by the flag", idx.includes("if (HIST_BOARD)"), true);
-// leg 954: this refusal is a RECORD-ONLY notice (kept, never shown), so the cell follows the arm
+// this refusal is a RECORD-ONLY notice (kept, never shown), so the cell follows the arm
 // rather than the old hand-written call — same claim, one less thing a future edit can decouple.
 check("an empty board leaf refuses and says so instead of misrouting",
   /if \(!ht\) \{\s*\n\s*notice\("record-only",\s*\n?\s*`\[tabichat\]\[hist\] MQTT_HIST_BOARD=1/.test(idx), true);
@@ -291,7 +291,7 @@ check("NEGATIVE CONTROL: the board branch injects nothing and journals nothing",
   check("and reads the shipped file as wired", wired(idx), true);
 }
 
-// --- 8c. LEG 806: the WIRING SHAPE cell — the keys production passes vs the keys the factory
+// --- 8c. the WIRING SHAPE cell — the keys production passes vs the keys the factory
 // declares. The 803/805 lesson in one predicate: a cell that builds its OWN fs object cannot catch
 // a wiring mistake, so this reads the object literally AT THE CALL SITE in index.ts and compares it
 // with the declared parameter of makeRoomLogIo in roomlog.ts. RED at b6deb39e (missing
@@ -320,12 +320,12 @@ check("NEGATIVE CONTROL: the board branch injects nothing and journals nothing",
   for (const k of PASSED) fsObj[k] = (realFs as Record<string, unknown>)[k];
   const IO_REAL = makeRoomLogIo(fsObj as never);
   const osMod = await import("node:os");
-  const tmp = realFs.mkdtempSync(join(osMod.tmpdir(), "tabichat-806-"));
-  const P = `${tmp}/tabith/flash1.jsonl`;
+  const tmp = realFs.mkdtempSync(join(osMod.tmpdir(), "tabichat-roomlog-"));
+  const P = `${tmp}/tabith/lane1.jsonl`;
   try {
     IO_REAL.ensure(P);
-    const r1 = appendRoomLogRecord(IO_REAL, P, rec(1, { nick: "flash1" }));
-    const r2 = appendRoomLogRecord(IO_REAL, P, rec(2, { nick: "flash1" }));
+    const r1 = appendRoomLogRecord(IO_REAL, P, rec(1, { nick: "lane1" }));
+    const r2 = appendRoomLogRecord(IO_REAL, P, rec(2, { nick: "lane1" }));
     check("real-fs append at the shipped wiring shape SUCCEEDS (field failure reproduced at unit level if this is red)", [r1.ok, r2.ok], [true, true]);
     if (!r1.ok || !r2.ok) console.log(`  reason: ${!r1.ok ? r1.reason : r2.reason}`);
     const back = loadRoomLogTail(IO_REAL, P, 10);
@@ -360,7 +360,7 @@ check("NEGATIVE CONTROL: the board branch injects nothing and journals nothing",
     true);
 }
 
-// --- 9. ACT 3 (leg 802): a LIVE mention crossing the replay block injects EXACTLY ONCE --------
+// --- 9. PART 3: a LIVE mention crossing the replay block injects EXACTLY ONCE --------
 // The same function sequence the shipped wiring runs — replay through noteRoomId+pushRoomLine into
 // the buffer with no injector touched, then the live path. A redelivery of a REPLAYED id dies at
 // the id ledger; a genuinely new mention gets one inject plan and one unseen entry. Negative half:
@@ -368,27 +368,27 @@ check("NEGATIVE CONTROL: the board branch injects nothing and journals nothing",
 {
   const buffer: RoomLine[] = [];
   let seen: string[] = [];
-  const replayed = rec(7, { id: "lead-9-zz", nick: "lead", text: "@flash1 wake", dir: "out" });
+  const replayed = rec(7, { id: "lead-9-zz", nick: "lead", text: "@lane1 wake", dir: "out" });
   const s0 = noteRoomId(seen, replayed.id);
   seen = s0.seen;
   pushRoomLine(buffer, { nick: replayed.nick, message: replayed.text, ts: replayed.ts, id: replayed.id, hist: true }, 50);
   const cursorAfterReplay = lastSeq(buffer);
   const s1 = noteRoomId(seen, "lead-9-zz");
   check("a live redelivery of a replayed id is refused by the id ledger — no second line, no second turn", s1.dup, true);
-  const live: RoomLine = { nick: "lead", message: "@flash1 new", ts: 2000, id: "lead-10-aa" };
+  const live: RoomLine = { nick: "lead", message: "@lane1 new", ts: 2000, id: "lead-10-aa" };
   const s2 = noteRoomId(seen, live.id ?? "");
   seen = s2.seen;
   const plan = planInbound({ mentioned: true, head: "", line: live });
   pushRoomLine(buffer, live, 50);
   check("a new live mention after the block plans exactly one injection", [s2.dup, plan.kind], [false, "inject"]);
   const unseen = takeUnseen(buffer, cursorAfterReplay).lines.filter((l) => !l.hist);
-  check("the unseen window after the crossing holds the live line, not the replayed mention", unseen.map((l) => l.message), ["@flash1 new"]);
+  check("the unseen window after the crossing holds the live line, not the replayed mention", unseen.map((l) => l.message), ["@lane1 new"]);
   const from = idx.indexOf("const t = loadRoomLogTail(");
   const to = idx.indexOf("(marked hist; not injected", from);
   check("NEGATIVE CONTROL: the shipped replay region calls no injector", from > 0 && to > from && !/sendUserMessage|planInbound/.test(idx.slice(from, to)), true);
 }
 
-// --- 10. iid 18 at the FULL window: the read the row says nobody has run (leg 842) -------------
+// --- 10. iid 18 at the FULL window: the read the row says nobody has run -------------
 // The row's own words: "A field read that exercises the full window (a seat booting with >= 50 journal
 // records, then one inbound line, then unseen_only as its first read) has not been run yet — the
 // seat-level test at 9 records could not distinguish the two cursors." Below 50 lines the array-index

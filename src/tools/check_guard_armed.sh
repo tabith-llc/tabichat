@@ -14,7 +14,7 @@
 # It asks git where the consulted hook lives (`git rev-parse --git-path hooks/pre-commit`, which
 # honours core.hooksPath at every level) instead of comparing against a remembered directory, and it
 # accepts two armings: this clone's own .githooks/pre-commit, or a hook set that invokes it. Since
-# leg 782 it answers about the WHOLE consulted set in the first arming: when an executable prior hook
+# a prior leg it answers about the WHOLE consulted set in the first arming: when an executable prior hook
 # sits at the legacy $(git-dir)/hooks/pre-commit — displaced by that same hooksPath value — it names
 # the prior path, and refuses if the guard in this clone does not chain it.
 set -u
@@ -57,7 +57,7 @@ if [ ! -f "$cons_real" ]; then
     exit 1
 fi
 if [ "$cons_real" = "$guard_real" ]; then
-    # Second armed state (iid 16 req 2/4, leg 782): the documented enable also hides whatever lived
+    # Second armed state (iid 16 req 2/4): the documented enable also hides whatever lived
     # at the legacy $(git-dir)/hooks/pre-commit, because hooksPath replaces the consulted set. Answer
     # about the WHOLE set, not only the guard: name a prior hook that exists, and refuse when the
     # guard in this clone does not chain it (the b5648722 face — ARMED there was an answer about the

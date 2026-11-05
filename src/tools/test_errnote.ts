@@ -7,9 +7,9 @@
 // Positive and negative halves both required: a notice that also fires on a clean
 // or interrupted turn is worse than no notice.
 //
-// leg 907 adds the BOUNDARY half, and it is in this file rather than a new one on
+// adds the BOUNDARY half, and it is in this file rather than a new one on
 // purpose: this name is already registered in deploy-tabichat.sh's GATES array, and
-// leg 905 owns that file. A new gate file would need a registration this leg cannot
+// owns that file. A new gate file would need a registration this leg cannot
 // make, and a gate nobody runs is decoration.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,13 +17,13 @@ import { join } from "node:path";
 import { plugin } from "bun";
 import { buildNote, upstreamErrorNote, type EndMessage } from "../extensions/tabichat/errnote.ts";
 
-// The contract, from the owner's ruling of 2026-10-25 (Q8, resolving the earlier no-echo ruling):
+// The contract, which resolves the earlier no-echo reading:
 // a tabichat-originated system message carries the product tag AT THE FRONT, names UPSTREAM as
 // the cause, states the EFFECT on tabichat, and does NOT restate the provider's payload — pi
 // already prints that. TAG_LEAD / CAUSE_TOKEN / EFFECT are the three load-bearing halves, stated
 // here as values so a regression is caught by a check and not by a reviewer's memory.
 //
-// leg 907 CHANGES EFFECT, in the open, and the reason is the defect: it used to read
+// CHANGES EFFECT, in the open, and the reason is the defect: it used to read
 // "turn ended, not retried", a retry outcome asserted at `agent_end`, which pi documents as NOT
 // final ("Pi may still auto-retry, auto-compact and retry, or continue with queued follow-up
 // messages") and which `AgentEndEvent` cannot even answer — it has no `willRetry` field, and pi
@@ -65,18 +65,18 @@ check("no assistant message", upstreamErrorNote([{ role: "user" }]), null);
 check("missing stopReason", upstreamErrorNote([{ role: "assistant" }]), null);
 check("clean turn after an earlier error", upstreamErrorNote([asst("error", "400 boom"), asst("stop")]), null);
 
-// --- positive half: the shape this lane saw physically on 2026-10-05 ---
+// --- positive half: the shape this lane saw physically on ---
 const sse = "400 event: error\ndata: {}\n\n";
 const hit = upstreamErrorNote([{ role: "user" }, asst("toolUse"), asst("error", sse)]);
 check("detects the provider 400", typeof hit, "string");
 check("names the status code", (hit ?? "").includes("UPSTREAM 400 "), true);
 check("states the effect on tabichat", (hit ?? "").includes(EFFECT), true);
-// leg 907: the retired assertion must be GONE, not merely unused. On the pre-fix string this
+// the retired assertion must be GONE, not merely unused. On the pre-fix string this
 // cell reddens ("turn ended, not retried" contains "not retried"), which is why it is pinned
 // here rather than left to a reviewer's memory.
 check("claims no retry OUTCOME the boundary cannot observe", (hit ?? "").includes("not retried"), false);
-// Q8 REVERSES two cells that leg 537 wrote to the earlier reading, and both reversals are
-// required by the ruling rather than chosen to go green:
+// The current rule REVERSES two cells that an earlier leg wrote to the older reading, and both
+// reversals are required by the rule rather than chosen to go green:
 //   "says what to do" ("retry needed") is gone, because the notice now states what HAPPENED;
 //   "opens by naming upstream" and "does not open with the product name" both flip, because the
 //   product tag must now come FIRST. The no-echo ruling is unchanged and stays locked below.
@@ -89,10 +89,10 @@ check("notice is one line", (hit ?? "").includes("\n"), false);
 check("collapsed the blank line from the SSE frame", (hit ?? "").includes("  "), false);
 check("still detected when a tool result follows", upstreamErrorNote([asst("error", sse), { role: "toolResult" }]) !== null, true);
 
-// --- leg 914 D1: the shipped sentence, held as a LITERAL ---
+// --- a prior leg D1: the shipped sentence, held as a LITERAL ---
 // Every exact-equality cell above rebuilds its expectation from TAG_LEAD / CAUSE_TOKEN / EFFECT — the same
 // parts `buildNote` composes — so an edit that moves `buildNote` and `EFFECT` together keeps them all green
-// while changing the line an operator reads. That is not a hypothesis: leg 907 is the edit that moved both.
+// while changing the line an operator reads. That is not a hypothesis: a prior leg is the edit that moved both.
 // So the gate holds the customer-facing sentence quoted out in full, in BOTH branches of the `code` ternary
 // at errnote.ts:78. These are the cells that cannot be satisfied by a shared constant, and the tie pin below
 // says out loud why a literal is needed: recomposition tracks the product, which is exactly the property a
@@ -119,7 +119,7 @@ check("a 300-char provider text contributes no prose", long.includes("xxx"), fal
 check("the line is the ruled string, whatever the provider said", long, noticeFor("400"));
 check("a number late in the text is not read as a code", buildNote("no code here 2026"), noticeFor(null));
 
-// ─── leg 907 · the BOUNDARY half ─────────────────────────────────────────────────────────────
+// ─── a prior leg · the BOUNDARY half ─────────────────────────────────────────────────────────────
 // The cells above decide what the line says. These decide WHEN it is said, and that is the
 // reported defect: the notice fired at `agent_end`, which pi documents as NOT final
 // ("Pi may still auto-retry, auto-compact and retry, or continue with queued follow-up
@@ -134,7 +134,7 @@ check("a number late in the text is not read as a code", buildNote("no code here
 // at LOAD time exactly as `test_renewal_realm.ts` does, because this venue has no node_modules
 // and creating one would move `typecheck_ext.ts` off the stub face the gates are quoted at.
 // `mqtt.connect` is asserted never called: no socket, no broker, no deploy, no lane restart.
-const stubDir = mkdtempSync(join(tmpdir(), "leg907-errnote-"));
+const stubDir = mkdtempSync(join(tmpdir(), "errnote-"));
 writeFileSync(
   join(stubDir, "mqtt.ts"),
   `export default { connect() {\n  globalThis.__907_connect_calls = (globalThis.__907_connect_calls ?? 0) + 1;\n  return { on() {}, publish() {}, subscribe() {}, end() {}, removeAllListeners() {}, connected: false };\n} };\n`,
@@ -162,7 +162,7 @@ const uiCalls: UiCall[] = [];
 const makePi = () => {
   const handlers: { ev: string; fn: (...a: never[]) => unknown }[] = [];
   const other = new Map<string, number>();
-  const flags: Record<string, unknown> = { tabichat: true, room: "errnote-907" };
+  const flags: Record<string, unknown> = { tabichat: true, room: "errnote-room" };
   const base: Record<string, unknown> = {
     on: (ev: string, fn: (...a: never[]) => unknown) => void handlers.push({ ev, fn }),
     getFlag: (name: string) => flags[name],

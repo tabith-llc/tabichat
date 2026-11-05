@@ -29,11 +29,11 @@ WHAT IS REAL HERE, ALL THREE:
   * the broker is the eclipse-mosquitto container the project's own fixture starts, running
     `docs/broker/tabichat.conf` with paths and the room name substituted and NOTHING else;
   * the trust material is the throwaway PKI `broker-fixture.sh` minted into its own temp dir, and it
-    is destroyed on `down`. It is never the fleet CA and never the owner's desk keys.
+    is destroyed on `down`. It is never a certificate authority and never a person's own keys.
 
 PATHS ONLY. Nothing in this file opens, reads, prints or copies a private key. The key paths are
-handed to `ssl`, which loads them in process. That is the fleet law of 2026-10-18 (key-file content
-is `ultra`'s work alone), and it is also simply what a TLS client does.
+handed to `ssl`, which loads them in process. Key-file content is one designated lane's work
+alone, and this cell keeps to its own material; it is also simply what a TLS client does.
 
 A CELL THAT CANNOT RUN IS A FAILURE, NOT A SKIP. If paho is missing, or our own fixture cannot start,
 or a record the caller named is not there, or the container is gone mid-run, this file says so and

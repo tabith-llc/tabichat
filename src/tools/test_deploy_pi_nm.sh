@@ -3,13 +3,13 @@
 # Licensed under the Business Source License 1.1 (the "License"); you may not use this file
 # except in compliance with the License. You may obtain a copy of the License at the LICENSE
 # file in the repository root. SPDX-License-Identifier: BUSL-1.1
-# Truth table for the DESTINATION LOAD-CHECK in src/tools/deploy-tabichat.sh — leg 953, iid 13's class.
+# Truth table for the DESTINATION LOAD-CHECK in src/tools/deploy-tabichat.sh — iid 13's class.
 #   bash src/tools/test_deploy_pi_nm.sh        (exit 1 on any failure)
 #
-# WHY THIS FILE MOVED, AND WHAT IT DID NOT LOSE. It was written at leg 905 against the pi install-tree
-# derivation, whose cure was one `if`-wrapped assignment. Leg 947 DELETED that derivation — the guess it
+# WHY THIS FILE MOVED, AND WHAT IT DID NOT LOSE. It was written at a prior leg against the pi install-tree
+# derivation, whose cure was one `if`-wrapped assignment. a prior leg DELETED that derivation — the guess it
 # made about which `@earendil-works/pi-ai` the host resolves is what made the check refuse a healthy
-# deployment — and leg 949 made the replacement hermetic. The pins here went on pointing at the deleted
+# deployment — and a prior leg made the replacement hermetic. The pins here went on pointing at the deleted
 # line, so the file went red on its own: not a product defect, and not the file's purpose either.
 #
 # THE PURPOSE OUTLIVED THE LINE. The previous header put it in one sentence, and it is still the rule this
@@ -72,7 +72,7 @@ ARM="${ARM:-tabichat}"          # which EXT arm the next fire() deploys; the tab
 # test_gate_words.sh does, so the cell measures the bytes under review whether or not they are committed
 # yet. It is NOT a git repo and does not need to be: the deploy calls git nowhere outside its gate loops,
 # and every run here is --no-gates. `git archive` needs a .git, so this harness must be run from a real
-# clone — measured at leg 953: run from an archive extraction it refuses here, and refusing is correct.
+# clone — measured at a prior leg: run from an archive extraction it refuses here, and refusing is correct.
 build_tree() { # $1 = path
   local dest="$1" f
   rm -rf "$dest"; mkdir -p "$dest"
@@ -216,7 +216,7 @@ check "empty-bun-cache host: same two load lines (2)" "$(nload "$OUT")" "2"
 # ================================================================ CELL 4 — A SPECIFIER ONLY THE HOST COULD ANSWER MUST REFUSE
 say "CELL 4 — THE HERMETICITY SCAN IS THE DEFENDER: an unstubbed package specifier refuses by name, and nothing moves"
 # The plant is a package the probe has no stub for, reached from a SIBLING file rather than the entry — the
-# exact shape leg 948 measured, where the rewrite touched only the LOADCHECK entries and this machine
+# exact shape a prior leg measured, where the rewrite touched only the LOADCHECK entries and this machine
 # answered for the tree. It must now stop the deploy before the move, naming the file and the specifier.
 HOST_SPEC="@earendil-works/pi-agent-core"
 # Is this host even able to answer it? Asked by READING THE CACHE DIRECTORY, not by importing the package:

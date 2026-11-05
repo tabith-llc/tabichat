@@ -153,9 +153,9 @@ the correct first line is "renewed, holding" — and then waiting for a
 dispatch. Self-assigning the next task is not what the handoff authorises; it
 says where the lane was, not what it may do.
 
-**Please read this one as the owner's own words, not as a feature note.**
+**Please read this one as the operator's own words, not as a feature note.**
 **While the tests for self-auto-renew are ongoing, leave all four layers off**
-(caution of 2026-10-20, carried here and — since this line was only ever in one
+(a caution, carried here and — since this line was only ever in one
 place — in `README.md` and the `Unreleased` section of `CHANGELOG.md`, so the caution is
 wherever a reader meets the feature):
 after
@@ -202,20 +202,16 @@ resume
 work — read [AGENTS.md](../AGENTS.md) for the seat's side of that.
 
 Default is OFF in code. **On this box the site file says
-`{ "autoRenew": true }`** (2026-10-18, owner's word, verbatim: *"but the
-whole point was for me not have to manage agents
-renewing themselves …
-completely hands off"*), and it was proven live: a lane started with no flag and
+`{ "autoRenew": true }`** — the point of the feature is for the operator not to
+manage agents renewing themselves, hands off —
+and it was proven live: a lane started with no flag and
 no env read the site
 layer and announced `auto-renew ON … (from site file (autoRenew))`. **That
 announcement is the `notify`
 sentence and it still reads that way.** The separate **persistent status line**
 now reads **`🍄 tabichat`**
-when the policy is armed (owner order 2026-10-23, lifting his 2026-10-19 park:
-*"i also want the tabichat
-mushroom feature implemented!"*; the glyph leads the word on his order of
-2026-10-24 — *"move the
-mushroom!"* — and the key behind it is unchanged); it appears only when armed,
+when the policy is armed (the badge was parked for a while before it shipped, the
+glyph leads the word, and the key behind it is unchanged); it appears only when armed,
 because **OFF prints nothing** — thirteen
 seats printing `auto-renew off` is noise, not information.
 
@@ -225,10 +221,9 @@ on one footer line **sorted by key** and prints only the text, so the key is a
 slot, not a label: tabichat
 uses `nick-tabichat`, which sorts immediately after the `nick` badge and before
 `ponytail`, so the line
-reads `@worker1 🍄 tabichat ... ponytail: ...` (owner order 2026-10-24, on the
-earlier key `renew` sorting
-*after* `ponytail` and putting the badge where the footer truncates it first on
-a narrow terminal). Renaming
+reads `@worker1 🍄 tabichat ... ponytail: ...` (an earlier key, `renew`, sorted
+*after* `ponytail` and put the badge where the footer truncates it first on a
+narrow terminal). Renaming
 the key moves the badge; the WORDS on it come from this line's own text, which
 is why the glyph could move
 ahead of the word without anything shifting position on the footer. A check in
@@ -248,8 +243,8 @@ finish.
 `mqtt://broker.example:1883`, where
 `broker.example` is a **placeholder** and not a default: tabichat ships no
 broker address, because it
-is a chat client and not an MQTT service (owner's word, 2026-10-18: "no
-default, must be set"). Set it
+is a chat client and not an MQTT service: there is no default and it must be
+set. Set it
 per seat in the environment, or once for the venue in the site config under
 `mqttUrl`. Forget it and
 nothing guesses: every tool, client and one-shot refuses on start and names the

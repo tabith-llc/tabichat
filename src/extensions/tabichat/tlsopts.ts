@@ -3,9 +3,8 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * Transport decision for the tabichat client (features/tabichat-mqtt-broker-auth.md, shape (B),
- * phase 1 + phase 3 — owner order 2026-10-18: "we need someone assigned to implement tabichat
- * encryption in a feature branch").
+ * Transport decision for the tabichat client: shape (B),
+ * phase 1 + phase 3 of the broker-auth work.
  *
  * PURE BY DESIGN, and it has to stay that way: this is the module that decides whether a lane
  * speaks TLS or plaintext, so it must be checkable on both truth-table halves with no broker and
@@ -104,15 +103,15 @@ export const isPlainScheme = (url: string): boolean =>
  * Why this exists and is not decoration: `mqtt.js` error objects carry the URL it was given, and
  * this file's own error path hands that message to `ctx.ui.notify` — which lands in a lane's
  * context and, from there, possibly a report file and the room. A URL that reads
- * `mqtts://lead-agent:hunter2@broker.example:8883` would print the whole secret. The design rule is stronger
+ * `mqtts://<user>:<password>@broker.example:8883` would print the whole secret. The design rule is stronger
  * than redacting it though: credentials must not be in the URL at all, so `userinfoError()` makes
  * that a REFUSAL and this function stays the belt for logs of a URL we never accepted.
  *
- * NOT ANCHORED, AND THAT IS THE FIX (leg 522, peer finding F). This used to match only when the
+ * NOT ANCHORED, AND THAT IS THE FIX. This used to match only when the
  * scheme was the FIRST character of the string, and `mqtt.js` does not hand back a bare URL: its
- * error message reads `connect ECONNREFUSED … url=mqtts://bot:secret@host:8883`, so the pre-redaction
+ * error message reads `connect ECONNREFUSED … url=mqtts://<user>:<pass>@host:8883`, so the pre-redaction
  * at the transport-error site no-opped for exactly the shape it was written to cover, and the
- * durable diagnostic log (leg 517) inherited the anchor through `formatDiagLine`. A credential in a
+ * durable diagnostic log inherited the anchor through `formatDiagLine`. A credential in a
  * log file is worse than one on a screen — the file outlives scrollback, a renew and a reboot, and
  * sits one grep from every lane on a shared box. So every `scheme://userinfo@` occurrence in the
  * text is redacted now, and the surrounding words are left alone: blanking the whole message would

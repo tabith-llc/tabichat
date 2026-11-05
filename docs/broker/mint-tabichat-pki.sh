@@ -6,8 +6,8 @@
 # tabichat-mqtt-broker-auth.md asks for as phase 1's key material. It WRITES FILES INTO A
 # DIRECTORY YOU NAME. It never touches a broker, never edits /etc/mosquitto, never restarts
 # anything, and never contacts a live broker. Installing the output onto a broker host is the
-# OWNER'S act (owner order 2026-10-18 releases implementation on a branch; the broker stays
-# untouched by any lane).
+# OWNER'S act, not a lane's: what is released on a branch is the implementation, and the broker stays
+# untouched by any lane.
 #
 # WHY A DEDICATED CA, NOT THE VENYA CORE CA: a chat harness must not share trust material with
 # the product's CA-trust roots. That is the #536 (pinned-CA-only) / #541 (refuse loudly, no
@@ -16,13 +16,13 @@
 # core CA.
 #
 # WHY CERTIFICATES AND NOT A SHARED PASSWORD: with mTLS the launch sheet and tabichat-aliases.sh
-# carry PATHS. A password scheme puts a secret into the file that gets pasted around, and s78's
+# carry PATHS. A password scheme puts a secret into the file that gets pasted around, and the
 # recorded lesson is that a launch line silently lies about its effective values.
 #
 #   usage: sh mint-tabichat-pki.sh -o <outdir> [-c client_days] [-s server_days] <nick...>
 #   e.g.   sh mint-tabichat-pki.sh -o /tmp/tabichat/pki -c 90 \
 #            lead-agent worker1 worker2 worker3 worker4 worker5 worker6 worker7 assistant relay \
-#            records merge-seat archive standby dust   # YOUR OWN nicks go here — this is a
+#            records merge-seat archive standby operator   # YOUR OWN nicks go here — this is a
 #            site value, it MUST BE CONFIGURED; a roster from another venue mints nothing useful.
 # EXPIRY IS A FEATURE: client certs are short-lived (90 days by default, the design row's step 8)
 # so revocation is a re-issue, not a ceremony. The CA is the long-lived thing and its key belongs
@@ -30,8 +30,8 @@
 #
 # NO SECRET GOES TO STDOUT. The script prints PATHS, subjects, serials and expiry dates only.
 # Private keys are written 0600 and their CONTENTS are never read, printed, copied or committed by
-# this script — per the fleet law of 2026-10-18, key-file content is one designated lane's work alone; this
-# script only ever names a path.
+# this script: key-file content is one designated lane's work alone, and this script only ever names
+# a path.
 set -eu
 
 OUT=""

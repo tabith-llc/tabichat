@@ -7,7 +7,7 @@
 #   sh src/tools/test_secret_guard.sh        (exit 1 on any failure)
 #
 # WHY THIS FILE EXISTS. The guard it tests passed every commit on this box for an unknown span
-# WITHOUT COMPARING ANYTHING: the decoder it called (`xxd`) is absent on idaho and the decode line
+# WITHOUT COMPARING ANYTHING: the decoder it called (`xxd`) is not installed everywhere, and the decode line
 # ended `|| exit 0`. No cell anywhere could tell a working guard from a guard that had quietly
 # stopped existing — and a security control that fails open is worse than no control, because it
 # sells the belief of one. So the rule for this file is: **"cannot run" and "ran and found nothing"
@@ -52,7 +52,7 @@ hex_encode() {
     printf '%s' "$_out"
 }
 
-TEST_A="flash6-guard-cell-DO-NOT-COMMIT-7z"
+TEST_A="lane6-guard-cell-DO-NOT-COMMIT-7z"
 TEST_B="second-guard-cell-42"
 # a literal full of REGEX METACHARACTERS: if the guard ever runs these as patterns rather than fixed
 # strings, this one narrows itself to near-nothing and the guard passes real secrets quietly
@@ -294,7 +294,7 @@ printf 'staged for the direct run\n' > direct.txt; git add direct.txt
 out=$(sh .githooks/pre-commit 2>&1); rc=$?
 check "the same state, run directly, REFUSES rather than reporting a pass it did not earn (rc=1)" "$rc" "1"
 contains "$out" "which is not the .githooks path" "it names the value it found"
-# leg 852: the arm command this cell pinned was the bare `git config --local core.hooksPath .githooks`,
+# the arm command this cell pinned was the bare `git config --local core.hooksPath .githooks`,
 # which is the instruction iid 15 exists to replace, and the substring still matches inside the caveat
 # that warns AGAINST it — so a pin on that token would pass whether or not the fix survived the merge.
 # Pinned instead on the two lines that are now true, plus the absence of the one that is not.
@@ -310,9 +310,9 @@ out=$(sh .githooks/pre-commit 2>&1); rc=$?
 check "a prior hook that only MENTIONS the guard in a comment is not a chain (rc=1)" "$rc" "1"
 contains "$out" "which is not the .githooks path" "it refuses rather than trusting prose"
 
-say "THE SENTENCE, PINNED — what the guard may and may not claim about a set it cannot see (leg 845)"
-# Root §2 asks a paired negative of every check; a SENTENCE needs the same treatment, because the failure
-# here was not an exit code, it was a claim. 841 found the guard asserting that a foreign set runs
+say "THE SENTENCE, PINNED — what the guard may and may not claim about a set it cannot see"
+# Every check here owes a paired negative; a SENTENCE needs the same treatment, because the failure
+# here was not an exit code, it was a claim. An audit found the guard asserting that a foreign set runs
 # "in place of this guard" — false in the one state that prints it, since the guard is running RIGHT THERE
 # to say so — and the reason it survived review is that the harness pinned the token `DISPLACED`, which the
 # false sentence also contains. A pin on a word that survives the fix is not a pin. So: the honest phrase is
@@ -334,7 +334,7 @@ no_false_claim "reached, not chained" "$out"
 no_false_claim "mention-only set" "$out"
 contains "$out" "consulted hooks:" "it still lists what git runs there"
 
-say "THE TWO-STAGE CHAIN, BUILT FOR REAL — hooksetB -> hooksetA -> guard (leg 845)"
+say "THE TWO-STAGE CHAIN, BUILT FOR REAL — hooksetB -> hooksetA -> guard"
 # Every earlier chain face in this file reaches the guard in ONE hop, and the physical one reaches it through
 # a path built at run time so a grep cannot see it either way. Neither shape proves what a reviewer needed
 # proven: that a guard which is genuinely two hops away still RUNS, and that the guard's own report about it
@@ -376,7 +376,7 @@ contains "$out" "BLOCKED" "the secret refusal fired two hops down, where nobody 
 no_false_claim "two-stage, leak under the flag" "$out"
 git reset -q --hard >/dev/null 2>&1; rm -f twostage.txt wording.txt direct.txt nodev.txt
 
-say "THE DISPLACEMENT ESCAPE (iid 16 req 1, R-2717 item 2): name it, refuse, and print the way through"
+say "THE DISPLACEMENT ESCAPE (iid 16 req 1): name it, refuse, and print the way through"
 # The shipped answer refused UNCONDITIONALLY, so an informed user had one route left: re-point
 # core.hooksPath by hand, or --no-verify, which skips the very check reporting the state. Req 1 asked
 # for three things and two of them shipped: print what is about to be displaced, refuse UNLESS TOLD TO
@@ -601,9 +601,9 @@ else
 fi
 rm -rf "$scratch/r9"
 
-say "THE RECURSION CLOSURE IS LOAD-BEARING: the env marker, asserted (leg 787)"
+say "THE RECURSION CLOSURE IS LOAD-BEARING: the env marker, asserted"
 # Without TABICHAT_PRIOR_HOOK_CHAINED, a prior hook that chains the guard recurses: measured at
-# leg 786's pen — 721 chain announcements in 20 s before the run was cut off. A closure that lives
+# a prior leg's pen — 721 chain announcements in 20 s before the run was cut off. A closure that lives
 # only in a comment is a hole with a description on it, so this cell runs EXACTLY that shape: a
 # prior hook whose body re-invokes the guard, under a bounded timeout. Correct behaviour is one
 # announce and a landed commit; removed marker logic means the timeout fires and the announce
@@ -649,7 +649,7 @@ member_count=$(shgate_members | grep -c .)
 # in the same turn as this edit, after the registration and before this line was edited — not a value
 # carried over from any branch or any dispatch page. Merge order decides it: a gate that lands after this
 # one makes it nine, and the next face re-derives it here.
-# Re-derived at leg 958 on feature/gate-coverage-census-13: 11, read by the same command in the same turn
+# Re-derived on feature/gate-coverage-census-13: 11, read by the same command in the same turn
 # this line was written (8 + the leg-955 pair test_gate_coverage.sh and test_deploy_pi_nm.sh + the leg-958
 # registration test_paho_skip.sh). The three names join both lists below, because a member missing from the
 # membership loop or from the GATES-fold alternation is a count that prints green about a file nobody checked.

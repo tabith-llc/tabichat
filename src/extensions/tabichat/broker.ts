@@ -19,7 +19,7 @@
  *
  * WHY THE CONFIG COMES FIRST. A box with many seats has many launcher lines, and a broker address
  * repeated per seat is a address that can disagree with itself. The site file is set ONCE for the
- * venue (the same door s136 Leg E opened for auto-renew, and the same precedence shape that row
+ * venue (the same door the auto-renew policy opened, and the same precedence shape that row
  * documents); the env stays as the per-seat override a launcher or a docker `-e` can set.
  *
  * WHY A BAD VALUE IS A REFUSAL AND NOT A FALL-THROUGH. A site file that sets `mqttUrl` to an empty
@@ -41,8 +41,8 @@ export const BROKER_SCHEMES = ["mqtt:", "mqtts:", "ws:", "wss:"];
 /**
  * THE ONE FUNCTION THAT KNOWS WHERE THE SITE CONFIG LIVES.
  * `TABICHAT_CONFIG` overrides; otherwise the shared default from laneadmin.ts. Tilde is expanded
- * against HOME, matching how index.ts already resolves the same path for the renew policy. If the
- * owner rules a different location, this function plus that constant is the whole change — no call
+ * against HOME, matching how index.ts already resolves the same path for the renew policy. If a
+ * site keeps its config elsewhere, this function plus that constant is the whole change — no call
  * site repeats the arithmetic.
  */
 export const siteConfigPath = (

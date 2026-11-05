@@ -3,13 +3,13 @@
 # Licensed under the Business Source License 1.1 (the "License"); you may not use this file
 # except in compliance with the License. You may obtain a copy of the License at the LICENSE
 # file in the repository root. SPDX-License-Identifier: BUSL-1.1
-# Directory-coverage census for src/tools/ — tabichat iid 13's coverage cell (leg 955).
+# Directory-coverage census for src/tools/ — tabichat iid 13's coverage cell.
 #   bash src/tools/test_gate_coverage.sh        (exit 1 on any refusal)
 #   runs under sh/dash too, which matters: the shell-gate loop invokes `sh tools/<name>`, not bash.
 #
 # WHY THIS FILE EXISTS. Three lanes found the same hole from three sides this session: a check can sit in
 # src/tools/, be true, be run by nobody, and stay invisible. `test_deploy_pi_nm.sh` is the proof — it pinned
-# a line leg 947 deleted, printed rc 1 with eight failed cells, and the 37-line stage passed beside it,
+# a line a prior leg deleted, printed rc 1 with eight failed cells, and the 37-line stage passed beside it,
 # because the arrays were counted and nothing enumerated the directory. A census over the arrays alone
 # cannot see the file no array names, which is exactly iid 13's complaint.
 #
@@ -31,10 +31,10 @@
 #     membership never needs re-deriving; a census that repeats a count does, every merge.
 #   * It does not run the deploy, and it rewrites nothing — which is what makes it safe to be a member of the
 #     array it censuses. `test_secret_guard.sh` is not, and stays on the exclusion list: it rewrites the gate
-#     arrays in a scratch clone and then runs the FULL shell stage through that clone (leg 862), so as a member
-#     it would assert one number about a tree holding another. `test_paho_skip.sh` was held out at leg 955 on a
+#     arrays in a scratch clone and then runs the FULL shell stage through that clone, so as a member
+#     it would assert one number about a tree holding another. `test_paho_skip.sh` was held out on a
 #     reading that did not survive contact with its own code: it strips arrays only inside its own clone and
-#     never re-runs itself, so it registered at leg 958 after a one-line dash port. The lesson the two cases
+#     never re-runs itself, so it registered at a prior leg after a one-line dash port. The lesson the two cases
 #     share is that an exclusion has to name the mechanism, not the shape it resembles.
 #
 # POSITIVE CONTROL, EVERY RUN. A coverage cell that cannot fail is decoration, so the last cells prove the
@@ -63,7 +63,7 @@ lacks()    { case "$1" in *"$2"*) bad "$3" "output CONTAINS '$2'";; *) ok "$3";;
 EXCLUDED="test_secret_guard.sh"
 exclusion_reason() {
   case "$1" in
-    test_secret_guard.sh) printf '%s\n' 'it COUNTS the gate arrays while test_gate_words.sh rewrites those arrays in the scratch clone it deploys — leg 862 ruling, recorded at src/tools/deploy-tabichat.sh in the SHGATES block; registering the counter would make a deploy assert one number about a tree it changed on purpose' ;;
+    test_secret_guard.sh) printf '%s\n' 'it COUNTS the gate arrays while test_gate_words.sh rewrites those arrays in the scratch clone it deploys — the ruling recorded at src/tools/deploy-tabichat.sh in the SHGATES block; registering the counter would make a deploy assert one number about a tree it changed on purpose' ;;
     *) printf '%s\n' '(no reason recorded — an exclusion without one is the widening this file refuses)' ;;
   esac
 }

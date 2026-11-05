@@ -5,7 +5,7 @@
 // checkable in tools/test_roommsg.ts without a network. index.ts owns the
 // clients; this module owns the shapes and the arithmetic.
 //
-// Why each piece exists (lead requirements P2-P5, owner order 2026-10-05):
+// Why each piece exists (requirements P2-P5):
 //   P2  an id per message + an ack on a NON-room topic, so the lead can tell
 //       "never delivered" apart from "received and being ignored" without
 //       spending turns on the difference;
@@ -165,13 +165,12 @@ export const renderLine = (l: RoomLine): string =>
   `[${tsLabel(l.ts)} chat:${l.nick}] ${l.message}`;
 
 /**
- * Provenance for one INBOUND line (owner order 2026-10-08, after a lane published six
- * re-dispatches it had never received). A mention used to arrive as `[chat:<nick>] <text>`
- * with nothing to pin it to, so a claim about what the room sent was unfalsifiable inside the
- * lane: the only message ids a lane ever saw were the ones its own posts printed, and the ids
- * invented in that incident copied exactly that shape (`anna-1-a84e80`). The tag carries the
- * same id and the same stamp `chat_read` shows for that line, so `scope=inbox` can confirm or
- * deny it in one call. An id-less line (an older client) says `id=none` rather than hiding it.
+ * Provenance for one INBOUND line. A mention used to arrive as `[chat:<nick>] <text>` with nothing to
+ * pin it to, so a claim about what the room sent was unfalsifiable inside the lane: the only message
+ * ids a lane ever saw were the ones its own posts printed, and an invented re-dispatch claim copied
+ * exactly that shape (`<nick>-1-<6 hex>`). The tag carries the same id and the same stamp `chat_read`
+ * shows for that line, so `scope=inbox` can confirm or deny it in one call. An id-less line (an older
+ * client) says `id=none` rather than hiding it.
  */
 export const lineTag = (id: string | undefined, ts: number): string =>
   ` id=${(id ?? "").trim() || "none"} @${tsLabel(ts)}`;
@@ -181,7 +180,7 @@ export const renderInbound = (l: RoomLine): string =>
   `[chat:${l.nick}${lineTag(l.id, l.ts)}] ${l.message}`;
 
 /**
- * Per-sender tally of received mentions: `lead-agent x1, dust x2`. This is the number a lane
+ * Per-sender tally of received mentions: `worker1 x1, worker2 x2`. This is the number a lane
  * used to assert from memory ("the lead relayed this six times") — here it is counted.
  */
 export const inboxTally = (rows: readonly RoomLine[]): string => {
@@ -197,8 +196,8 @@ export const inboxTally = (rows: readonly RoomLine[]): string => {
  *
  * The lane used to be handed up to 12 unaddressed room lines ahead of every mention, under a
  * `[room lines since your last turn]` header. Two costs, both paid by the fleet: the block eats
- * context on every mention, and it upsets the less capable lane models — a 2026-10-08 incident
- * had a fresh worker lane read unaddressed traffic as six re-dispatches of its own order and
+ * context on every mention, and it upsets the less capable lane models — one fresh worker lane read
+ * unaddressed traffic as six re-dispatches of its own order and
  * accuse the lead in the room of ignoring reports it had, in fact, been acked for. Nothing is
  * lost by removing it: the whole room stays in the buffer, so `chat_read` still answers any
  * question a lane has about it, on purpose and in one call instead of by ambient flood.
@@ -264,12 +263,12 @@ export const sanitizeAckId = (id: string): string =>
 
 /**
  * Room-post length cap. The owner's own posts are unlimited; agent posts are
- * capped, at 1500 first and 2500 now — raised on the lead's
- * recommendation "RAISE to ~2500 — keep the refusal, never lift", after three posts bounced at 1500 in
- * one round and a 1,792-character merge order died inside a refused draft. The REFUSAL IS THE POINT AND
- * IT IS UNCHANGED: a post over the cap is refused and nothing is published; only the number moved. Room
+ * capped, at 1500 first and 2500 now — 1500 proved too small when three posts bounced in one round
+ * and a 1,792-character merge order died inside a refused draft, and the cap was raised with the
+ * refusal kept. The REFUSAL IS THE POINT AND IT IS UNCHANGED: a post over the cap is refused and
+ * nothing is published; only the number moved. Room
  * text is read by every lane that picks it up, and a lane can post a whole worklog into the room — one
- * 2026-10-07 post ran to ~2,600 characters — with nothing measuring it, because the rule to keep room
+ * post ran to ~2,600 characters — with nothing measuring it, because the rule to keep room
  * text to a verdict line plus a report path was only ever an instruction. The owner's own nick is exempt
  * and posts without a limit.
  *
@@ -301,9 +300,8 @@ export const postTooLongNote = (len: number, max: number): string =>
   `Post one verdict line plus the path to your report file; the long form belongs in that file.`;
 
 /**
- * Duplicate suppression for room lines (owner order 2026-10-07, verbatim: "i want these things to
- * not appear in the room"). Four copies of one dispatch had been read in the room: a message
- * arriving more than once must render ONCE. The cause found that day was a room tap registering its
+ * Duplicate suppression for room lines: a message arriving more than once must render ONCE. Four
+ * copies of one dispatch had been read in the room. The cause found was a room tap registering its
  * message handler inside the connect handler, so every reconnect added another handler and one
  * message printed once per handler - same text, same timestamp, N lines. Whatever the delivery
  * path, an id we have already taken is a repeat, so every reader keeps one of these lists.

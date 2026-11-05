@@ -3,7 +3,7 @@
 // except in compliance with the License. You may obtain a copy of the License at the LICENSE
 // file in the repository root. SPDX-License-Identifier: BUSL-1.1
 /**
- * Ambient stubs for the SCOPED typecheck gate (tools/typecheck_ext.ts, leg 806).
+ * Ambient stubs for the SCOPED typecheck gate (tools/typecheck_ext.ts).
  *
  * The three package externals and `node:fs` are exactly what `bun build --external` declares at
  * the shipped build gate — this repo does not vendor their types, so the environment says
