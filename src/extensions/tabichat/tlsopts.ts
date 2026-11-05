@@ -53,7 +53,7 @@ export interface TlsOptions {
 
 export interface TransportDecision {
   mode: TransportMode;
-  /** The URL to hand the connector. IDENTICAL to the input — this repo applies no default (s138d). */
+  /** The URL to hand the connector. IDENTICAL to the input — this repo applies no default. */
   url: string;
   /** Present for mode "tls": the options object to merge into `mqtt.connect`. */
   tls?: TlsOptions;
