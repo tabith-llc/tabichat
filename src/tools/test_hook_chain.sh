@@ -46,6 +46,7 @@ bad()   { ran=$((ran + 1)); failed=$((failed + 1)); printf 'FAIL  %s: %s\n' "$1"
 say()   { printf '\n== %s ==\n' "$1"; }
 check() { if [ "$2" = "$3" ]; then ok "$1 (=$3)"; else bad "$1" "got '$2', want '$3'"; fi; }
 contains() { case "$1" in *"$2"*) ok "$3";; *) bad "$3" "output lacks '$2'";; esac; }
+lacks()    { case "$1" in *"$2"*) bad "$3" "output CONTAINS '$2'";; *) ok "$3";; esac; }
 
 SCR=$(mktemp -d "${TMPDIR:-/tmp}/hookchain-XXXXXX") || { printf 'no scratch dir\n' >&2; exit 1; }
 cleanup() { [ -n "${KEEP_SCR:-}" ] || rm -rf "$SCR"; }
@@ -205,6 +206,30 @@ check "--check refuses to write (rc=1), so a seat can ask before changing a clon
 check "--check left the LOCAL value unset, so the host's own value still answers" "$(gc "$C" config --local --get core.hooksPath)" ""
 check "and it did not re-aim anything either" "$(gc "$C" config --get core.hooksPath)" "$GH"
 [ -e "$C/.git/tabichat-hooks" ] && bad "--check wrote no chain directory" "the directory exists" || ok "--check wrote no chain directory"
+
+say "--check ON A HOST WITH NO INCUMBENT SET — it names NOT ARMED and what the host consults, never ALREADY ARMED"
+# The face a customer gets. This tool's own rule is that it must not require state from one site, and it is
+# also not allowed to describe a set as armed when a consulted name is missing from it: one core.hooksPath
+# value replaces EVERY name at once (iid 15), so "ALREADY ARMED" on a host that has no commit-msg anywhere
+# is the same half-sentence in the other direction. --check answers, and writes nothing.
+P2=$(mkclone p2 plain)
+out=$(en "$P2" --check); rc=$?
+check "--check on a plain host is NOT ARMED, rc=1 (nothing is armed here, and it no longer reports an arming)" "$rc" "1"
+contains "$out" "NOT ARMED" "and it says which face it is on, in words"
+contains "$out" "what this clone consults" "and it names the paths git would consult, asked out of git"
+lacks "$out" "ALREADY ARMED" "and it never claims an arming this clone does not have"
+[ -e "$P2/.git/tabichat-hooks" ] && bad "--check wrote nothing on a plain host" "the directory exists" || ok "and --check wrote nothing at all"
+check "and the LOCAL value is still unset after --check" "$(gc "$P2" config --local --get core.hooksPath)" ""
+A2=$(mkclone a2 plain); gc "$A2" config --local core.hooksPath .githooks
+out=$(en "$A2" --check); rc=$?
+check "--check on a clone aimed at .githooks is NOT ARMED as a set, rc=1 — pre-commit there, commit-msg not" "$rc" "1"
+contains "$out" "NOT ARMED" "and the set is not called armed while one consulted name is absent"
+contains "$out" "commit-msg absent" "and it names the missing name rather than the whole hook system"
+lacks "$out" "ALREADY ARMED" "PAIRED — the blanket claim is gone from this face"
+F2=$(mkclone f2 global)
+out=$(en "$F2" --check); rc=$?
+check "PAIRED — with an incumbent set in place, --check still refuses to write (rc=1)" "$rc" "1"
+contains "$out" "CHECK" "and it keeps the incumbent's own words: what it would forward to"
 out=$(en "$C"); rc=$?
 check "and the same call without --check arms it (rc=0)" "$rc" "0"
 out=$(arm "$C"); armc=$?

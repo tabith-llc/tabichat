@@ -15,14 +15,36 @@
 #
 # WHAT IT EXERCISES, and how it finds it. It does NOT compare against a remembered directory. It
 # asks git where the consulted commit-msg lives (`git rev-parse --git-path hooks/commit-msg`) and
-# requires the guard named on a code line there — prose is not a dependency. If the consulted hook is
-# armed, the cells below drive REAL commits in a throwaway clone so a "refused" is a real rc, not a
-# grep. If the clone is not armed, the harness says so loudly and exits non-zero: it never calls an
-# unarmed box green.
+# requires the guard named on a code line there — prose is not a dependency. That question is asked of
+# FIXTURES this harness builds, in a config world it supplies, so its answer is about the code and not
+# about whichever box ran it. Where a subject helper exists on the face, it is copied into the fixture and
+# the cells below drive REAL commits in a throwaway clone so a "refused" is a real rc, not a grep. Where
+# this face has no helper to copy, that half prints the reason it did not run and is never counted as a
+# pass: it never calls an unarmed box green, and it no longer refuses a deploy for a guard the box was
+# never given.
 #
 # NO real secret and no live venue is touched. Cells run in a throwaway `git init` under $TMPDIR with
 # the same identity every commit on this fleet carries.
+#
+# EVERY CELL SELF-PROVISIONS ITS FIXTURE, and that is what makes this runnable anywhere. It used to ask
+# the ENCLOSING repo what git consults and refuse outright when the answer was a path that does not exist,
+# which meant a customer host was refused by a check for crew commit hygiene it was never handed. Three
+# faces of `src/tools/check_subject_armed.sh` are asserted here instead, each inside a clone this harness
+# builds and destroys, in a config world this harness supplies (an empty global file and an empty HOME,
+# so no cell can inherit what the box it happens to run on has installed):
+#   ARMED          - a set this harness wrote, carrying a commit-msg that calls the helper.
+#   NOT ARMED      - a set that carries an executable hook and NO commit-msg: a set that lost one name is
+#                    the tamper class, and it must stay a refusal. That is the doormat negative.
+#   NOT APPLICABLE - a plain `git init` with nothing installed anywhere, rc 0, naming the path it asked.
+# The helper itself is SOURCED from this face if the face has one (the deployed crew set, or a tracked
+# .githooks/subject-guard.sh should the product ever ship it) and COPIED into the fixture, so the behaviour
+# cells below test a real guard in a clone of this harness's making. Where a face has no helper at all, the
+# behaviour half prints the reason it did not run and is never worn as a pass: "cannot run" and "ran and
+# found nothing" do not print the same way.
 set -u
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+CHK="$ROOT/src/tools/check_subject_armed.sh"
 
 failed=0
 ran=0
@@ -32,26 +54,92 @@ RC=0
 ok()  { ran=$((ran + 1)); printf 'ok    %s\n' "$1"; }
 bad() { ran=$((ran + 1)); failed=$((failed + 1)); printf 'FAIL  %s: %s\n' "$1" "$2"; }
 say() { printf '\n== %s ==\n' "$1"; }
+check() { if [ "$2" = "$3" ]; then ok "$1 (=$3)"; else bad "$1" "got '$2', want '$3'"; fi; }
+contains() { case "$1" in *"$2"*) ok "$3";; *) bad "$3" "output lacks '$2'";; esac; }
+lacks()    { case "$1" in *"$2"*) bad "$3" "output CONTAINS '$2'";; *) ok "$3";; esac; }
 
-consulted=$(git rev-parse --git-path hooks/commit-msg 2>/dev/null)
-case "$consulted" in /*) ;; *) consulted="$PWD/$consulted" ;; esac
-if [ ! -f "$consulted" ]; then
-    printf 'subject-guard: NOT ARMED — git consults %s, which does not exist. Cannot test what does not run.\n' "$consulted" >&2
-    exit 1
+# ---- where the guard helper lives on THIS face. Sourced, never asserted against: the assertion below is
+# always about a fixture this harness wrote, so a host value can only ever supply the bytes of the helper.
+ambient_consulted=$(git -C "$ROOT" rev-parse --git-path hooks/commit-msg 2>/dev/null || true)
+case "${ambient_consulted:-}" in ''|/*) ;; *) ambient_consulted="$ROOT/$ambient_consulted" ;; esac
+HELPER=""
+if [ -n "${ambient_consulted:-}" ] && [ -f "$ambient_consulted" ] \
+   && grep -v '^[[:space:]]*#' "$ambient_consulted" 2>/dev/null | grep -qs 'subject-guard\.sh'; then
+    candidate=$(dirname -- "$ambient_consulted")/subject-guard.sh
+    [ -f "$candidate" ] && HELPER="$candidate"
 fi
-if ! grep -v '^[[:space:]]*#' "$consulted" 2>/dev/null | grep -qs 'subject-guard\.sh'; then
-    printf 'subject-guard: NOT ARMED — the consulted commit-msg (%s) does not invoke the subject guard. Nothing to test.\n' "$consulted" >&2
-    exit 1
-fi
-printf 'subject-guard: testing the consulted commit-msg at %s\n' "$consulted"
+[ -n "$HELPER" ] || { [ -f "$ROOT/.githooks/subject-guard.sh" ] && HELPER="$ROOT/.githooks/subject-guard.sh"; }
 
+# ---- the config world every cell after this line runs in, supplied here rather than inherited ----
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/subject-guard.XXXXXX") || { printf 'subject-guard: no tmpdir\n' >&2; exit 1; }
 cleanup() { [ -n "${KEEP_TMP:-}" ] || rm -rf "$TMP"; }
 trap cleanup EXIT INT TERM
+: > "$TMP/no-global"; mkdir -p "$TMP/home"
+GIT_CONFIG_GLOBAL="$TMP/no-global"; HOME="$TMP/home"; export GIT_CONFIG_GLOBAL HOME
+
+# ---- the armed set, written by this harness into its own scratch directory ----
+SETD="$TMP/hookset"; mkdir -p "$SETD"
+mkdir -p "$TMP/set-broken" "$TMP/set-empty" "$TMP/plain-hooks"
+cp "$ROOT/.githooks/pre-commit" "$TMP/plain-hooks/pre-commit" 2>/dev/null || printf '#!/bin/sh\nexit 0\n' > "$TMP/plain-hooks/pre-commit"
+chmod 755 "$TMP/plain-hooks/pre-commit"
+printf '#!/bin/sh\n# planted by src/tools/test_subject_guard.sh — a host set that carries pre-commit and lost commit-msg\nexit 0\n' > "$TMP/set-broken/pre-commit"
+chmod 755 "$TMP/set-broken/pre-commit"
+printf '#!/bin/sh\ng=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/subject-guard.sh\n[ -x "$g" ] || { printf "subject-guard fixture: helper missing at %s — refusing rather than judging nothing.\\n" "$g" >&2; exit 1; }\n"$g" "$1"\nexit $?\n' > "$SETD/commit-msg"
+printf '#!/bin/sh\nexit 0\n' > "$SETD/pre-commit"
+chmod 755 "$SETD/commit-msg" "$SETD/pre-commit"
+[ -n "$HELPER" ] && { cp "$HELPER" "$SETD/subject-guard.sh" && chmod 755 "$SETD/subject-guard.sh"; }
+# The faces below are driven by the GLOBAL config file each fixture clone is run with, except the one that
+# models this repo's own documented arming — an incumbent is what sits ABOVE the clone, and a LOCAL value is
+# the arming a customer is told to run, so each of those two is aimed the way a real host aims it.
+printf '[core]\n\thooksPath = %s\n' "$SETD" > "$TMP/g-armed"
+printf '[core]\n\thooksPath = %s\n' "$TMP/set-broken" > "$TMP/g-broken"
+printf '[core]\n\thooksPath = %s\n' "$TMP/plain-hooks" > "$TMP/g-plain"
+
+say "THE THREE FACES OF THE ARM CHECK, each in a clone this harness built, in a config world it supplied"
+arm_face() { # arm_face <tag> <global-config-file> [local hooksPath]
+    f="$TMP/face-$1"; mkdir -p "$f"
+    git init -q "$f" || { AOUT="git init failed"; ARC=99; return; }
+    [ -n "${3:-}" ] && git -C "$f" config --local core.hooksPath "$3"
+    AOUT=$( cd "$f" && GIT_CONFIG_GLOBAL="$2" sh "$CHK" 2>&1 ); ARC=$?
+}
+arm_face armed "$TMP/g-armed"
+check "an armed face — a host set carrying both names — is ARMED (rc=0)" "$ARC" "0"
+contains "$AOUT" "subject-armed: ARMED" "and it says which set it consulted"
+lacks "$AOUT" "NOT APPLICABLE" "an armed clone never gets the non-fatal face"
+arm_face broken "$TMP/g-broken"
+check "PAIRED — a host that DOES carry a set above the clone which lost commit-msg is refused (rc=1)" "$ARC" "1"
+contains "$AOUT" "NOT ARMED" "and the refusal is said out loud"
+lacks "$AOUT" "NOT APPLICABLE" "and the doormat face does not open here: guards exist above this clone, one went missing"
+arm_face scrubbed "$TMP/no-global"
+check "a plain clone with nothing installed above it is NOT APPLICABLE (rc=0)" "$ARC" "0"
+contains "$AOUT" "NOT APPLICABLE" "and it says so in words rather than passing in silence"
+contains "$AOUT" "which does not exist" "and it names the consulted path it asked about"
+lacks "$AOUT" "NOT ARMED" "a host that never had a guard is not reported as one that lost it"
+# The fourth face is the one that would have been blocked by the first draft of this rule: a clone whose
+# LOCAL value points at its own pre-commit-only set. That is what this repo's header tells a customer to
+# run (iid 15's correct answer on a host with nothing installed), and that set has never carried a
+# commit-msg anywhere, so it must read NOT APPLICABLE. A GLOBAL value aimed the same way is the OTHER face
+# — the `broken` cell above — because a global set is a host guard with names that can go missing.
+mkdir -p "$TMP/plain-hooks" 2>/dev/null
+arm_face plainlocal "$TMP/no-global" "$TMP/plain-hooks"
+check "a clone whose LOCAL value aims at a pre-commit-only set, with nothing above it, is NOT APPLICABLE (rc=0)" "$ARC" "0"
+lacks "$AOUT" "NOT ARMED" "and the documented arming is never described as tampering"
+arm_face global-only "$TMP/g-plain"
+check "PAIRED — the SAME set aimed by a GLOBAL value is a refusal (rc=1): a host guard lost a name" "$ARC" "1"
+contains "$AOUT" "NOT ARMED" "and it says which"
+
+BEHAVIOUR=1
+if [ -z "$HELPER" ]; then
+    BEHAVIOUR=0
+    printf 'subject-guard: NOT APPLICABLE — this face carries no subject helper to copy (the guard sits on the deployed crew hook sets and is not a shipped member), so the behaviour cells below did NOT RUN. They are named, not counted as passes.\n' >&2
+    printf 'subject-guard: the arm-check faces above ran on a fixture this harness wrote, and they are what a deploy gate on any host can assert.\n' >&2
+fi
+
 REPO="$TMP/venue"
 git init -q "$REPO" || { printf 'subject-guard: cannot build the throwaway clone\n' >&2; exit 1; }
 git -C "$REPO" config user.name "Tabith LLC"
 git -C "$REPO" config user.email "info@tabith.com"
+git -C "$REPO" config core.hooksPath "$SETD"
 echo base > "$REPO/f"; git -C "$REPO" add -A
 
 try() { # try <subject> [body lines...] -> sets LAST and RC
@@ -78,6 +166,12 @@ passed() {
     if [ $RC -eq 0 ]; then ok "$name (accepted)"; else bad "$name" "refused a clean subject: $LAST"; fi
 }
 
+# The behaviour half runs only against a helper this harness COPIED into its fixture. When this face has
+# no helper to copy, the fixture commit-msg would refuse for the missing helper and every `refused` cell
+# below would read as a guard working — a false green of exactly the class this file exists to stop. So the
+# half is gated off and named, not run and not counted as a pass.
+if [ "$BEHAVIOUR" = 1 ]; then
+
 say "refusals, each beside the pass it is paired with"
 # the leading lane-prefix class: "<name><digits>: "
 refused "prefix flash9:"            "flash9: fix the leak"
@@ -99,6 +193,10 @@ say "the guard refuses the class and does not decide the prose"
 # a subject that only MEANS a seat but names none must pass — the rule is the nickname class, not taste
 passed "descriptive, no nickname" "tests: the seat that owns this leg authored it"
 
-printf '\nsubject-guard: %d cells, %d failures\n' "$ran" "$failed"
+else
+ok "the behaviour half did NOT RUN on this face — no subject helper to copy, named above, never worn as a pass"
+fi
+
+printf '\nsubject-guard: %d cells, %d failures (%s behaviour half)\n' "$ran" "$failed" "$([ "$BEHAVIOUR" = 1 ] && printf 'ran' || printf 'NOT RUN: no helper on this face')"
 [ "$failed" -eq 0 ] || exit 1
 exit 0

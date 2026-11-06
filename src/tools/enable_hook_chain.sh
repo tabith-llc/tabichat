@@ -100,10 +100,31 @@ holds_hook() {
     return 1
 }
 
+# What does this clone consult for a hook NAME, and is it there? --check answers about the WHOLE set,
+# because one core.hooksPath value replaces every name at once (iid 15), so a blanket "ALREADY ARMED"
+# about a set that lost one name is a half-sentence a reader acts on as if it were the whole one.
+consists_face() { # <name> -> "exists at <path>" | "absent at <path>" | "unreadable"
+    p=$(consists_path "$1") || { printf 'unreadable'; return; }
+    if [ -f "$p" ]; then printf 'exists at %s' "$p"; else printf 'absent at %s' "$p"; fi
+}
+consists_path() { # <name> -> the path git would consult for it, absolute
+    p=$(git -C "$top" rev-parse --git-path "hooks/$1" 2>/dev/null) || return 1
+    case "$p" in /*) printf '%s' "$p" ;; *) printf '%s/%s' "$top" "$p" ;; esac
+}
+
 # ---- state 1: this clone is armed, and whatever is consulted reaches the guard -----------------
 if [ -n "$local_hp" ]; then
     ldir=$(resolve_dir "$local_hp")
     if [ "$local_hp" = ".githooks" ] || chains_guard "$ldir"; then
+        # No incumbent host set at all, and --check asked: the guard this tool exists to preserve IS on the
+        # path, but the set cannot be called armed as a whole when a consulted name is missing from it.
+        if [ "$check_only" = 1 ] && [ -z "$global_hp" ] && [ -z "$system_hp" ] \
+           && [ ! -f "$(consists_path commit-msg 2>/dev/null)" ]; then
+            say "NOT ARMED as a set — this host carries NO incumbent hook set (no global or system core.hooksPath), so there is nothing here for this tool to chain, and --check writes nothing."
+            say "  what this clone consults: pre-commit $(consists_face pre-commit); commit-msg $(consists_face commit-msg)."
+            say "  one core.hooksPath value replaces EVERY name at once, so a set whose commit-msg is absent is not a fully armed set. The subject guard is crew commit hygiene: src/tools/check_subject_armed.sh says whether it applies to this host."
+            exit 1
+        fi
         say "ALREADY ARMED — core.hooksPath is \"$local_hp\" (local) and that hook set invokes this repo's guard."
         say "  nothing was written. Read it back any time with:  sh src/tools/check_guard_armed.sh"
         exit 0
@@ -140,9 +161,10 @@ if [ -z "$incumbent" ]; then
         die "this clone already carries a LOCAL core.hooksPath \"$local_hp\" that does not invoke this guard, and it resolves to nothing runnable. It will not be overwritten from here: point it at .githooks, or make that hook set invoke .githooks/pre-commit and return its exit status."
     fi
     if [ "$check_only" = 1 ]; then
-        say "CHECK — nothing host-side is in place to displace, so this clone would take the plain local value."
-        say "CHECK — that is:  git config --local core.hooksPath .githooks"
-        exit 0
+        say "NOT ARMED — nothing host-side is in place to chain and this clone has no local value reaching the guard, so no hook of this repo runs here yet. --check writes nothing."
+        say "  what this clone consults: pre-commit $(consists_face pre-commit); commit-msg $(consists_face commit-msg)."
+        say "  to arm it:  git config --local core.hooksPath .githooks   (correct ONLY where no global or system core.hooksPath is set — iid 15), or run this file without --check."
+        exit 1
     fi
     git config --local core.hooksPath .githooks || die "cannot write the local core.hooksPath."
     back=$(git config --get core.hooksPath 2>/dev/null || true)

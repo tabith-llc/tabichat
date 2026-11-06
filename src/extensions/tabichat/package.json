@@ -1,6 +1,6 @@
 {
   "name": "tabichat",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "dependencies": {
     "mqtt": "^5.10.0"

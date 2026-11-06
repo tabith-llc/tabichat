@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.3] - 2026-11-05
+
+### Changed
+
+- Installing tabichat no longer stops at deploy checks that assumed they were running on the machine where tabichat was written
+- The deploy checks now tell two different situations apart: a machine that never had commit checks installed proceeds with a clear NOT APPLICABLE note, while a machine that had them and lost one still stops, because that is worth looking at
+- The thirteen shipped files are byte-for-byte the 0.1.2 set — nothing about how the chat itself works changed in this release
+
+### Fixed
+
+- `check_attributions.sh` now says which baseline it compared against and falls back to the previous release tag when your clone has no development branch, instead of refusing the whole install
+- `enable_hook_chain.sh --check` tells the truth on a plain machine: it reports NOT ARMED, names the paths it looked at, and still writes nothing
+- The checks' own test harnesses create throwaway hook directories of their own, so a green run no longer depends on your machine's global git configuration
+
 ## [0.1.2] - 2026-11-05
 
 ### New Features

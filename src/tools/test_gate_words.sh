@@ -28,6 +28,14 @@
 #
 # THE FIXTURES ARE PLANTED, NOT COMMITTED. They are written into a scratch clone at run time and never
 # enter this repository, so the repo holds no gate that fails on purpose.
+#
+# EVERY CELL SELF-PROVISIONS ITS CLONE, and that is what makes this a product check rather than a crew
+# ritual. The hook set the scratch clone is aimed at is BUILT here, inside this run's scratch directory:
+# one wrapper per consulted name, forwarding to the clone's own tracked guard, and a commit-msg that calls
+# the subject helper. It used to ask the ENCLOSING repo where the host keeps its hooks and aim the fixture
+# at that answer, so on a host with no crew hook set the clone got `.githooks` alone, which carries
+# pre-commit and not commit-msg, and every cell downstream went red for a reason about the machine rather
+# than about the code. A deploy gate must not require state that exists on only one site.
 set -uo pipefail
 
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -59,12 +67,18 @@ consulted_face() { # $1 = repo path, $2 = hook name -> exists | absent | unreada
   if [ -f "$p" ]; then printf 'exists'; else printf 'absent'; fi
 }
 consulted_dir()  { local p; p=$(consulted_path "$1" "$2") || return 1; printf '%s' "$(dirname -- "$p")"; }
-armed_set() {    # the set the ENCLOSING repo consults, when it is a set: both names present, same dir
-  local pc cm d
-  pc=$(consulted_path "$REPO" pre-commit) || return 1
-  cm=$(consulted_path "$REPO" commit-msg) || return 1
-  [ -f "$pc" ] && [ -f "$cm" ] || return 1
-  d=$(dirname -- "$cm"); [ "$d" = "$(dirname -- "$pc")" ] || return 1
+
+# The set the fixture clone is aimed at, WRITTEN BY THIS HARNESS in its own scratch directory. Nothing
+# here reads the host's config: the same armed state is modelled on the crew box and on a customer box,
+# from the same bytes, so a cell that passes here passes for the reason the code says it does.
+# It is a MODEL of an armed set, not an enforcement test — the subject guard's behaviour truth table is
+# src/tools/test_subject_guard.sh, and it self-provisions the same way.
+write_fixture_set() { # -> the directory, which the caller points core.hooksPath at
+  local d="$SCR/fixture-hookset"
+  mkdir -p "$d" || return 1
+  printf '#!/bin/sh\n# planted by src/tools/test_gate_words.sh — forwards to the tracked guard of whatever clone is consulted\ntop=$(git rev-parse --show-toplevel 2>/dev/null) || exit 1\nexec "$top/.githooks/pre-commit" "$@"\n' > "$d/pre-commit"
+  printf '#!/bin/sh\n# planted by src/tools/test_gate_words.sh — an armed commit-msg: it calls the subject helper and returns its status\ng=$(dirname -- "$0")/subject-guard.sh\n[ -f "$g" ] && { sh "$g" "$@" || exit $?; }\nexit 0\n' > "$d/commit-msg"
+  chmod 755 "$d/pre-commit" "$d/commit-msg" || return 1
   printf '%s' "$d"
 }
 
@@ -72,6 +86,16 @@ SCR=$(mktemp -d "${TMPDIR:-/tmp}/gate-words-XXXXXX") || { printf 'no scratch dir
 cleanup() { [ -n "${KEEP_SCR:-}" ] || rm -rf "$SCR"; }
 trap cleanup EXIT INT TERM
 GOOD_NAME="Tabith LLC"; GOOD_MAIL="info@tabith.com"
+# The config world every arm cell runs in. The check under test asks the CONFIG whether the host carries a
+# hook set, so a cell that inherited this box's global value would answer about the machine it happened to
+# run on — an empty file we own, plus an empty HOME, so each cell supplies its own input.
+: > "$SCR/no-global"; mkdir -p "$SCR/home"
+# A host set that carries pre-commit and lost commit-msg, and a global config file that names it. This is
+# how an INCUMBENT is modelled: a value above the clone. A local core.hooksPath is not an incumbent — it
+# is the arming this repo tells a customer to run — so the refusal face has to be built from the global.
+mkdir -p "$SCR/set-broken"
+printf '#!/bin/sh\nexit 0\n' > "$SCR/set-broken/pre-commit"; chmod 755 "$SCR/set-broken/pre-commit"
+printf '[core]\n\thooksPath = %s\n' "$SCR/set-broken" > "$SCR/g-broken"
 
 # ---------------------------------------------------------------- the scratch clone of THIS tree
 # Archived from HEAD plus the working-tree state of every tracked file, and staged INSIDE the clone so
@@ -122,40 +146,63 @@ exit 9\n' > "$dest/src/tools/$f"
   done
   git -C "$dest" init -q -b lane-under-test . >/dev/null
   git -C "$dest" config user.name "$GOOD_NAME"; git -C "$dest" config user.email "$GOOD_MAIL"
-  # Aim the clone at the hook SET the enclosing repo actually consults — a set carrying BOTH the secret
-  # guard's pre-commit and the subject guard's commit-msg — because that is the armed state a real clone
-  # has on a box that runs a host guard. The aim here used to be `.githooks` alone, which carries
-  # pre-commit and NOT commit-msg: it armed one guard and displaced the other in the same silent line.
-  # That stayed invisible while every registered gate asked about pre-commit only, and went red the
-  # moment a registered gate asked about commit-msg — the deploy under test then stopped at that check
-  # before any plant ran. Where the host carries no such set, `.githooks` is the honest aim, and it is
-  # the same value the enclosing repo would consult; AIM_TAKEN records which one this run chose so the
-  # cells below and the report can say what was modelled instead of assuming it.
-  local aim; aim=$(armed_set) || aim=""
-  [ -n "$aim" ] || aim=".githooks"
+  # Aim the clone at the hook SET this harness just wrote — a set carrying BOTH the secret guard's
+  # pre-commit forwarder and a commit-msg that calls the subject helper. This used to read the ENCLOSING
+  # repo's consulted path and aim the fixture there, which made the clone's armed state a fact about
+  # whichever host ran the gate: on a crew box it inherited a real set, on a customer box it fell back to
+  # `.githooks` (pre-commit, no commit-msg) and every cell below that asks about commit-msg went red for
+  # the host, not the code. AIM_TAKEN records which set this run wrote, so the note line can say it.
+  local aim; aim=$(write_fixture_set) || { printf 'FAIL  could not write the fixture hook set\n' >&2; return 1; }
   AIM_TAKEN="$aim"
   git -C "$dest" config core.hooksPath "$aim"
   git -C "$dest" add -A >/dev/null
   git -C "$dest" commit -q -m "base: the tree under test" >/dev/null
   git -C "$dest" branch dev HEAD   # check_attributions.sh resolves its base from a published line
 }
-# The commit-msg arm check, run against the clone in whichever state the caller put it. It is C's
-# (iid 13, the check whose rc 1 made 13 of these cells red), so a tree that does not carry it yet gets a
-# printed NOT-RUN line and no cells — never a pass worn by the half that did not run.
-subject_arm_cells() { # $1 = armed | displaced
-  local want="$1" out rc
+# The commit-msg arm check, run against a throwaway clone this harness aims, in the config world above.
+# It is C's (iid 13, the check whose rc 1 made 13 of these cells red), so a tree that does not carry it yet
+# gets a printed NOT-RUN line and no cells — never a pass worn by the half that did not run. Four faces,
+# each paired: armed, an incumbent above the clone that lost commit-msg (a refusal), nothing installed at
+# all (NOT APPLICABLE), and a clone aimed at its own pre-commit-only .githooks (also NOT APPLICABLE, which
+# is the documented customer arming and must never read as tampering).
+arm_cells() { # arm_cells <armed|broken|scrubbed|plainhooked> [global-file]
+  local want="$1" gfile="${2:-$SCR/no-global}" out rc
   if [ ! -f "$SCR/clone/src/tools/check_subject_armed.sh" ]; then
     printf 'note  this face of the tree carries no check_subject_armed.sh: the arm-check half of the %s pair is NOT RUN here — the consulted-path cells are what this face asserts\n' "$want" >&2
     return 0
   fi
-  out=$( cd "$SCR/clone/src" && sh tools/check_subject_armed.sh 2>&1 ); rc=$?
-  if [ "$want" = armed ]; then
-    check "and the commit-msg arm check calls this clone armed (rc)" "$rc" "0"
-    contains "$out" "subject-armed: ARMED" "and it names the set it consulted"
-  else
-    check "the arm check refuses the displaced clone (rc)" "$rc" "1"
-    contains "$out" "NOT ARMED" "and the displaced state is said out loud, so a missing commit-msg can never read as armed"
-  fi
+  # The clone's own LOCAL value is what git consults, so a face that models something ABOVE the clone has
+  # to set the local aside first; aim_clone restores it.
+  case "$want" in
+    armed)     git -C "$SCR/clone" config --local core.hooksPath "$AIM_TAKEN" ;;
+    broken)    git -C "$SCR/clone" config --local --unset core.hooksPath ;;
+    scrubbed)  git -C "$SCR/clone" config --local --unset core.hooksPath ;;
+    plainhooked) git -C "$SCR/clone" config --local core.hooksPath .githooks ;;
+  esac
+  out=$( cd "$SCR/clone/src" && env GIT_CONFIG_GLOBAL="$gfile" HOME="$SCR/home" sh tools/check_subject_armed.sh 2>&1 ); rc=$?
+  git -C "$SCR/clone" config --local core.hooksPath "$AIM_TAKEN"
+  case "$want" in
+    armed)
+      check "and the commit-msg arm check calls this clone armed (rc)" "$rc" "0"
+      contains "$out" "subject-armed: ARMED" "and it names the set it consulted"
+      lacks "$out" "NOT APPLICABLE" "an armed clone is never described as a face the check does not apply to"
+      ;;
+    broken)
+      check "the arm check refuses a clone whose HOST carries a set that lost commit-msg (rc)" "$rc" "1"
+      contains "$out" "NOT ARMED" "and the displaced state is said out loud, so a missing commit-msg can never read as armed"
+      lacks "$out" "NOT APPLICABLE" "PAIRED — a host that DOES carry a hook set never gets the non-fatal face: this is the doormat negative"
+      ;;
+    scrubbed)
+      check "the arm check exits 0 where nothing is installed above the clone (rc)" "$rc" "0"
+      contains "$out" "NOT APPLICABLE" "and it names the face it is on, in words"
+      contains "$out" "which does not exist" "and it names the consulted path it asked about"
+      lacks "$out" "NOT ARMED" "a host that never had a guard is not reported as one that lost it"
+      ;;
+    plainhooked)
+      check "the documented customer arming — a clone aimed at its own .githooks — is NOT APPLICABLE (rc)" "$rc" "0"
+      lacks "$out" "NOT ARMED" "and it is never called tampering: that set ships pre-commit only, everywhere"
+      ;;
+  esac
 }
 plant_loud()  { printf '#!/bin/sh\n# a planted fixture for src/tools/test_gate_words.sh — not shipped\nprintf "GATEWORD-LOUD: the check speaks, the wrapper does not\\n" >&2\nexit %s\n' "$2" > "$1"; }
 plant_quiet() { printf '#!/bin/sh\n# a planted fixture for src/tools/test_gate_words.sh — not shipped\nexit %s\n' "$2" > "$1"; }
@@ -166,7 +213,7 @@ fire() { RC=$(run_deploy); OUT=$(cat "$SCR/out.txt"); }
 
 say "THE CLONE IS A REAL ONE — the three shipped shell gates pass in it BEFORE any plant is registered"
 build_clone "$SCR/clone" "" || { printf 'FAIL  could not build the scratch clone\n' >&2; exit 1; }
-printf 'note  the fixture clone is aimed at core.hooksPath=%s — the set the enclosing repo consults, asked out of git, not remembered\n' "$AIM_TAKEN" >&2
+printf 'note  the fixture clone is aimed at core.hooksPath=%s — a set THIS harness wrote in its own scratch dir, so the armed state is modelled, not inherited from the host\n' "$AIM_TAKEN" >&2
 for t in check_guard_armed.sh check_attributions.sh test_attribution_pins.sh; do
   ( cd "$SCR/clone/src" && sh "tools/$t" >/dev/null 2>&1 ); check "the clone's own $t is green (rc=0)" "$?" "0"
 done
@@ -177,15 +224,27 @@ say "THE AIM IS A SET — every consulted hook name exists where the clone is po
 check "the clone's consulted commit-msg is a real file, not displaced by the aim" "$(consulted_face "$SCR/clone" commit-msg)" "exists"
 sdir=$(consulted_dir "$SCR/clone" pre-commit); cdir=$(consulted_dir "$SCR/clone" commit-msg)
 check "and both consulted names resolve into the SAME set, which is the one value hooksPath replaces" "$([ -n "$sdir" ] && [ "$sdir" = "$cdir" ] && echo same || echo differ)" "same"
-subject_arm_cells armed
+arm_cells armed
 
-say "PAIRED — the same clone aimed at a set MISSING commit-msg must still be refused, never read as armed"
-# Root AGENTS.md sec.2 asked of every gate: the case it rejects gets a cell. This re-aim is legal only
-# because $SCR/clone is a throwaway fixture the harness makes and destroys; no real venue is touched.
-git -C "$SCR/clone" config core.hooksPath .githooks
-check "the displaced aim consults a commit-msg that does not exist" "$(consulted_face "$SCR/clone" commit-msg)" "absent"
-subject_arm_cells displaced
-git -C "$SCR/clone" config core.hooksPath "$AIM_TAKEN"
+say "PAIRED — a clone whose HOST carries a set that lost commit-msg must still be refused, never read as armed"
+# Root AGENTS.md sec.2 asked of every gate: the case it rejects gets a cell. These re-aims are legal only
+# because $SCR/clone is a throwaway fixture the harness makes and destroys; no real venue is touched, and
+# arm_cells puts the clone's own aim back before it returns.
+git -C "$SCR/clone" config --local core.hooksPath "$SCR/set-broken"
+check "a set carrying pre-commit and no commit-msg consults an absent commit-msg" "$(consulted_face "$SCR/clone" commit-msg)" "absent"
+git -C "$SCR/clone" config --local --unset core.hooksPath
+arm_cells broken "$SCR/g-broken"
+check "and the clone's own aim is back on the armed set after the cell" "$(consulted_face "$SCR/clone" commit-msg)" "exists"
+
+say "THE NON-FATAL FACES — nothing installed above the clone, and the arming this repo documents"
+# Two customer states, one answer each side of the line the rule draws. Nothing installed anywhere is
+# NOT APPLICABLE; a clone aimed at its own pre-commit-only .githooks — which is exactly what this repo's
+# header tells a customer to run — is NOT APPLICABLE too, because that set has never carried a commit-msg
+# on any host, so there is no guard there that could have been lost.
+mkdir -p "$SCR/emptyhooks"
+arm_cells scrubbed
+arm_cells plainhooked
+git -C "$SCR/clone" config --local core.hooksPath "$AIM_TAKEN"
 check "and the clone is put back on the armed set before any plant case runs" "$(consulted_face "$SCR/clone" commit-msg)" "exists"
 
 say "CASE 1 — a passing gate set completes the deploy and never says REFUSED"

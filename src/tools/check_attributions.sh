@@ -12,6 +12,17 @@
 #                                                  reviewer needs to ask is "would this have caught that",
 #                                                  and the answer must not require moving the work tree.
 #
+# THE BASE CONTRACT, in candidate order, and it is the whole site-agnostic question for this file. A
+# customer clone of a RELEASE FACE has no `dev` branch in it: the published main line is its own root, so a
+# gate that resolves only origin/dev / gitlab/dev / dev refuses that customer for the shape of their clone.
+#   (a) an argument, or ATTRIB_BASE                - a reviewer's explicit base always wins;
+#   (b) the merge-base with origin/dev, gitlab/dev, dev  - the crew and branch-face case, as before;
+#   (c) the most recent tag reachable from HEAD^   - the previous release, printed with the reason it chose it;
+#   (d) HEAD IS EXACTLY A RELEASE TAG and no base resolved - NOT APPLICABLE, rc 0: there is no lineage under
+#       this snapshot to diff, and that is stated out loud rather than answered as a clean diff;
+#   (e) none of the above                          - REFUSED, rc 1. An uncomputable diff is still not a
+#       clean diff, and a face with neither a base nor a tag is not a release snapshot either.
+#
 # WHY THIS EXISTS. The rule was enforced by nobody: the thing that caught a violation of it was a grep
 # written in a report, and a rule with no
 # instrument is a wish — the same reason the subject guard exists. This is the instrument.
@@ -51,18 +62,37 @@ REPO=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$REPO" || { printf 'attributions: REFUSED — cannot enter the repo.\n' >&2; exit 1; }
 
 base=${1:-${ATTRIB_BASE:-}}
+base_why="an argument or ATTRIB_BASE (a reviewer's explicit base)"
 if [ -z "$base" ]; then
     # The point where this branch left the published line, not the tip of it: a plain `origin/dev..HEAD`
     # diff would re-scan another lane's merged work and call it this branch's.
     for cand in origin/dev gitlab/dev dev; do
         git rev-parse --verify -q "$cand" >/dev/null 2>&1 || continue
         mb=$(git merge-base HEAD "$cand" 2>/dev/null || true)
-        [ -n "$mb" ] && { base=$mb; break; }
+        [ -n "$mb" ] && { base=$mb; base_why="the merge-base with $cand (the published line)"; break; }
     done
 fi
-[ -n "$base" ] || { printf 'attributions: REFUSED — no base to diff against: none of origin/dev, gitlab/dev, dev resolved a merge-base with HEAD, and neither an argument nor ATTRIB_BASE was given. An uncomputable diff is not a clean diff.\n' >&2; exit 1; }
+if [ -z "$base" ]; then
+    # (c) a release face carries tags and no dev lineage: the previous release is a real base, and it is
+    # named here rather than left for the reader to infer from a sha.
+    prev=$(git describe --tags --abbrev=0 'HEAD^' 2>/dev/null || true)
+    if [ -n "$prev" ] && git rev-parse --verify -q "${prev}^{commit}" >/dev/null 2>&1; then
+        base=$(git rev-parse "$prev")
+        base_why="the previous release tag $prev (this clone carries no origin/dev, gitlab/dev or dev merge-base)"
+    fi
+fi
+if [ -z "$base" ]; then
+    # (d) HEAD sits exactly on a release tag and nothing above resolved: a snapshot face, not a branch.
+    snap=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
+    if [ -n "$snap" ]; then
+        printf 'attributions: NOT APPLICABLE — release snapshot face: HEAD is tagged %s and no base lineage exists on this face (no origin/dev, gitlab/dev or dev merge-base, no argument or ATTRIB_BASE, and no tag below HEAD^ to compare against). Nothing was scanned, and this check does not claim a clean diff it did not compute.\n' "$snap"
+        exit 0
+    fi
+fi
+[ -n "$base" ] || { printf 'attributions: REFUSED — no base to diff against: none of origin/dev, gitlab/dev, dev resolved a merge-base with HEAD, no tag resolved below HEAD^, HEAD is not a release tag, and neither an argument nor ATTRIB_BASE was given. An uncomputable diff is not a clean diff.\n' >&2; exit 1; }
 git rev-parse --verify -q "${base}^{commit}" >/dev/null \
     || { printf 'attributions: REFUSED — base "%s" is not a commit in this clone.\n' "$base" >&2; exit 1; }
+printf 'attributions: base = %s — %s\n' "$(printf '%s' "$base" | cut -c1-10)" "$base_why"
 
 # The owner-credit class, phrase by phrase. Each alternative is written so the line it sits on cannot
 # match itself: a bracketed final character is the same regex and a different string.

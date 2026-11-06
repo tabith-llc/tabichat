@@ -33,6 +33,7 @@ say()   { printf '\n== %s ==\n' "$1"; }
 check() { if [ "$2" = "$3" ]; then ok "$1 (=$3)"; else bad "$1" "got '$2', want '$3'"; fi; }
 contains() { case "$1" in *"$2"*) ok "$3";; *) bad "$3" "output lacks '$2'";; esac; }
 lacks()    { case "$1" in *"$2"*) bad "$3" "output CONTAINS '$2'";; *) ok "$3";; esac; }
+lineno()   { printf '%s\n' "$1" | grep -n -F "$2" | head -1 | cut -d: -f1; }
 
 [ -f "$CHK" ] || { printf 'FAIL  no gate at %s\n' "$CHK"; exit 1; }
 sh -n "$CHK" 2>/dev/null && ok "the gate parses under sh" || bad "the gate parses under sh" "syntax error"
@@ -130,7 +131,66 @@ lacks "$out" "uncomputable diff" "and the two sentences are distinguishable, so 
 # here as 3 of 2 on the first draft. If either call site loses its clearance, this cell reddens instead of
 # the whole face quietly needing a special environment to fail.
 clearances=$(grep -cE 'out=.*env -u ATTRIB_BASE sh src/tools/check_attributions\.sh' "$0")
-check "both bare-clone call sites clear the ambient base in the shipped text (2 of 2)" "$clearances" "2"
+check "every bare-clone call site clears the ambient base in the shipped text (3 of 3, the third being the (e) face of the base-contract section)" "$clearances" "3"
+
+say "THE BASE CONTRACT, AT THE FACE A CUSTOMER CLONE ACTUALLY HAS"
+# A release face has no dev branch in it: the published line is its own history, so the old candidate list
+# (origin/dev, gitlab/dev, dev) resolved nothing there and the gate refused a customer for the SHAPE of
+# their clone. The fallbacks below are the whole point of that change, and each gets its pair: the base is
+# named and printed, a real credit on top of a tag-derived base is still refused, and a face with neither a
+# lineage nor a tag still REFUSES. Nothing here is allowed to read as a clean diff that was not computed.
+SNAP="$SCR/snapface"; mkdir -p "$SNAP/src/tools"
+git -C "$SNAP" init -q .
+git -C "$SNAP" config user.name "$GOOD_NAME"; git -C "$SNAP" config user.email "$GOOD_MAIL"
+cp "$CHK" "$SNAP/src/tools/check_attributions.sh"
+printf 'a shipped file\n' > "$SNAP/f"; git -C "$SNAP" add -A && git -C "$SNAP" commit -q -m "first: the snapshot face" >/dev/null 2>&1
+git -C "$SNAP" tag 0.1.2
+snap_run() { ( cd "$SNAP" && env -u ATTRIB_BASE -u ATTRIB_HEAD sh src/tools/check_attributions.sh "${1:-}" 2>&1 ); }
+
+out=$(snap_run); rc=$?
+check "(d) a tagged snapshot face with no lineage below it is NOT APPLICABLE (rc=0)" "$rc" "0"
+contains "$out" "NOT APPLICABLE" "and it names the face in words, not silence"
+contains "$out" "0.1.2" "and it prints the tag it recognised, so the reader knows which snapshot this was"
+contains "$out" "does not claim a clean diff" "and it says plainly that nothing was scanned"
+lacks "$out" "CLEAN —" "and it never wears the pass it did not compute"
+
+printf 'another shipped line\n' >> "$SNAP/f"; git -C "$SNAP" add -A && git -C "$SNAP" commit -q -m "second: an ordinary line" >/dev/null 2>&1
+git -C "$SNAP" tag 0.1.3
+out=$(snap_run); rc=$?
+check "(c) with a tag under HEAD^ the previous release becomes the base (rc=0)" "$rc" "0"
+contains "$out" "the previous release tag 0.1.2" "and it PRINTS the base it chose and why it chose it"
+contains "$out" "1 added line(s)" "and a real scan happened: the line this commit added was counted"
+
+printf '%s\n' "$V_OWNER" >> "$SNAP/f"; git -C "$SNAP" add -A && git -C "$SNAP" commit -q -m "third: planted" >/dev/null 2>&1
+out=$(snap_run); rc=$?
+check "PAIRED — (c) is a base, not a blanket: a credit added above the tag is still refused (rc=1)" "$rc" "1"
+contains "$out" "REFUSED" "and it is called a refusal"
+contains "$out" "$(printf '%s' "$V_OWNER" | cut -c1-14)" "and it shows the planted line as typed, so a tag-derived base still names what it found"
+
+EXPL=$(git -C "$SNAP" rev-parse HEAD)
+out=$(snap_run "$EXPL"); rc=$?
+check "(a) an explicit base beats every fallback, even a tag that would have resolved (rc=0, an empty diff)" "$rc" "0"
+contains "$out" "an argument or ATTRIB_BASE" "and it says the reviewer's value was what it used"
+lacks "$out" "the previous release tag" "and the fallback is visibly not taken when a base was handed over"
+out=$( cd "$SNAP" && ATTRIB_BASE="$EXPL" sh src/tools/check_attributions.sh 2>&1 ); rc=$?
+check "and ATTRIB_BASE alone is the same face (rc=0)" "$rc" "0"
+contains "$out" "an argument or ATTRIB_BASE" "named as the source, not guessed from a sha"
+
+# (e) stays a refusal, and the existing bare-clone cells above are its pair: a face with no lineage AND no
+# tag is not a snapshot, so the gate has nothing to be non-fatal about.
+out=$( cd "$BARE" && env -u ATTRIB_BASE sh src/tools/check_attributions.sh 2>&1 ); rc=$?
+check "(e) PAIRED — an untagged clone with no lineage still REFUSES (rc=1)" "$rc" "1"
+contains "$out" "no tag resolved below HEAD" "and the refusal names the whole candidate list it tried"
+contains "$out" "uncomputable diff" "and it keeps the sentence the rule turns on"
+
+# The candidate list itself, pinned in the shipped file rather than paraphrased here: an order a reader
+# cannot re-derive from the source is an order that gets changed by accident.
+src=$(cat "$CHK")
+la=$(lineno "$src" "an argument or ATTRIB_BASE"); lb=$(lineno "$src" "for cand in origin/dev gitlab/dev dev")
+lc=$(lineno "$src" "describe --tags --abbrev=0"); ld=$(lineno "$src" "release snapshot face")
+le=$(lineno "$src" "REFUSED — no base to diff against")
+check "the base contract is (a) argument, (b) lineage, (c) previous tag, (d) snapshot face, (e) refusal — in that order in the file" "$([ -n "$la" ] && [ -n "$lb" ] && [ -n "$lc" ] && [ -n "$ld" ] && [ -n "$le" ] && [ "$la" -lt "$lb" ] && [ "$lb" -lt "$lc" ] && [ "$lc" -lt "$ld" ] && [ "$ld" -lt "$le" ] && echo ordered || echo NOT)" "ordered"
+check "and the fallback is asked ONCE, in the documented place (1 site)" "$(printf '%s\n' "$src" | grep -c 'describe --tags --abbrev=0')" "1"
 
 say "THE PRE-EXISTING POPULATION IS NOT THIS GATE'S BUSINESS, and that is why it arrives green"
 rewind
