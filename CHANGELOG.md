@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- A room line a seat publishes now appears in that seat's own journal on every path that publishes one, including the notice a lead seat sends just before it renews, so a seat can answer "did I send that?" about a line it did send
+- `lane_admin.mjs` introduces itself to the broker by name (`lane-admin-<your-nick>-<random>`), so a one-shot admin request no longer arrives as an anonymous `mqttjs_…` connect and a reader can tell it apart from a running seat
+
+### Added
+
+- `docs/use.md` says plainly that the room journal is a window of the newest 500 lines (set with `MQTT_ROOMLOG_MAX_LINES`), not a full ledger, so a line missing from a journal is a question to ask rather than an answer to state
+
 ## [0.1.3] - 2026-11-05
 
 ### Changed

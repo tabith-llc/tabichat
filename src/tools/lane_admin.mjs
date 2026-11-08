@@ -69,6 +69,7 @@ import {
 import {
   ADMIN_KIND,
   ADMIN_EXIT,
+  adminClientId,
   adminExitCode,
   adminResultWild,
   isAdminResult,
@@ -132,7 +133,10 @@ if (TRANSPORT.mode === "refuse") {
   );
   process.exit(ADMIN_EXIT.broker);
 }
-const c = mqtt.connect(TRANSPORT.url, { ...(TRANSPORT.tls ?? {}) });
+// A DEFAULT clientId is `mqttjs_<hex>`: it carries no information, so in a broker log this connect
+// looks like a connect from a client nobody recognises. `adminClientId` names the tool and the nick
+// it is speaking as, and keeps a shape a live seat's `pi-<nick>-<rand>` can never be confused with.
+const c = mqtt.connect(TRANSPORT.url, { ...(TRANSPORT.tls ?? {}), clientId: adminClientId(by, Math.random().toString(16).slice(2, 8)) });
 let settled = false;
 
 const finish = (line, code) => {

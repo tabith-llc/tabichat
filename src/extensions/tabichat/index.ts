@@ -1489,6 +1489,53 @@ export default function (pi: ExtensionAPI) {
   };
   /** What the alarm calls a room line, so the operator can tie a loss to a post they just made. */
   const ROOM_SEND_KIND = "room line";
+  /**
+   * The ONE tail every room publish runs once its bytes reached the socket: the turn's publish
+   * counter, this seat's own journal, and — only with the flag — the retained tail board.
+   *
+   * It is a named function at this scope rather than a local inside `publishRoom` because the
+   * pre-renew lead hold CANNOT go through `publishRoom`: that function publishes fire-and-forget,
+   * and `session_shutdown` closes the socket about a second after each publish, so an unawaited
+   * hold races the very session change it exists to announce. A room line that reaches every peer
+   * and never reaches its author's journal leaves the author unable to answer "did I send that?" —
+   * so BOTH paths call this one tail, and the awaited path calls it only AFTER the publish
+   * callback succeeded (a write the socket refused is neither counted nor kept).
+   */
+  const roomSendTail = (payload: Record<string, unknown>): void => {
+    if (!client || !room) return;
+    // iid 29 — the ONE room-publish counter, on the one tail every room publish calls. A room
+    // write that got this far went to the socket, so this is the fact the end-of-turn notice needs.
+    publishedThisTurn++;
+    journalAppend("out", {
+      id: typeof payload.id === "string" ? payload.id : "",
+      nick: typeof payload.nick === "string" ? payload.nick : nick,
+      to: typeof payload.to === "string" ? payload.to : undefined,
+      ts: typeof payload.ts === "number" ? payload.ts : Date.now(),
+      message: typeof payload.message === "string" ? payload.message : String(payload.message ?? ""),
+    });
+    // A2, flag-gated and DEFAULT OFF: the retained per-lane tail board. On the phase-1 ACL a write
+    // to `hist/<leaf>` is a QoS 0 publish the broker refuses WITHOUT any error, so this stays dark
+    // until the generated ACL grants it (docs/broker/README.md cutover table).
+    if (!HIST_BOARD) return;
+    const ht = histTopic(room, nick);
+    if (!ht) {
+      notice("record-only", `[tabichat][hist] MQTT_HIST_BOARD=1 but nick "${nick}" has no topic-leaf-safe form; the ` +
+          `tail board was NOT published — an empty leaf aims at a trailing-separator topic nobody reads.`);
+      return;
+    }
+    client!.publish(
+      ht,
+      JSON.stringify(
+        histBoardPayload({
+          nick,
+          leaf: topicLeaf(nick),
+          journalPath: roomLogTarget && roomLogTarget.ok ? roomLogTarget.path : "",
+          outLines: outTail,
+        }),
+      ),
+      { retain: true },
+    );
+  };
   const publishRoom = (payload: Record<string, unknown>): string => {
     if (!client || !room) return "";
     // iid 21 finding 1 — the id THIS payload carries is what its own echo will carry back, so it is
@@ -1496,43 +1543,10 @@ export default function (pi: ExtensionAPI) {
     // every room publish already mints its id here (`msgId(nick, ++msgSeq, BOOT)`), and a second
     // id-space would be a second answer to the same question.
     const sendId = typeof payload.id === "string" ? payload.id : "";
-    // ONE tail for both publish branches: journal this send, keep the board tail, and —
-    // only with the flag — publish the retained board. Kept out of the branch shape so the #10
-    // gate's "registers on the topic it ACTUALLY used" structure stays byte-recognisable.
-    const afterRoomSend = () => {
-      // iid 29 — the ONE room-publish counter, on the one tail both publish branches call. A room
-      // write that got this far went to the socket, so this is the fact the end-of-turn notice needs.
-      publishedThisTurn++;
-      journalAppend("out", {
-        id: typeof payload.id === "string" ? payload.id : "",
-        nick: typeof payload.nick === "string" ? payload.nick : nick,
-        to: typeof payload.to === "string" ? payload.to : undefined,
-        ts: typeof payload.ts === "number" ? payload.ts : Date.now(),
-        message: typeof payload.message === "string" ? payload.message : String(payload.message ?? ""),
-      });
-      // A2, flag-gated and DEFAULT OFF: the retained per-lane tail board. On the phase-1 ACL a write
-      // to `hist/<leaf>` is a QoS 0 publish the broker refuses WITHOUT any error, so this stays dark
-      // until the generated ACL grants it (docs/broker/README.md cutover table).
-      if (!HIST_BOARD) return;
-      const ht = histTopic(room, nick);
-      if (!ht) {
-        notice("record-only", `[tabichat][hist] MQTT_HIST_BOARD=1 but nick "${nick}" has no topic-leaf-safe form; the ` +
-            `tail board was NOT published — an empty leaf aims at a trailing-separator topic nobody reads.`);
-        return;
-      }
-      client!.publish(
-        ht,
-        JSON.stringify(
-          histBoardPayload({
-            nick,
-            leaf: topicLeaf(nick),
-            journalPath: roomLogTarget && roomLogTarget.ok ? roomLogTarget.path : "",
-            outLines: outTail,
-          }),
-        ),
-        { retain: true },
-      );
-    };
+    // ONE tail for both publish branches, shared with the awaited hold. The zero-arg local name
+    // stays because `tools/test_roommsg.ts` pins this arm's shape — watch on the topic it ACTUALLY
+    // used, then the tail, then the return — and the body lives in `roomSendTail` alone.
+    const afterRoomSend = () => roomSendTail(payload);
     if (SENDER_TOPIC) {
       const t = msgTopic(room, nick);
       if (!t) {
@@ -2874,25 +2888,30 @@ export default function (pi: ExtensionAPI) {
       // WHOLE run, which is exactly the traffic a hold exists to intercept.
       if (client && room && shouldHoldBeforeRenew(nick, LEAD_NICK)) {
         const hold = leadHoldLine(nick);
+        const holdPayload = roomPayload({ nick, message: hold, id: msgId(nick, ++msgSeq, BOOT), ts: Date.now(), to: "all", steer: true });
         try {
           await new Promise<void>((resolve, reject) => {
             client.publish(
               `chat/${room}`,
-              JSON.stringify(
-                roomPayload({ nick, message: hold, id: msgId(nick, ++msgSeq, BOOT), ts: Date.now(), to: "all", steer: true }),
-              ),
+              JSON.stringify(holdPayload),
               {},
               (err) => (err ? reject(err) : resolve()),
             );
+            // The watch is armed on the SAME tick the write is handed over — exactly where
+            // `publishRoom`'s flat arm arms it — and never after the `await`: by then the broker's
+            // echo may already have come back and found nothing to settle, which would leave a
+            // delivered hold to age out as an alarm. Topic is the FLAT room topic, whatever
+            // MQTT_SENDER_TOPIC says, because that is the hold's delivery shape and the topic the
+            // echo will actually arrive on.
+            watchSend(`chat/${room}`, ROOM_SEND_KIND, typeof holdPayload.id === "string" ? holdPayload.id : "");
           });
-          // iid 29 — this hand-off IS a room line: `chat/<room>`, `to:"all"`, `steer:true`,
-          // minted by this seat, and it reaches the socket on its own callback rather than through
-          // `publishRoom`, so the counter that decides the end-of-turn notice has to be moved by it too.
-          // Without it the notice kept one known bypass: a lead whose turn produced only the hold was told
-          // "nothing was published" after publishing to every lane. Counted AFTER the await, so a publish the
-          // socket rejected (the `catch` below) is NOT counted — the same rule as `publishRoom`'s tail, which
-          // sits after its publish call and never before it.
-          publishedThisTurn++;
+          // iid 29 counted it; leg 1123 JOURNALS it. This hand-off is a room line — `chat/<room>`,
+          // `to:"all"`, `steer:true`, minted by this seat — so it runs the same tail every other room
+          // publish runs, and runs it AFTER the await: a hold the socket refused is counted nowhere,
+          // kept nowhere, and the `catch` below still says so loudly. Before this the hold consumed a
+          // counter number and reached every peer while the author's own journal held nothing, so the
+          // seat that sent it could not answer "did I send that?" about a line it had in fact sent.
+          roomSendTail(holdPayload);
           ctx.ui.notify(`[tabichat][renew] lead hold published (steered, to=all) before the session change`, "info");
         } catch (e) {
           // Loud, and the renew still proceeds: a lead whose socket is gone cannot notify anybody, but

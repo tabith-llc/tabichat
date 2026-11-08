@@ -83,6 +83,21 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 
 export const ADMIN_KIND = "lane-admin";
 
+/**
+ * The clientId the requester tool connects with.
+ *
+ * With no clientId set, mqtt.js mints its own `mqttjs_<hex>`, which carries no information: in a
+ * broker log it reads the same as a connect from a client nobody recognises. Naming the tool and the
+ * nick it is speaking as makes the line say who asked.
+ *
+ * It is deliberately NOT the seat shape `pi-<nick>-<rand>` (`index.ts`): a tool connect and a seat
+ * connect are two different facts, and a log reader must be able to tell them apart rather than
+ * conflate a one-shot request with a live lane.
+ */
+export const ADMIN_CLIENT_PREFIX = "lane-admin";
+export const adminClientId = (by: string, rand: string): string =>
+  `${ADMIN_CLIENT_PREFIX}-${sanitizeAckId(by) || "unknown"}-${rand}`;
+
 export const ADMIN_ACTIONS = ["renew", "compact", "shutdown"] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
