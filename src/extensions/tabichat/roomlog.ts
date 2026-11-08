@@ -35,6 +35,18 @@ export const ROOMLOG_SITE_KEY = "roomLog";
 /** Line cap. On overflow the newest are kept and the oldest dropped, and the trim is REPORTED. */
 export const ROOMLOG_MAX_ENV = "MQTT_ROOMLOG_MAX_LINES";
 export const ROOMLOG_MAX_DEFAULT = 500;
+/**
+ * Age cap, beside the line cap and not instead of it: a seat that journals 40 lines a day is under
+ * 500 for a fortnight, so a count alone bounds the file and not the history. Unset or garbage keeps
+ * today's behaviour exactly — no age bound — because this file is the evidence base the attribution
+ * checks run on, and a default that quietly shrank it would be a worse instrument than a long one.
+ * `0` is the aggressive value: everything older than this boot goes at boot. As with the receipt
+ * board, no value means "keep forever" other than leaving it unset.
+ */
+export const ROOMLOG_MAX_AGE_ENV = "MQTT_ROOMLOG_MAX_AGE_DAYS";
+/** -1 = no age bound. It is the shipped default, so the file keeps behaving as it does today. */
+export const ROOMLOG_MAX_AGE_DEFAULT_DAYS = -1;
+const DAY_MS = 24 * 60 * 60 * 1000;
 /** How many of the newest lines a fresh session takes back into its buffer. */
 export const ROOMLOG_REPLAY_ENV = "MQTT_ROOMLOG_REPLAY";
 export const ROOMLOG_REPLAY_DEFAULT = 50;
@@ -191,6 +203,19 @@ export const parseRoomLogCap = (raw: unknown, fallback: number): number => {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 };
 
+/**
+ * The age bound, in whole days, floor at 0. `parseRoomLogCap`'s rule with the zero allowed: a
+ * garbage or negative value is the DEFAULT (no bound), never "delete the history", because an
+ * unparseable knob that destroys evidence is the one failure this module must not have. `0` is a
+ * real answer and means "nothing older than this boot survives".
+ */
+export const parseRoomLogAgeDays = (raw: unknown, fallback: number): number => {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
+  if (typeof raw !== "string" || raw.trim() === "") return fallback;
+  const n = Number(raw.trim());
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+};
+
 /** One record per line. JSON carries the newlines inside `text` as escapes, so a message can
  * never write a second record that was not one. */
 export const formatRoomLogRecord = (rec: RoomLogRecord): string => JSON.stringify(rec) + "\n";
@@ -251,21 +276,38 @@ export const appendRoomLogRecord = (
 };
 
 /**
- * The boot trim (the line cap, moved off the hot path): if the file has grown past the
- * cap, keep the newest `maxLines` and RETURN the drop count so the wiring reports it — a silent
- * trim is the silent-drop class this module exists to end. Under the cap nothing is touched.
+ * The boot trim (both bounds, moved off the hot path): drop what is past the age bound, then keep
+ * the newest `maxLines`, and RETURN the drop count so the wiring reports it — a silent trim is the
+ * silent-drop class this module exists to end. Under both bounds nothing is touched.
+ *
+ * Age first, then the count: applying the cap first would let a file that sits under its line cap
+ * keep records the site asked to lose. A line that does not parse is KEPT — it is counted by
+ * `loadRoomLogTail`'s malformed report, and an unreadable line is not this bound's to destroy.
+ * `maxAgeDays` defaults to no bound, so a three-argument call is today's behaviour byte for byte.
  */
 export const trimRoomLog = (
   io: RoomLogIo,
   path: string,
   maxLines: number,
+  maxAgeDays: number = ROOMLOG_MAX_AGE_DEFAULT_DAYS,
+  nowMs: number = Date.now(),
 ): { ok: true; trimmed: number } | { ok: false; reason: string } => {
   try {
     const lines = splitRecords(io.read(path));
-    if (lines.length <= maxLines) return { ok: true, trimmed: 0 };
-    const kept = lines.slice(lines.length - maxLines);
+    let live = lines;
+    if (maxAgeDays >= 0) {
+      const cut = nowMs - maxAgeDays * DAY_MS;
+      live = lines.filter((l) => {
+        const r = parseRoomLogRecord(l);
+        return !r || r.ts >= cut;
+      });
+    }
+    const over = live.length > maxLines ? live.length - maxLines : 0;
+    const aged = lines.length - live.length;
+    if (!over && !aged) return { ok: true, trimmed: 0 };
+    const kept = over ? live.slice(over) : live;
     io.write(path, kept.map((l) => `${l}\n`).join(""));
-    return { ok: true, trimmed: lines.length - maxLines };
+    return { ok: true, trimmed: over + aged };
   } catch (e) {
     return { ok: false, reason: `${path}: ${e instanceof Error ? e.message : String(e)}` };
   }

@@ -668,6 +668,9 @@ export const ackTopic = (room: string, by: string, id: string): string => {
  * than "never". Bound is a backstop, not the mechanism — a lane that acks furiously still gets its
  * list trimmed, and a trim is REPORTED (see `clearStale`'s caller), because a silent trim here would
  * leak retained receipts forever and read as the broker's fault.
+ *
+ * The same window now sets BOTH ends of that bound: the seat-side sweep (`receiptClears`) and the
+ * broker-side expiry (`expiryIntervalSeconds` below). One knob, two ends, on purpose.
  */
 export const ACK_RETAIN_ENV = "MQTT_ACK_RETAIN_MS";
 export const ACK_RETAIN_DEFAULT_MS = 60 * 60_000;
@@ -713,6 +716,27 @@ export const receiptClears = (
 
 /** An empty retained payload on the exact topic is MQTT's clear. Never a JSON tombstone. */
 export const clearPayload = (): string => "";
+
+/**
+ * The BROKER-side half of the same window, so a board with no seat left to sweep it still retires.
+ * `clearMyReceipts` can only reach the leaves THIS process pinned; a lane that crashed or was
+ * retired leaves its own `_ctl/<nick>/<id>` leaves standing with nothing coming back for them. The
+ * v5 Message-Expiry-Interval is what lets the broker drop them with nobody online.
+ *
+ * ONE knob, two ends: this is derived from the `MQTT_ACK_RETAIN_MS` window the sweep already uses,
+ * never a second constant. A seat configured for ten minutes must not leave one-hour boards behind
+ * at the broker, and then the knob says one thing instead of two.
+ *
+ * The unit is SECONDS (MQTT 5.0), so a window under a second still gets 1. A floor of 1 and never 0
+ * is measured, not taste: on the loopback fixture at mosquitto 2.1.2, an interval of `0` on a
+ * RETAINED publish left the message standing — the value that reads like "expire at once" does the
+ * opposite — so the `MQTT_ACK_RETAIN_MS=0` case maps to 1 second, which is "no board" at the broker
+ * as well as at the sweep. Non-finite input cannot come from `index.ts`'s parse, and 1 is the safe
+ * reading if it ever does: a board that retires early is the failure this knob is set out to avoid,
+ * not the one it court.
+ */
+export const expiryIntervalSeconds = (windowMs: number): number =>
+  windowMs >= 1 ? Math.ceil(windowMs / 1000) : 1;
 
 /**
  * THE ACK WATCHDOG — tabichat#10. `ackTopic` and `adminResultTopic` are RETAINED CHILD topics

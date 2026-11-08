@@ -34,6 +34,8 @@ import {
 } from "./diaglog.ts";
 import {
   ROOMLOG_ENV,
+  ROOMLOG_MAX_AGE_DEFAULT_DAYS,
+  ROOMLOG_MAX_AGE_ENV,
   ROOMLOG_MAX_DEFAULT,
   ROOMLOG_MAX_ENV,
   ROOMLOG_REPLAY_DEFAULT,
@@ -43,6 +45,7 @@ import {
   histBoardPayload,
   loadRoomLogTail,
   makeRoomLogIo,
+  parseRoomLogAgeDays,
   parseRoomLogCap,
   resolveRoomLogTarget,
   trimRoomLog,
@@ -168,6 +171,7 @@ import {
   clearPayload,
   deliveryClause,
   deliveryVerdict,
+  expiryIntervalSeconds,
   outboxView,
   type Delivery,
   pinAck,
@@ -478,6 +482,8 @@ export default function (pi: ExtensionAPI) {
   const HIST_BOARD = process.env.MQTT_HIST_BOARD === "1"; // default OFF; the ACL is phase 2 (docs/broker)
   let roomLogTarget: RoomLogTarget | null = null;
   let roomLogCap = ROOMLOG_MAX_DEFAULT;
+  /** The age bound beside it. -1 (unset/garbage) = no age bound, exactly the behaviour before it. */
+  let roomLogAgeDays = ROOMLOG_MAX_AGE_DEFAULT_DAYS;
   // the last ten lines THIS lane sent — the tail board's whole payload, kept in memory so the
   // board never has to re-read the journal to answer "what did I just say"
   const outTail: RoomLogRecord[] = [];
@@ -570,6 +576,12 @@ export default function (pi: ExtensionAPI) {
     // that means "keep receipts forever": that is the leak AC3 closes, so it is not offered as a knob.
     return Number.isFinite(n) && n >= 0 ? n : ACK_RETAIN_DEFAULT_MS;
   })();
+  /**
+   * ONE knob, two ends. The window above bounds what THIS seat sweeps; this bounds what the broker
+   * holds on the same leaves, derived from the same value and never a second constant. A lane
+   * configured for ten minutes must not leave one-hour retained boards standing once it is gone.
+   */
+  const ACK_EXPIRY_S = expiryIntervalSeconds(ACK_RETAIN_MS);
   const ACK_WATCH_MS = (() => {
     const n = Number.parseInt(process.env[ACK_WATCH_ENV] ?? "", 10);
     // unset/garbage/negative all mean the shipped default, and 0 means OFF: the same
@@ -827,7 +839,12 @@ export default function (pi: ExtensionAPI) {
         JSON.stringify(
           adminResultPayload(rid, nick, (msg.by ?? "").trim(), (msg.action ?? "").trim(), outcome, reason, Date.now()),
         ),
-        { retain: true },
+        {
+          retain: true,
+          // The same window as the receipt board. An answer is one topic per request id, and a lane
+          // that died mid-answer left it there with no sweep of its own to reach it.
+          properties: { messageExpiryInterval: ACK_EXPIRY_S },
+        },
       );
       // #10: this is the publish whose loss hurts most — the requester's tool is sitting on a
       // 15-second window, and if the broker ate this answer it prints "nothing answered" while this
@@ -1597,7 +1614,12 @@ export default function (pi: ExtensionAPI) {
     const t = ackTopic(room, nick, id);
     if (!t) return; // id unusable as a topic leaf; the flat receipt still went out
     if (!client) return; // nothing was sent at all; an alarm here would blame the ACL for a closed socket
-    client.publish(t, JSON.stringify(payload), { retain: true });
+    client.publish(t, JSON.stringify(payload), {
+      retain: true,
+      // The broker-side half of the window: a receipt whose own lane is gone has no sweep left to
+      // clear it, so the leaf carries the expiry the site already asked for (`expiryIntervalSeconds`).
+      properties: { messageExpiryInterval: ACK_EXPIRY_S },
+    });
     // #10: `publish()` resolving is NOT delivery. A QoS 0 write the ACL refuses disappears with no
     // error event, no close and no broker-log line (measured on the loopback fixture at both
     // phases), so the only client-side signal is our own subscription getting it back.
@@ -1829,6 +1851,7 @@ export default function (pi: ExtensionAPI) {
     // newest lines back into the buffer as HISTORY — no injection, no re-journal, cursor past them.
     {
       roomLogCap = parseRoomLogCap(process.env[ROOMLOG_MAX_ENV], ROOMLOG_MAX_DEFAULT);
+      roomLogAgeDays = parseRoomLogAgeDays(process.env[ROOMLOG_MAX_AGE_ENV], ROOMLOG_MAX_AGE_DEFAULT_DAYS);
       const replayN = parseRoomLogCap(process.env[ROOMLOG_REPLAY_ENV], ROOMLOG_REPLAY_DEFAULT);
       roomLogTarget = resolveRoomLogTarget(
         { env: process.env[ROOMLOG_ENV], site: siteConfig[ROOMLOG_SITE_KEY], home: process.env.HOME, room, nick },
@@ -1846,9 +1869,9 @@ export default function (pi: ExtensionAPI) {
         } catch (e) {
           noticeLost("journal-not-prepared", `[tabichat][roomlog] could not prepare ${roomLogTarget.path}: ${e instanceof Error ? e.message : String(e)}`);
         }
-        const tr = trimRoomLog(ROOMLOG_IO, roomLogTarget.path, roomLogCap);
+        const tr = trimRoomLog(ROOMLOG_IO, roomLogTarget.path, roomLogCap, roomLogAgeDays);
         if (tr.ok && tr.trimmed > 0)
-          diag("INFO", `[tabichat][roomlog] journal at ${roomLogTarget.path} was ${tr.trimmed} line(s) past its ${roomLogCap}-line cap: oldest dropped at boot, newest kept — said, not silent`);
+          diag("INFO", `[tabichat][roomlog] journal at ${roomLogTarget.path} was ${tr.trimmed} line(s) past its bounds (${roomLogCap}-line cap, ${roomLogAgeDays >= 0 ? `${roomLogAgeDays}-day age` : "no age bound"}): oldest dropped at boot, newest kept — said, not silent`);
         if (!tr.ok)
           notice("record-only", `[tabichat][roomlog] boot trim failed: ${tr.reason}`);
         const t = loadRoomLogTail(ROOMLOG_IO, roomLogTarget.path, replayN);
@@ -1967,6 +1990,16 @@ export default function (pi: ExtensionAPI) {
     );
     client = mqtt.connect(brokerUrl, {
       ...(TRANSPORT.tls ?? {}),
+      // MQTT 5.0, and this connect is what makes the expiry above mean anything: the
+      // Message-Expiry-Interval property exists in v5 only, and mqtt.js does not encode it on a v4
+      // packet. The request is connection-level, so it is stated at the one place a client is built.
+      // A broker that will not speak v5 REFUSES the connect and the seat says so through the ordinary
+      // socket-error path; it does not quietly fall back to 3.1.1 and lose the expiry while looking
+      // healthy (pinned by src/tools/test_retention.ts). Measured on the loopback fixture against the
+      // shipped `docs/broker/tabichat.conf` bytes: a v5 session and a 3.1.1 session coexist on one
+      // listener and deliver to each other, and the topic rules, the will and the retained replay
+      // behave as they did.
+      protocolVersion: 5,
       clientId: `pi-${nick}-${Math.random().toString(16).slice(2, 8)}`,
       // our own retained presence record, so a lane that dies marks ITSELF
       // offline instead of leaving the room guessing (P5)

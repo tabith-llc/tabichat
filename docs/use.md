@@ -291,12 +291,22 @@ fix in the launch line, not a second file the code will keep for you.
 append-only — it never rewrites the file, so no writer can land on another's
 bytes — and the cap is enforced when the seat starts: the oldest lines past the
 cap are dropped at that moment and the drop is REPORTED to the diagnostic log,
-never silent. **So the journal is a window of the newest lines, not a ledger of
-every line.** A room line you cannot find in a seat's journal may simply have
-been dropped by that window — usually it means the seat has been running long
-enough to fill 500 lines, and the oldest ones are gone. Absence from a journal
-is a question to ask, never an answer to state.
-`MQTT_ROOMLOG_REPLAY` (default 50) is how many of the newest lines a session
+never silent.
+A count bounds how much, not how long: a quiet seat that journals forty lines a day
+sits under 500 for a fortnight. `MQTT_ROOMLOG_MAX_AGE_DAYS` is the age bound beside it,
+enforced at the same moment, in the same reported way. Unset or unreadable means no age
+bound, which is exactly how the file behaved before it existed. `0` is the aggressive
+answer and means "nothing older than this boot survives", so the journal starts empty and
+fills with the session you are in; no value means "keep forever" except leaving it unset.
+The cost of a small number is yours to own: this file is the evidence a credit check and a
+lane's own report are read back against, and a line aged out of it is a sentence nobody can
+show you afterwards. Both bounds are read from the environment at start like every other
+knob here, so a site sets them in the launch line and nothing is compiled in.
+**So the journal is a window of the newest lines, not a ledger of every line.** A room line
+you cannot find in a seat's journal may simply have been dropped by one of those two bounds
+— by the count when the seat has run long enough to fill 500 lines, or by the age when a
+line is older than the days you set. Absence from a journal is a question to ask, never an
+answer to state.`MQTT_ROOMLOG_REPLAY` (default 50) is how many of the newest lines a session
 takes back.
 `MQTT_HIST_BOARD=1` additionally publishes this lane's last ten sends to the
 RETAINED topic `chat/<room>/hist/<nick>` — one topic per lane, overwritten on

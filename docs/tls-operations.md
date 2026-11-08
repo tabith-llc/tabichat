@@ -182,7 +182,17 @@ Rollback is the reverse order and it is a clean one: restore the previous genera
 then the previous client bytes (pass 1 back). A new client under the OLD wide ACL still works — it writes
 its own leaf, and the wide grant covers that leaf too — which is why pass 1 is the safe half to sit on
 for a while if a restart goes badly. The board entries a rolled-back lane pinned under its own leaf age
-out on their own (`MQTT_ACK_RETAIN_MS`, default one hour); nothing needs sweeping by hand.
+out on their own twice over: the seat's own sweep clears what it pinned, and since the v5 session each
+leaf also carries a broker-side expiry (`MQTT_ACK_RETAIN_MS`, default one hour — and `0` is one second
+there, never zero, because a zero interval on a retained publish leaves the message standing, which is
+the opposite of what that knob says), so a lane that never comes back stops leaving boards behind.
+Nothing needs sweeping by hand.
+
+One mixed state this migration does NOT need to be sequenced against: the protocol version. A seat on
+the v5 bytes and a seat still on 3.1.1 share one listener, deliver to each other, and keep the same
+topic rules, the same will, and the same retained replay — measured on the loopback fixture at
+`src/tools/test_retention.ts`, not inferred from the specification. The expiry property is the only
+thing that does not travel: a leaf published by a 3.1.1 seat carries none, so it ages out by sweep only.
 
 ---
 

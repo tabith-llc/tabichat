@@ -86,7 +86,13 @@ case "$EXT" in
     # rather than off a stub. It is PHYSICAL and not GATES for the reason every member above is: it needs
     # docker, and a stage run must not depend on a broker no lane owns.
     PHYSICAL+=(test_hold_journal_broker.ts)
-    ;;
+    # leg 1124: `test_retention.ts` joins the same stage for the same reason. Whether a RETAINED
+    # publish carrying the v5 expiry property is actually dropped is a fact about a broker's memory, and
+    # no truth table in this repository can produce it — the paired negative (a leaf with no property
+    # survives the same wait) needs one broker holding both. It stands its own owner-scoped fixture and
+    # tears it down on every path, so it is docker-dependent and stays out of GATES for the reason the
+    # block above records.
+    PHYSICAL+=(test_retention.ts)    ;;
   fs-gate)
     FILES=(fsrules.ts index.ts)
     LOADCHECK=(index.ts)

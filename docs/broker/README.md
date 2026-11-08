@@ -132,6 +132,38 @@ and not an extra — bounded per lane by `MQTT_ACK_RETAIN_MS` (default 3,600,000
 the board at the next sweep) with a 256-entry backstop that reports when it trims. Both knobs are
 operator-visible and both are the client's, not the broker's: nothing in `docs/broker/` reads them.
 
+That window now reaches the half NO seat could reach. A sweep clears only what its own process pinned —
+the per-nick grant is exactly what stops a lane clearing a peer's leaf — so a lane that crashed or was
+retired left its `_ctl/<nick>/<id>` boards standing indefinitely, and no knob could shorten what nobody
+could write to. Receipts and lane-admin answers are therefore published on a v5 session carrying the
+Message-Expiry-Interval derived from the SAME `MQTT_ACK_RETAIN_MS` window (`roommsg.ts:expiryIntervalSeconds`),
+one knob driving both ends, and the broker retires the leaf with nobody online.
+
+**The property rides on a publish, so this is a forward bound and not a cleanup.** Records your broker is
+holding right now carry no expiry interval at all, and they will not retire themselves: they stay until the
+lane that pinned them comes back and sweeps its own leaves, or somebody drains them once by hand. That drain
+is an operator act on the operator's own host — enumerating stale `_ctl/<reader>/<id>` topics and clearing
+them with empty retained publishes — and this change ships no command for it, because a command that clears
+another lane's leaf needs a write grant wider than any seat holds, and a per-nick grant quietly widened into
+a global write is not the trade. Expect the standing set to stay put until it is drained: the broker will
+not shorten it on its own, however long you leave it.
+
+Measured on the loopback fixture (`src/tools/test_retention.ts`, the artifact's own bytes): a retained leaf
+that carries the property is gone after the interval and one that carries nothing survives the same wait,
+with **no broker option set at all**, and an expired leaf does not come back out of `mosquitto.db` across a
+restart. So the client half is complete on its own, and the broker line below is the operator's choice to
+add, not a requirement of this change — proposed here, applied by you, never by a lane:
+
+    retain_expiry_interval <value>   # read the unit in your own mosquitto.conf(5); this leg could not
+
+The unit is deliberately not stated: the documentation host was unreachable from this box and no local
+`mosquitto.conf(5)` exists to read it from, and a guessed unit in a line that runs on a broker is worse
+than a blank. The option PARSES at the fixture's build (a misspelling of it is refused at startup) and
+setting it changed nothing observable in these cells, which is the honest limit of what was measured.
+Re-derive the version gap yourself before relying on any of it: the fixture runs the image this script
+defaults to, the fleet's broker was read `mosquitto version 2.0.21`, and
+`TABICHAT_FIXTURE_IMAGE=<that build> sh src/tools/broker-fixture.sh up` is the command that closes it.
+
 Step 3 and step 2 are the same act as far as the fleet is concerned, which is why they are numbered
 apart: every lane today connects `mqtt://…:1883`, so an anonymous port is what is holding the room
 together while it is the defect.
