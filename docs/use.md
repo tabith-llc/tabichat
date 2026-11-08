@@ -291,7 +291,11 @@ fix in the launch line, not a second file the code will keep for you.
 append-only — it never rewrites the file, so no writer can land on another's
 bytes — and the cap is enforced when the seat starts: the oldest lines past the
 cap are dropped at that moment and the drop is REPORTED to the diagnostic log,
-never silent.
+never silent. **So the journal is a window of the newest lines, not a ledger of
+every line.** A room line you cannot find in a seat's journal may simply have
+been dropped by that window — usually it means the seat has been running long
+enough to fill 500 lines, and the oldest ones are gone. Absence from a journal
+is a question to ask, never an answer to state.
 `MQTT_ROOMLOG_REPLAY` (default 50) is how many of the newest lines a session
 takes back.
 `MQTT_HIST_BOARD=1` additionally publishes this lane's last ten sends to the
