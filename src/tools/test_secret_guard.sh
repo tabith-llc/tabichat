@@ -649,12 +649,15 @@ member_count=$(shgate_members | grep -c .)
 # in the same turn as this edit, after the registration and before this line was edited — not a value
 # carried over from any branch or any dispatch page. Merge order decides it: a gate that lands after this
 # one makes it nine, and the next face re-derives it here.
-# Re-derived on this face: 12, read by the same command in the same turn this line was written. The
+# Re-derived at the face that wrote this line, `b7ea758` — its own subject is "the shell-gate guard
+# counted eleven members while twelve were registered", and the same command prints 12 there. Read in
+# the same turn this line was written. The
 # twelfth is `check_cite_faces.sh`, registered by the iid-27 leg and NEVER added to the two lists below
 # — so the individual-membership loop and the bun-run fold both printed a green answer about a member
 # they had never looked at, which is the exact failure this file says it exists to catch. Both lists now
 # name it, and the count is what the instrument prints here, not a value carried over from a branch.
-# Re-derived on this face: 13, read by the same command in the same turn this line was written (the run
+# Re-derived in the tree that landed as `72586e1`: 13, read by the same command in the same turn this
+# line was written (the run
 # printed `got '13', want '12'` before the number below moved, which is the instrument answering, not a
 # guess confirmed). The thirteenth is `test_mint_pki.sh`, the PKI minter's truth table, registered by the
 # same leg IN BOTH LISTS BELOW — the membership loop and the bun-run fold — because a member named in the
