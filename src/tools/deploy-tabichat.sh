@@ -80,6 +80,12 @@ case "$EXT" in
     # fixture is not there, so a run that could not happen never reads as a pass. Still not GATES: a
     # deploy gate that depends on docker fails for reasons unrelated to the code.
     PHYSICAL+=(test_ack_watch_broker.ts test_tlsenv_paho.py)
+    # leg 1123: the lead hold's real-socket proof. It runs the throwaway loopback fixture with a seat on
+    # one nick and a peer on another, so the claim it measures (the hold reaches a peer, is journalled by
+    # its author as the SAME line, and its own echo settles the watch the leg armed) is read off a broker
+    # rather than off a stub. It is PHYSICAL and not GATES for the reason every member above is: it needs
+    # docker, and a stage run must not depend on a broker no lane owns.
+    PHYSICAL+=(test_hold_journal_broker.ts)
     ;;
   fs-gate)
     FILES=(fsrules.ts index.ts)
@@ -117,6 +123,12 @@ GATES+=(test_owed_notice.ts)
 # every stage run rather than by a cell author's memory. Appended in the same shape as the lines above
 # so test_deploy_closure.ts keeps reading the `GATES=(…)` literal it pins by exact text.
 GATES+=(test_sink_guard.ts)
+# leg 1123: the room-publish journal gate joins the stage for the same census reason — a check in
+# src/tools/ that no array names is run by nobody. Like test_owed_notice.ts it LOADS index.ts and drives
+# the shipped `/renew`, `/say` and inbound handlers against a stub socket and a REAL scratch journal file,
+# because the claim it measures (a room line that reaches the socket also reaches the author's own
+# journal) is not observable from a source-shape cell. GATES, not PHYSICAL: no broker, no fixture.
+GATES+=(test_hold_journal.ts)
 TARGET="${TARGET:-$HOME/.pi/agent/extensions/$EXT}"
 SRC="$BASE/extensions/$EXT"
 

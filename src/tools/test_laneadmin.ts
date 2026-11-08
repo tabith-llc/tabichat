@@ -24,6 +24,7 @@ import {
   ADMIN_EXIT,
   ADMIN_OUTCOMES,
   ADMIN_RESULT_KIND,
+  adminClientId,
   adminExitCode,
   adminResultPayload,
   adminResultTopic,
@@ -809,7 +810,18 @@ check("the auto-renew cap reads the PROCESS store, not a per-factory `let`", !in
 // and say so — they keep the shape after this leg; they are not the proof.
 check("the requester runs the lanes' transport decision, not its own", /transportDecision\(/.test(tool) && tool.includes("tlsopts.ts"), true);
 check("and it reads the PEMs through the shared reader", /makePemReader\(/.test(tool), true);
-check("the CONNECT call carries the decision's options", /mqtt\.connect\(TRANSPORT\.url,\s*\{\s*\.\.\.\(TRANSPORT\.tls \?\? \{\}\)\s*\}/.test(toolCode), true);
+check("the CONNECT call carries the decision's options AND a self-naming clientId",
+  /mqtt\.connect\(TRANSPORT\.url,\s*\{\s*\.\.\.\(TRANSPORT\.tls \?\? \{\}\),\s*clientId:\s*adminClientId\(/.test(toolCode), true);
+// leg 1123 companion 1, executed on the pure builder rather than grepped: the tool's own form, and
+// never the shape a live seat connects with (`pi-<nick>-<rand>`, index.ts) — a reader of a broker log
+// must be able to tell a one-shot request from a lane, not conflate the two.
+check("the tool's clientId names the tool and the nick it speaks as",
+  adminClientId("lane11", "abc123"), "lane-admin-lane11-abc123");
+check("N6 NEGATIVE: a tool connect is never the seat shape pi-<nick>-<rand>",
+  [adminClientId("lane11", "abc123").startsWith("pi-"), adminClientId("pi", "abc123") === `pi-${"pi"}-abc123`],
+  [false, false]);
+check("…and an unusable `by` still yields a clientId that is not blank (mqtt.js would mint mqttjs_<hex>)",
+  [adminClientId("", "abc123"), adminClientId("  ", "abc123")].every((x) => x === "lane-admin-unknown-abc123"), true);
 check("the bare no-options connect that caused the defect is GONE", /mqtt\.connect\(broker\.url\)/.test(toolCode), false);
 check("a transport refusal is FINAL and NON-ZERO — never a silent plaintext fallback", /if \(TRANSPORT\.mode === "refuse"\)[\s\S]{0,500}process\.exit\(ADMIN_EXIT\.broker\)/.test(tool), true);
 check("and the refusal prints the decision's own reasons, not a generic failure", /TRANSPORT\.reasons/.test(tool), true);
@@ -1358,8 +1370,13 @@ check("#10 the registrar is DEFINED exactly once", (index.match(/const watchSend
 // `const watchSend = (`, which that pattern does not match. My first two drafts subtracted a
 // definition count from that same 5 and demanded 5, i.e. the cell was failing on its own arithmetic
 // while the code was right. A count must be checked against the instrument's actual output.
-check("#10 and it is CALLED at all five publish sites (room leaf, room flat, control request, receipt board, admin outcome)",
-  (index.match(/watchSend\(/g) || []).length, 5);
+// leg 1123 moved the count 5 -> 6: the pre-renew lead hold is a room publish too, and it now arms
+// its own watch instead of bypassing the one registrar. The invariant this cell guards is unchanged
+// (ONE registrar, called at every publish site); only the number of sites moved, and it moved because
+// the shipped shape did. MEASURED, not assumed: `/watchSend\(/` returns 6 and all 6 are CALLS — the
+// definition is spelled `const watchSend = (`, which that pattern does not match.
+check("#10 and it is CALLED at all six publish sites (room leaf, room flat, control request, receipt board, admin outcome, the awaited lead hold)",
+  (index.match(/watchSend\(/g) || []).length, 6);
 check("#10 NEGATIVE: no site hand-rolls the watch — `watchAck(ackWatch` exists only inside the registrar",
   (index.match(/watchAck\(ackWatch/g) || []).length, 1);
 // iid 21 finding 1: the two room sites gained the publish's OWN id, because `chat/<room>`

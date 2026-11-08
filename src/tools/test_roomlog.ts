@@ -238,11 +238,23 @@ check("a wild or nested topic is nobody's board", [nickFromHistTopic("chat/tabit
 
 // --- 8. the WIRING in index.ts, named sites (denylist style, not counts) ----------------------
 const idx = readFileSync(join(import.meta.dir, "..", "extensions", "tabichat", "index.ts"), "utf8");
-check("journal written for EVERY room send inside publishRoom", (() => {
-  const def = idx.indexOf("const publishRoom = (payload");
+check("journal written for EVERY room send — the tail that journals is shared, and every room path calls it", (() => {
+  // leg 1123 re-pinned this cell, it did not relax it. The claim it exists to hold is "no room send
+  // escapes the journal". The shape moved: the tail that holds `journalAppend("out")` left
+  // `publishRoom` and became `roomSendTail`, because the awaited pre-renew hold needed the same tail
+  // and could not call a local. So the cell now asserts the three things that together are the claim:
+  // the journal write lives in the shared tail, publishRoom's two arms call it, and the hold path
+  // calls it too. Strip any one of the four and this goes RED.
+  const tail = idx.indexOf("const roomSendTail = (payload");
   const out = idx.indexOf('journalAppend("out"');
-  return def >= 0 && out > def && out - def < 2500;
+  const pub = idx.indexOf("const publishRoom = (payload");
+  const tailCalls = (idx.match(/afterRoomSend\(\);/g) || []).length;
+  const delegates = /const afterRoomSend = \(\) => roomSendTail\(payload\);/.test(idx);
+  const holdCalls = /roomSendTail\(holdPayload\);/.test(idx);
+  return tail >= 0 && out > tail && out < pub && pub > tail && tailCalls === 2 && delegates && holdCalls;
 })(), true);
+check("NEGATIVE: the hold does not count lines by hand any more — ONE `publishedThisTurn++` in the file",
+  (idx.match(/publishedThisTurn\+\+/g) || []).length, 1);
 check("journal written when a line is TAKEN INTO the buffer (in)", idx.includes('journalAppend("in"'), true);
 check("replay happens inside session_start after the room is set", idx.lastIndexOf("loadRoomLogTail(") > idx.indexOf("room = String(pi.getFlag"), true);
 check("replayed lines are pushed marked hist", /for \(const rec of t\.records\)[\s\S]{0,900}hist: true,/.test(idx), true);
