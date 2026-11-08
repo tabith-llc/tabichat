@@ -31,10 +31,37 @@ librarian
 courier
 dust
 
-# NOT on this roster, on purpose:
-#   operator — not a chat seat. It is the weekly drain identity, and its grant is scoped to the control
-#     subtree and NOTHING ELSE (see acl-supplementary.conf). A roster line here would hand it the
-#     standard per-seat `topic readwrite` block, which is a wider identity than the one in use. Its
-#     leaf is minted with `add-leaf operator`.
-#   vega — out by roster (R-2804, R-2811): not minted, refused by design. Do not add it.
-#   flash4..flash7, bot — retired or fallback identities, not minted.
+# NOT ON THIS ROSTER — one named row for every identity this file leaves out.
+# THE COMPLETENESS RULE, and it is the reason the rows exist: a live identity that is in neither this
+# list nor a named row below is a defect in this file. Silence is not a decision — an omission that
+# reads like an oversight gets "fixed" by somebody who mints it, and an omission that reads like a
+# decision gets inherited by somebody who never reads the ruling behind it. Two of the rows below are
+# OPEN questions, not exclusions, and say so.
+#
+#   operator — not a chat seat, and its grant is NARROWER than a seat's: the weekly drain writes the
+#     control subtree and nothing else (fleet ruling R-2816, G4), so its ACL line lives in
+#     acl-supplementary.conf and its leaf comes from `add-leaf operator`. A roster line here would hand
+#     it `topic readwrite chat/<room>/msg/operator` and the rest of the standard per-seat block.
+#   vega — out by roster, stated twice (R-2804, R-2811): not minted, montana-only, refused by design.
+#     Do not add it.
+#   flash4, flash5, flash6, flash7 — retired seats, not minted (R-2804).
+#   bot — the nick an extension takes when MQTT_NICK is unset. Not minted ON PURPOSE (R-2804): a seat
+#     that comes up without a chosen identity is refused at connect, and that refusal is the wanted
+#     behaviour, not a fault to smooth over by giving `bot` a leaf.
+#   lead-agent — the address a launcher takes when MQTT_LEAD_NICK is unset or blank, and the retired
+#     alias for the coordinating office. Not minted, the same reason as `bot` (R-2804).
+#   rook — OPEN, not excluded. It sits in the lane-interrupt allowlist in the launcher lines and holds
+#     no client leaf, which is a standing grant addressed to an identity that cannot connect. Where it
+#     is open: OWNER-OPEN.md, the item that begins "rook is in the live MQTT_STEER_NICKS allowlist".
+#     Nobody decides it here: adding it to the roster mints it, and a row reading "not minted, by
+#     ruling" would retire an allowlist entry that is still live.
+#   gemma, glm, gpt — OPEN, not excluded, and not to be settled in code. The trackers carry the question
+#     as "rule them or retire" for the montana launchers, and the same three names are recorded as
+#     stopping at step 7 unminted; the two statements are still live, so this file holds neither an
+#     addition nor an exclusion. Where it is open: OWNER-OPEN.md item 2 of the broker-auth open set, the
+#     R-2811 close-out paragraph in decisions.md, and R-2811's own clause accepting that they stop.
+#     Spelling, because a grep will be run against it one day: the trackers write `gemma` in three places
+#     and `gemm` in one, so search both forms and conclude nothing from whichever one misses.
+#   ajax — a montana launcher name, listed in the step-6 writer enumeration that the two faces disagree
+#     on over this name alone (OWNER-OPEN.md, the step-6 enumeration note). No client leaf is tracked for
+#     it anywhere this pen can read, and this file makes no claim beyond that.

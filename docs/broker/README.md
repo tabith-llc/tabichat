@@ -43,6 +43,11 @@ site value at both doors:
   taken quietly from a default. A cell that needs specific identities declares them in its own
   environment; the shipped test cells already do.
 
+- **Whatever the roster holds, it holds completely.** A live identity that is in neither `roster.txt` nor
+  its `# NOT ON THIS ROSTER` block is a defect in that file — and the named rows are where an open
+  question stays open, so an identity under "rule them or retire" is marked OPEN there rather than being
+  retired by silence or minted by a helpful hand.
+
 Whatever names you choose, set them explicitly — the defaults here document the shape, they do not
 recommend a roster. (The full env table is in `README.md`, section **“Site names are settings —
 they MUST BE CONFIGURED”**.)
@@ -113,6 +118,38 @@ The fixture runs mosquitto 2.1.2 in a container. So these files are proven as a 
 `per_listener_settings` as deprecated for 3.0, which the fleet's 2.0.21 does not. Re-derive the
 version on the box before applying: `mosquitto -h | head -1`.
 
+## Before an ACL file moves — enumerate, print, diff (a requirement, not advice)
+
+A regenerated ACL carries the identities its inputs name and nothing else. The in-service file on a
+running host can carry identities no tracked input names — a hand edit, or a nick that joined between
+mints — and a copy-over **mutes those identities with no error and no log line**, because a client that
+is no longer in the file has no way to tell you it is missing. So this is the precondition for every
+install of a generated ACL, in order, and a non-empty diff is a STOP rather than a warning:
+
+1. **Find the in-service file, by name, from the broker's own config** — never from a remembered path:
+   `grep -rn acl_file <conf-dir>/ <conf-dir>/conf.d/`. On this fleet's broker host that reads
+   `/etc/mosquitto/acl-generated.conf`, and `/etc/mosquitto/acl.conf` **does not exist** — an install
+   aimed at a name the daemon never reads is a no-op that reports success.
+2. **Enumerate the identities in service:** `grep '^user CN=' <the in-service file>`.
+3. **Enumerate what the tracked inputs produce**, by running the generator into a scratch directory
+   (a throwaway CA, its own dir, destroyed after): `grep '^user CN=' <scratch>/acl-generated.conf`.
+4. **Print BOTH lists, diff them, and read the diff before any file moves.** Same set on both sides is
+   the only result that lets the install proceed. A name present in service and absent from the
+   generated list goes into `roster.txt` (a seat) or `acl-supplementary.conf` (a non-seat grant) and the
+   generation is re-run — it does not go in by hand in the installed copy, which is the habit this
+   section exists to end. A name present in the generated list and absent in service is a new identity,
+   which is expected and is read as such.
+
+Counting is the quick form of the same check and it is not a substitute for the diff: identities
+per file (`grep -c '^user CN='`) and rule lines per file (`grep -cE '^(topic|pattern) '`). Two different
+counts is the whole signal — what a name is, and whether it should be there, is what the diff reads.
+
+Why step 1 comes first: the minter's own next-steps block prints `/etc/mosquitto/acl.conf` (and
+`docs/broker/acl.conf` is the tracked specimen for that name, titled for it at its line 1). That is a
+**site default, not a fact about a running host** — a host may point `acl_file` at another name, and on
+this fleet's broker host it does. Nothing here changes the shipped default; the rule is that the
+config answers the question, in the words of the file it loads.
+
 ## The order that does not strand a lane
 
 1. the owner mints the PKI (`mint-tabichat-pki.sh -o <dir>`, or with his own nick list on the command
@@ -125,7 +162,8 @@ version on the box before applying: `mosquitto -h | head -1`.
    ("no. do not make 1883 localhost-only. permanently. we will fix phase 1 and then delete 1883
    permantly");
 4. later, as its own change: apply `acl-generated.conf` (phase 2) *and then* turn on
-   `MQTT_SENDER_TOPIC=1` lane by lane. Never the other way round, and never both in one step.
+   `MQTT_SENDER_TOPIC=1` lane by lane — **after the enumerate-and-diff above has been run on the
+   in-service file and read.** Never the other way round, and never both in one step.
 
 ## Cutover table — which leg moves in which pass, and what a mixed fleet does meanwhile
 
