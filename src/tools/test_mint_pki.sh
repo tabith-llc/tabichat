@@ -152,6 +152,21 @@ check "and it wrote NO per-nick ACL block (the grant comes from the include alon
 check "so operator appears exactly once in the whole file" \
   "$(count '^user CN=operator$' "$D/acl-generated.conf")" "1"
 
+say "AN ACL THAT NEVER CARRIED THE INCLUDE GETS IT ON THE ADD RUN"
+# The shape an operator actually meets: a generated file from before the include existed, patched by
+# hand on the host. Adding one nick to that file is the run that has to make the non-seat grant
+# durable, or the fix ships and the installed copy stays missing it.
+U="$SCR/uplift"
+TABICHAT_ROSTER="$ROSTER" TABICHAT_ACL_SUPPLEMENT="$SCR/absent.conf" sh "$MINT" -o "$U" seat-a >/dev/null 2>&1
+check "this mint had no include file, so operator is absent" "$(count '^user CN=operator$' "$U/acl-generated.conf")" "0"
+run_mint "$U" add-nick seat-b >/dev/null 2>&1
+check "and the add run, with the include present now, applied it" "$(count '^user CN=operator$' "$U/acl-generated.conf")" "1"
+check "while the new nick's own block landed beside it" "$(count '^user CN=seat-b$' "$U/acl-generated.conf")" "1"
+run_mint "$U" add-nick seat-c >/dev/null 2>&1
+check "NEGATIVE — a later add run did NOT append the include a second time" \
+  "$(count 'SUPPLEMENTARY INCLUDE, appended verbatim' "$U/acl-generated.conf")" "1"
+check "so operator appears once in the file, not once per run" "$(count '^user CN=operator$' "$U/acl-generated.conf")" "1"
+
 say "A NICK THE CLIENT WOULD SILENTLY ALTER IS REFUSED, WITH THE EXTENSION'S OWN NAME"
 for badnick in 'seat.c' 'seat c' 'seat/c' ''; do
   o=$(run_mint "$SCR/bad" add-nick "$badnick" 2>&1); rc=$?

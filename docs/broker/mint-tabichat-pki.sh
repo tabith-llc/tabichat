@@ -229,7 +229,13 @@ if [ "$MODE" != mint ]; then
   require_existing_ca
   ensure_client_cnf
   echo "== $MODE: leaves signed against the CA already in $CA_DIR (the CA is not created or re-issued) =="
-  [ -f "$ACL_OUT" ] || { acl_header > "$ACL_OUT"; append_supplement; }
+  [ -f "$ACL_OUT" ] || acl_header > "$ACL_OUT"
+  # The include is applied whether this ACL file is brand new or already in use. Why that matters: an
+  # operator who has been hand-adding grants to the installed copy has a generated file that never
+  # carried them, and adding one nick to that file is exactly the run that should fix it. The marker is
+  # matched on the file this run reads, so a changed include path re-applies rather than being hidden by
+  # a line an earlier run wrote from a different file.
+  grep -qF "# SUPPLEMENTARY INCLUDE, appended verbatim from $SUPPLEMENT" "$ACL_OUT" || append_supplement
   for n in "$@"; do
     mint_leaf "$n"
     if [ "$MODE" = add-leaf ]; then
