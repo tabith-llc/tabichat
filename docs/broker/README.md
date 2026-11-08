@@ -13,7 +13,9 @@ port was opened — by this change or by any file here.
 | `tabichat.conf` | the broker config: mTLS on 8883, `use_subject_as_username`, no 1883 at all | the owner |
 | `acl-phase1.conf` | phase 1 ACL — authentication, flat room topic. Matches the client bytes shipped on this branch | the owner |
 | `acl.conf` | the READING copy: both shapes, the ordering law, and what neither closes | nobody, it is prose |
-| `mint-tabichat-pki.sh` | mints the CA, the broker leaf, one client leaf **per nick**, and `acl-generated.conf` (phase 2) | the owner, on his own box |
+| `mint-tabichat-pki.sh` | mints the CA, the broker leaf, one client leaf **per nick**, and `acl-generated.conf` (phase 2); `add-nick`/`add-leaf` sign one more leaf against a CA that already exists | the owner, on his own box |
+| `roster.txt` | the generator's **default nick list** — the seats that get a leaf and a per-nick ACL block | read by `mint-tabichat-pki.sh` |
+| `acl-supplementary.conf` | the **non-seat grants**, appended verbatim to every generated ACL — the drain `operator` and any machine identity that follows it | read by `mint-tabichat-pki.sh` |
 | `../src/tools/broker-fixture.sh` | starts `tabichat.conf` in a loopback container so the refusals are OBSERVED | any lane, on its own port |
 
 ## Nicks are site values here too
@@ -21,10 +23,21 @@ port was opened — by this change or by any file here.
 Everything in this directory keys on names, and the names are yours, not ours. The nick list is a
 site value at both doors:
 
-- **`mint-tabichat-pki.sh -o <dir> <all nicks>`** mints one client certificate per nick, and the
+- **`mint-tabichat-pki.sh -o <dir> [all nicks]`** mints one client certificate per nick, and the
   phase-2 ACL lines are generated from the same list — so the roster you pass decides what the
-  broker will accept later. A site that renames a seat after minting needs a re-issue; pick your
+  broker will accept later. With no nicks on the command line it reads `roster.txt`; **passing nicks
+  overrides that file rather than merging with it**, and the run prints which list it used and how
+  many names came from it. A site that renames a seat after minting needs a re-issue; pick your
   names, then mint.
+- **`acl-generated.conf` is rewritten from scratch on every run**, so a nick or a grant that lives
+  only in the installed file is **deleted by the next regeneration, silently** — and the leaf expiry
+  means a regeneration is scheduled, not optional. That is why the two lists above are tracked: a
+  seat belongs in `roster.txt`, a non-seat identity in `acl-supplementary.conf`, and neither belongs
+  in a hand edit.
+- **`mint-tabichat-pki.sh -o <dir> add-nick <nick>`** signs one new leaf against the CA already in
+  that directory and appends its ACL block; **`add-leaf <nick>`** signs the leaf and writes no block,
+  for an identity whose grant comes from the include file. Neither creates or re-issues a CA — the
+  whole-mint refusal on an existing `ca.key` is unchanged, and is the reason these two paths exist.
 - **`broker-fixture.sh`** mints its test identities from `TABICHAT_FIXTURE_NICKS`. Unset, it falls
   back to the neutral pair `seat-a seat-b` and says so loudly on stderr — never a real lane's name
   taken quietly from a default. A cell that needs specific identities declares them in its own
@@ -102,7 +115,8 @@ version on the box before applying: `mosquitto -h | head -1`.
 
 ## The order that does not strand a lane
 
-1. the owner mints the PKI (`mint-tabichat-pki.sh -o <dir> <all nicks>`) and applies
+1. the owner mints the PKI (`mint-tabichat-pki.sh -o <dir>`, or with his own nick list on the command
+   line, which overrides `roster.txt`) and applies
    `tabichat.conf` + `acl-phase1.conf` **on a second port**, lanes still on 1883;
 2. this branch's client bytes are deployed and every lane is restarted in one window with
    `MQTT_URL=mqtts://…:8883` and the three TLS paths exported — paths only, so nothing secret

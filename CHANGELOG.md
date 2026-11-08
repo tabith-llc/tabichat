@@ -16,6 +16,7 @@
 - `MQTT_ROOMLOG_MAX_AGE_DAYS` — the journal's age bound, unset for no bound and `0` for "nothing older than this boot", reported at boot when it drops lines like the count bound already is (leg 1124)
 - `src/tools/test_retention.ts`, a physical check that shows an expiring retained leaf disappear at a real broker and one that carries no expiry survive the same wait (leg 1124)
 - `docs/use.md` says plainly that the room journal is a window of the newest 500 lines (set with `MQTT_ROOMLOG_MAX_LINES`), not a full ledger, so a line missing from a journal is a question to ask rather than an answer to state (leg 1123)
+- `docs/broker/roster.txt` and `docs/broker/acl-supplementary.conf` — the PKI minter now reads its default nick list, and any grant for an identity that is not a chat seat, from tracked files, so regenerating the broker ACL can no longer delete an identity that was added by hand; `mint-tabichat-pki.sh` also gains `add-nick` and `add-leaf`, which sign one more client leaf against a CA that already exists instead of re-minting one (leg 1132)
 
 ### Changed
 
