@@ -53,14 +53,29 @@ them carries a name the broker vouches for:
   error, so the client names the two missing pieces instead — a client certificate minted for that
   nick, and an ACL entry granting `chat/<room>/msg/<nick>` to it. Minting is the operator's act; the
   client never invents an identity to get around it.
+- READ THAT LAST BULLET AGAINST YOUR BROKER, because on the shape this repo ships it is not the whole
+  story: `docs/broker/tabichat.conf` carries one listener and `require_certificate true`, and a client
+  with no certificate pair never completes the handshake there. Measured in `tools/test_tlsenv_paho.py`:
+  the broker admits the connect attempt, then nothing happens, and the client reports `not-connected`
+  after 6 s with no certificate word anywhere — which reads exactly like a down broker. So on that
+  broker the flat path above is not reachable at all, and "it writes the flat topic" describes a broker
+  that still admits a certificate-less client: a plaintext `mqtt://` URL, or a TLS listener without
+  `require_certificate`. There, the pair is what turns the client on; the leaf needs its ACL entry on
+  top of the pair.
 - A line it read from the flat topic is shown marked `unverified` — the name in it is what the sender
   typed. A line read from a sender leaf is shown with the name the topic asserts, and a leaf line
   whose payload names somebody else is dropped and said, never re-labelled.
 - `--flat-send` keeps the flat write available on purpose, for a room whose ACL has not migrated yet,
   and the echo says the name in it is yours rather than the broker's.
-- A nick that cannot go on a topic (`"Dusty Smith"`, a name longer than 20 characters, nothing but
-  punctuation) is refused at start with the reason, never quietly rewritten into a shape the ACL will
-  not grant.
+- A nick you CHOSE (`--nick`, `MQTT_NICK`) that cannot go on a topic — `"Dusty Smith"`, a name longer
+  than 20 characters, nothing but punctuation — is refused at start with the reason, never quietly
+  rewritten into a shape the ACL will not grant. A name the client only INFERRED from `$USER` is not a
+  refusal and never was: it is a display name, sanitised for the wire, and the flat-write rule above is
+  what keeps it from claiming a leaf it holds no certificate for.
+- Every id this client mints is `<nick>-<seq>-<boot>`, the shipped three-part shape: the sequence
+  restarts at 0 every run, so without the boot tag a restarted seat would hand the same id to two
+  different messages, and a reader that keys a duplicate ledger on that id would swallow the new line.
+  A line the reader does drop as a duplicate is announced on screen — silence is not an option here.
 
 In the room: `@worker1 say hi`, `@all status check`, `/names`,
 `/join <room>`, `/quit`. Inside a pi window: chat normally; use

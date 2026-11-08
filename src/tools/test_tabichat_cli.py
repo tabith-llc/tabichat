@@ -435,6 +435,33 @@ tb.SEEN_IDS[:] = []
 hear("chat/tabith/msg/flash1", "flash1", "my own echo", "flash1-99")
 check("echo prevention holds on the leaf too", len(room_lines("my own echo")), 0)
 
+# D-1 (leg 1135): THE ID AND THE SILENT DROP. The shipped builder is `<nick>-<seq>-<boot>`; a two-part
+# id repeats itself across two sessions of one sender because the sequence restarts at 0, and this
+# client's ledger keys on that string — so a restarted sender's next line would be swallowed.
+check("the id builder is the shipped 3-part shape (roommsg.ts:msgId)",
+      tb.msg_id("dust", 7, "ab12cd"), "dust-7-ab12cd")
+check("the boot tag is six hex chars at the shipped width", tb.boot_tag(lambda: 0.5), "080000")
+# The draw space is 0x100000 values, so the top of the range is 0xfffff — FIVE f's, zero-padded to the
+# six-char width. Same range and same padding as `roommsg.ts:bootTag`, which is the point of pinning it.
+check("NEGATIVE: the largest draw lands at the top of that range, padded not shortened",
+      tb.boot_tag(lambda: 1.0 - 2 ** -24), "0fffff")  # 1-2**-24 is the biggest a draw can be
+check("NEGATIVE: a zero draw is padded, not shortened", tb.boot_tag(lambda: 0.0), "000000")
+check("this run carries one tag, six hex chars", (len(tb.BOOT), all(c in "0123456789abcdef" for c in tb.BOOT)),
+      (6, True))
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+hear("chat/tabith/msg/dust", "dust", "restarted one", "dust-1-aaaaaa")
+hear("chat/tabith/msg/dust", "dust", "restarted two", "dust-1-bbbbbb")
+check("D-1 a RE-MINTED id from a restarted sender is displayed, not swallowed",
+      len(room_lines("restarted")), 2)
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+hear("chat/tabith/msg/dust", "dust", "one message twice", "dust-9-cccccc")
+hear("chat/tabith/msg/dust", "dust", "one message twice", "dust-9-cccccc")
+check("NEGATIVE: the same id twice is still one line", len(room_lines("one message twice")), 1)
+check("D-1 and the duplicate drop is SAID on screen, not silent",
+      any("duplicate dropped" in visible(e) and "dust-9-cccccc" in visible(e) for e in tb.ENTRIES), True)
+
 src_oc = inspect.getsource(tb.on_connect)
 check("the client subscribes the flat room AND the leaf wildcard (dual read)",
       ("client.subscribe(TOPIC)" in src_oc, "client.subscribe(MSG_WILD)" in src_oc), (True, True))
@@ -447,6 +474,10 @@ check("a send goes where write_plan says, and echoes THAT topic on screen",
       (True, True))
 check("NEGATIVE: text_send no longer publishes to the flat TOPIC global",
       "CLIENT.publish(\n            TOPIC," in src_ts, False)
+check("D-1 the client mints its id through msg_id with this run's boot tag",
+      "mid = msg_id(SELF, MSG_SEQ, BOOT)" in src_ts, True)
+check("NEGATIVE: and the two-part id that collides across sessions is gone",
+      'mid = f"{SELF}-{MSG_SEQ}"' in src_ts, False)
 
 tb.CLIENT, tb.ROOM, tb.TOPIC, tb.MSG_WILD = SAVED[0], SAVED[1], SAVED[2], SAVED[3]
 tb.PRESENCE, tb.CTL, tb.SELF = SAVED[4], SAVED[5], SAVED[6]
@@ -467,7 +498,20 @@ says("and", alt_why, "MQTT_NICK")
 check("(iv) NEGATIVE: a 20-character nick is accepted", tb.resolve_nick(cli="n" * 20)[2], "")
 check("(iv) a 21-character nick is refused (clean() truncates at 20)", tb.resolve_nick(cli="n" * 21)[2] != "", True)
 check("(iv) an all-punctuation nick is refused", tb.resolve_nick(cli="!!!")[2] != "", True)
-check("NEGATIVE CONTROL: clean() really would have borrowed the name \"user\"", tb.clean("!!!"), "user")
+check("NEGATIVE CONTROL: clean() would have borrowed the name \"user\"", tb.clean("!!!"), "user")
+
+# D-2 (leg 1135): THE GATE FIRES ON A CHOICE, NOT ON AN ACCOUNT NAME. An inferred value is a display
+# name; only a nick the operator named can be refused for a shape it cannot hold on the wire.
+check("D-2 an inferred dotted account name is NOT refused", tb.resolve_nick(env={"USER": "dusty.smith"}),
+      ("dusty.smith", "$USER", ""))
+check("D-2 an inferred spaced display name is NOT refused either",
+      tb.resolve_nick(env={"USER": "Dusty Smith"}), ("Dusty Smith", "$USER", ""))
+check("D-2 and the client still puts a leaf-safe DISPLAY form on the wire",
+      tb.clean(tb.resolve_nick(env={"USER": "dusty.smith"})[0]), "dustysmith")
+check("NEGATIVE: the SAME name chosen with --nick IS refused", tb.resolve_nick(cli="dusty.smith")[2] != "", True)
+check("NEGATIVE: and by MQTT_NICK too", tb.resolve_nick(env={"MQTT_NICK": "dusty.smith"})[2] != "", True)
+check("NEGATIVE: and the refused value still comes back unchanged", tb.resolve_nick(cli="dusty.smith")[0],
+      "dusty.smith")
 
 # WHERE A LINE ACTUALLY GOES, and what is said when it cannot go further (items 2 and B)
 PAIR = {"tls": True, "kwargs": {"certfile": "/x/cert.pem", "keyfile": "/x/key.pem"}}
@@ -491,6 +535,10 @@ inf_t, inf_why = tb.write_plan("tabith", "dust", "$USER", PAIR)
 check("(v) NEGATIVE: a pair with an inferred nick still writes flat, and says why", inf_t, "chat/tabith")
 says("the inferred-nick line names the source", inf_why, "$USER")
 says("and names the doors", inf_why, "--nick")
+check("D-2 NEGATIVE: an inferred name is still no claim on a leaf, however it was sanitised",
+      tb.write_plan("tabith", "dustysmith", "$USER", PAIR)[0], "chat/tabith")
+says("D-2 and the write says so, naming the inferred source",
+     tb.write_plan("tabith", "dustysmith", "$USER", PAIR)[1], "$USER")
 sent_t, sent_why = tb.write_plan("tabith", "dust", "MQTT_NICK", PAIR, True)
 check("--flat-send keeps the flat write available on purpose", sent_t, "chat/tabith")
 says("NEGATIVE: and it is a stated choice, not the no-certificate case", sent_why, "--flat-send")

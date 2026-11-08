@@ -84,6 +84,7 @@ import fcntl
 import getpass
 import json
 import os
+import random
 import re
 import shutil
 import signal
@@ -342,16 +343,34 @@ def write_plan(room, nick, source, plan, flat=False):
     return leaf, ""
 
 
+def boot_tag(rand=random.random):
+    """Six hex chars, the shipped builder's width (`roommsg.ts:bootTag`), from an injectable draw so the
+    mapping is testable without a random number."""
+    return f"{int(rand() * 0x100000):06x}"
+
+
+def msg_id(nick, seq, boot):
+    """`<nick>-<seq>-<boot>` — the shipped id shape, `roommsg.ts:msgId`, and the boot tag is not decoration.
+
+    `MSG_SEQ` restarts at 0 every session, so `<nick>-<seq>` alone hands the SAME id to two different
+    messages in two sessions of one seat — and this client's own id ledger keys on exactly that string,
+    so a restarted sender's first line would be swallowed as a duplicate of a line already on screen.
+    The extension carries the tag for the same reason: its receipt board is filed by id.
+    """
+    return f"{nick}-{seq}-{boot}"
+
+
 def resolve_nick(cli=None, env=None):
     """(nick, source, refusal). An operator-chosen roster nick first; a refusal, never a rewrite.
 
     `clean()` STRIPS characters and truncates at 20, so a nick it alters cannot be the leaf the ACL
     grants: `"Dusty Smith"` sanitises to `"DustySmith"` and a publish aimed at the truncated leaf is
-    refused by the broker with rc 0 and no error. So an altered nick is refused with a named reason
-    instead of being quietly rewritten — the same notice the extension gives for that case.
-    The legacy chain ($USER / chat_nick / irc_nick / getpass) still yields a DISPLAY name, and it is
-    recorded as an inferred source: no leaf is claimed under a name nobody chose, because a seat with
-    no chosen identity is refused rather than joining under a borrowed one.
+    refused by the broker with rc 0 and no error. So an altered nick that the OPERATOR CHOSE (`--nick`,
+    `MQTT_NICK`) is refused with a named reason instead of being quietly rewritten — the same notice the
+    extension gives for that case. An INFERRED value ($USER, chat_nick, irc_nick, getpass) is not a claim
+    on a leaf and stays what it has always been here: a display name, sanitised for the wire by `clean()`,
+    with `write_plan` writing flat because its source is not explicit. Dotted and spaced account names are
+    ordinary, and refusing start-up for one tells a person to choose an identity they never chose.
     """
     env = os.environ if env is None else env
     if cli:
@@ -370,7 +389,10 @@ def resolve_nick(cli=None, env=None):
             "no nick to post as — refusing to join under a borrowed name. Choose the roster nick: "
             f"--nick <nick> or {NICK_ENV}=<nick>."
         )
-    if clean(raw) != raw:
+    # THE LEAF-SHAPE GATE FIRES ON A CHOICE. The refusal below binds only a nick somebody named, because
+    # that is the only nick a leaf is ever claimed under; an inferred one is refused its leaf by
+    # `write_plan`, which is the same fact stated where the write actually happens.
+    if source in NICK_EXPLICIT and clean(raw) != raw:
         return raw, source, (
             f'nick "{raw}" has no topic-leaf-safe form: it is not what this client would put on the '
             f"wire (`clean()` alters it to {clean(raw)!r}), and an altered nick aims the publish at a "
@@ -415,6 +437,7 @@ ONLINE: dict[str, tuple[str, float]] = {}
 ACKS: list[tuple[float, str, str, str]] = []
 MSG_SEQ = 0
 HB_S = 30.0
+BOOT = boot_tag()             # this run's tag in every id it mints (see msg_id)
 LAST_BYTE = None
 _RENDERER_RUNNING = True
 
@@ -968,6 +991,10 @@ def on_message(client, userdata, msg):
         # twice.
         dup, SEEN_IDS = note_room_id(SEEN_IDS, data.get("id", ""))
         if dup:
+            # SAID, not swallowed. A line that vanishes off the wire with no word on screen is the exact
+            # failure class this leg exists to close, and a reader cannot tell "already shown" from "lost".
+            note(f"{ts()} [!] duplicate dropped: id {data.get('id')!r} from {sender} was already read "
+                 "here — nothing new was printed")
             return
         ONLINE[sender] = ("online", time.time())
         message = data.get("message", "")
@@ -1138,7 +1165,10 @@ def text_send(text):
         note(f"{ts()} [!] nothing to send — a blank line stays here")
         return
     MSG_SEQ += 1
-    mid = f"{SELF}-{MSG_SEQ}"
+    # THREE PARTS, THE SHIPPED SHAPE (msg_id / roommsg.ts:msgId): MSG_SEQ restarts at 0 every run, so a
+    # two-part id hands the same string to two different messages across two sessions — and this client's
+    # own duplicate ledger keys on it.
+    mid = msg_id(SELF, MSG_SEQ, BOOT)
     # THE TOPIC IS CHOSEN, NOT ASSUMED: the leaf is the write the broker can vouch for, and the flat
     # topic stays available (--flat-send, or no certificate yet). Either way the echo names the topic
     # the line ACTUALLY went on — a wrong-topic write is otherwise silent, rc 0, nothing delivered.
