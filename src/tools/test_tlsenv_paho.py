@@ -305,6 +305,24 @@ check("and the reason is a certificate verification failure, not a mystery",
       True)
 print("      (%s -> %s)" % (outcome, detail[:200]))
 
+# (a2) NO CLIENT CERTIFICATE AT ALL — leg 1131's reason this cell exists. The fixture runs the
+#      artifact's `require_certificate true`, so a client that pins the RIGHT CA but carries no pair
+#      must be refused. `transport_kwargs` deliberately allows that shape (rule 5 refuses only HALF a
+#      pair, and a CA-only TLS client is a legitimate reading of the variables), so NO pure truth table
+#      can see this state — only a real broker can. THE CONTROL IS CELL 1 ABOVE: same listener, same CA,
+#      WITH a pair, connected and published; the only difference below is the certificate.
+#      MEASURED, and the measurement is the finding: the refusal carries no certificate word at all —
+#      the handshake simply never completes and paho reports `not-connected` after 6 s, which reads
+#      exactly like a down broker. That is why the human client names the missing pair BEFORE the
+#      socket (write_plan in src/tabichat_cli.py, cell (v) of tools/test_tabichat_cli.py).
+out_certless, det_certless = publish_and_expect("127.0.0.1", port, {"MQTT_TLS_CAFILE": CA})
+check("a TLS client with NO certificate pair never reaches the require_certificate listener",
+      out_certless != "connected", True)
+check("and the refusal is SILENT — a timeout with no certificate word in it, which is why the client "
+      "has to say the missing pair before the socket and not after it",
+      (out_certless, "certificate" in det_certless.lower()), ("not-connected", False))
+print("      (%s -> %s)" % (out_certless, det_certless[:200]))
+
 # (b) a nonexistent CA path: the class the old code turned into a bare FileNotFoundError at connect.
 try:
     transport_kwargs("mqtts://127.0.0.1:%s" % port, {"MQTT_TLS_CAFILE": os.path.join(fix_dir, "nope.crt")})

@@ -38,6 +38,30 @@ you.
 A fenced ``` block and `code` are tinted on screen only — the wire stays plain
 text, so nothing about what agents send or receive changes.
 
+What that window reads, and where it writes — the room is TWO topic shapes now, and only one of
+them carries a name the broker vouches for:
+
+- It READS both `chat/<room>` and every per-nick sender leaf `chat/<room>/msg/+`, and a line that
+  arrives on both prints once (the message id is the key).
+- It WRITES `chat/<room>/msg/<nick>` when the transport carries a client certificate pair
+  (`MQTT_TLS_CERTFILE` + `MQTT_TLS_KEYFILE`) **and** the nick is one you chose (`--nick <nick>` or
+  `MQTT_NICK=<nick>`). That leaf is the only room topic the broker's ACL lets your certificate write,
+  which is what makes the name on it proven rather than typed.
+- Without a pair, or with a nick it only inferred from `$USER`, it writes the flat `chat/<room>` and
+  says so on screen once per join, and every echo names the topic the line actually went on. Nothing
+  about this is silent: a leaf write the ACL has not granted is refused by the broker with rc 0 and no
+  error, so the client names the two missing pieces instead — a client certificate minted for that
+  nick, and an ACL entry granting `chat/<room>/msg/<nick>` to it. Minting is the operator's act; the
+  client never invents an identity to get around it.
+- A line it read from the flat topic is shown marked `unverified` — the name in it is what the sender
+  typed. A line read from a sender leaf is shown with the name the topic asserts, and a leaf line
+  whose payload names somebody else is dropped and said, never re-labelled.
+- `--flat-send` keeps the flat write available on purpose, for a room whose ACL has not migrated yet,
+  and the echo says the name in it is yours rather than the broker's.
+- A nick that cannot go on a topic (`"Dusty Smith"`, a name longer than 20 characters, nothing but
+  punctuation) is refused at start with the reason, never quietly rewritten into a shape the ACL will
+  not grant.
+
 In the room: `@worker1 say hi`, `@all status check`, `/names`,
 `/join <room>`, `/quit`. Inside a pi window: chat normally; use
 `/mqtt-status` to debug the room connection. A human post carries no
