@@ -113,7 +113,17 @@ start() {
 
   # 1. throwaway PKI + the per-nick ACL, by the artifact's OWN mint script (so the ACL's `user`
   #    lines are produced by the same code that produces the certs they must match)
-  TABICHAT_ROOM="$ROOM" sh "$MINT" -o "$FIX/pki" -c 2 -s 2 $NICKS >/dev/null 2>&1
+  #
+  # THE TWO TRACKED SITE LISTS ARE PINNED OUT OF THE FIXTURE, and this line is why the pin belongs
+  # here rather than in the mint: `docs/broker/acl-supplementary.conf` carries the drain identity's
+  # `topic write chat/+/_ctl/#`, and a wide `_ctl` write grant inside a throwaway broker is exactly
+  # the hole that `test_ack_watch_broker.ts` and `test_retention.ts` refuse by reading the generated
+  # ACL. `roster.txt` names real lanes; it is already overridden by the explicit $NICKS below, and it
+  # is set to a path that does not exist so a future caller cannot inherit it by accident. An absent
+  # include is ANNOUNCED by the mint, never invented.
+  TABICHAT_ROOM="$ROOM" TABICHAT_ROSTER="$FIX/pki/roster-none.txt" \
+    TABICHAT_ACL_SUPPLEMENT="$FIX/pki/supplement-none.conf" \
+    sh "$MINT" -o "$FIX/pki" -c 2 -s 2 $NICKS >/dev/null 2>&1
   [ -f "$FIX/pki/ca/ca.crt" ] || { log "mint failed"; exit 1; }
 
   # 2. the broker config: the artifact, paths and room substituted, nothing else

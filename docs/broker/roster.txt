@@ -1,0 +1,40 @@
+# roster.txt — the DEFAULT nick list for docs/broker/mint-tabichat-pki.sh
+#
+# One nick per line. Blank lines and everything after a `#` are ignored; a nick may contain only
+# [A-Za-z0-9_-], because it is a topic leaf as well as a certificate subject and a leaf the client
+# sanitises into a different string silently loses its per-sender ACL grant.
+#
+# WHICH LIST WINS. Nicks passed on the command line OVERRIDE this file entirely — an explicit run
+# uses only its own arguments and this roster is NOT merged into them. The script prints the source
+# and the count on every run, so an ignored roster is never silent. With no arguments, this file is
+# the list. Set TABICHAT_ROSTER to point at a different roster; the default is this file, next to
+# the script that reads it.
+#
+# WHY IT IS TRACKED AT ALL: `acl-generated.conf` is rewritten from scratch on every mint and every
+# renewal run. A nick that exists only in the installed file on the broker host is therefore deleted
+# by the next run — and the run that deletes it prints nothing wrong. Membership is data, so it lives
+# in the repo.
+#
+# WHAT THIS LIST IS NOT: it is not the boot roster (who has a launcher on which host) and not the
+# alias file. It is who may hold a CLIENT LEAF and write their own topic leaf. Provenance of the
+# nine: fleet ruling R-2804. `dust`: fleet ruling R-2827 — the human client's identity, named here so
+# its leaf survives a renewal; signing it against the live CA is a hand on the broker host, and
+# `add-nick dust` is the path that does it without touching the CA.
+wren
+ultra
+flash1
+flash2
+flash3
+clerk
+steward
+librarian
+courier
+dust
+
+# NOT on this roster, on purpose:
+#   operator — not a chat seat. It is the weekly drain identity, and its grant is scoped to the control
+#     subtree and NOTHING ELSE (see acl-supplementary.conf). A roster line here would hand it the
+#     standard per-seat `topic readwrite` block, which is a wider identity than the one in use. Its
+#     leaf is minted with `add-leaf operator`.
+#   vega — out by roster (R-2804, R-2811): not minted, refused by design. Do not add it.
+#   flash4..flash7, bot — retired or fallback identities, not minted.
