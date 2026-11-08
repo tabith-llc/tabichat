@@ -649,20 +649,21 @@ member_count=$(shgate_members | grep -c .)
 # in the same turn as this edit, after the registration and before this line was edited — not a value
 # carried over from any branch or any dispatch page. Merge order decides it: a gate that lands after this
 # one makes it nine, and the next face re-derives it here.
-# Re-derived on feature/gate-coverage-census-13: 11, read by the same command in the same turn
-# this line was written (8 + the leg-955 pair test_gate_coverage.sh and test_deploy_pi_nm.sh + the leg-958
-# registration test_paho_skip.sh). The three names join both lists below, because a member missing from the
-# membership loop or from the GATES-fold alternation is a count that prints green about a file nobody checked.
-check "the shell-gate array holds eleven members across both forms" "$member_count" "11"
-for gate in check_guard_armed.sh test_hook_chain.sh check_attributions.sh test_attribution_pins.sh test_gate_words.sh check_subject_armed.sh test_subject_guard.sh check_release_record.sh test_gate_coverage.sh test_deploy_pi_nm.sh test_paho_skip.sh; do
+# Re-derived on this face: 12, read by the same command in the same turn this line was written. The
+# twelfth is `check_cite_faces.sh`, registered by the iid-27 leg and NEVER added to the two lists below
+# — so the individual-membership loop and the bun-run fold both printed a green answer about a member
+# they had never looked at, which is the exact failure this file says it exists to catch. Both lists now
+# name it, and the count is what the instrument prints here, not a value carried over from a branch.
+check "the shell-gate array holds twelve members across both forms" "$member_count" "12"
+for gate in check_guard_armed.sh test_hook_chain.sh check_attributions.sh test_attribution_pins.sh test_gate_words.sh check_subject_armed.sh test_subject_guard.sh check_release_record.sh test_gate_coverage.sh test_deploy_pi_nm.sh test_paho_skip.sh check_cite_faces.sh; do
     one=$(shgate_members | grep -c "^${gate}$")
     check "  and $gate is individually present" "$one" "1"
 done
-# none of the eleven is in the bun-run GATES array — the alternation below names all of them, so a shell gate
+# none of the twelve is in the bun-run GATES array — the alternation below names all of them, so a shell gate
 # cannot be folded into the array whose interpreter cannot run one. Every member belongs in that
 # alternation: a name left out is a fold that prints a green zero instead of refusing.
-inbun=$(grep -Ec '^[[:space:]]*GATES=.*(check_guard_armed|check_attributions|test_attribution_pins|test_hook_chain|test_gate_words|check_subject_armed|test_subject_guard|check_release_record|test_gate_coverage|test_deploy_pi_nm|test_paho_skip)' "$DEP" || true)
-check "none of the eleven is in the bun-run GATES array, which could not run a shell file" "$inbun" "0"
+inbun=$(grep -Ec '^[[:space:]]*GATES=.*(check_guard_armed|check_attributions|test_attribution_pins|test_hook_chain|test_gate_words|check_subject_armed|test_subject_guard|check_release_record|test_gate_coverage|test_deploy_pi_nm|test_paho_skip|check_cite_faces)' "$DEP" || true)
+check "none of the twelve is in the bun-run GATES array, which could not run a shell file" "$inbun" "0"
 
 say "CLEANUP: no scratch, and no stray file in the real repo's worktree or git dir"
 cd "$REPO"
