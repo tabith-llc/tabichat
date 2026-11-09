@@ -35,16 +35,27 @@ dust
 # THE COMPLETENESS RULE, and it is the reason the rows exist: a live identity that is in neither this
 # list nor a named row below is a defect in this file. Silence is not a decision — an omission that
 # reads like an oversight gets "fixed" by somebody who mints it, and an omission that reads like a
-# decision gets inherited by somebody who never reads the ruling behind it. Two of the rows below are
-# OPEN questions, not exclusions, and say so.
+# decision gets inherited by somebody who never reads the ruling behind it. Several rows below are OPEN
+# questions rather than exclusions, and each says so; no count of them is written here, because a count
+# goes stale the moment a row is added — the same expiry this file was written to end.
 #
 #   operator — not a chat seat, and its grant is NARROWER than a seat's: the weekly drain writes the
 #     control subtree and nothing else (fleet ruling R-2816, G4), so its ACL line lives in
 #     acl-supplementary.conf and its leaf comes from `add-leaf operator`. A roster line here would hand
 #     it `topic readwrite chat/<room>/msg/operator` and the rest of the standard per-seat block.
-#   vega — out by roster, stated twice (R-2804, R-2811): not minted, montana-only, refused by design.
-#     Do not add it.
-#   flash4, flash5, flash6, flash7 — retired seats, not minted (R-2804).
+#   vega — MINTED, not booted, and OUT of the nick list above for those two reasons in that order. Its
+#     client pair exists on disk with a leaf expiring 6 Feb 2027 (fleet fact row
+#     `F-roster-exclusion-block-states-minted-names-as-not-minted`, read in reports/231 §4), so the
+#     broker does not refuse this name "by design": what keeps it off the room is that no launcher boots
+#     it. R-2811 makes it montana-only with no idaho boot path for any seat, and R-2804 did not approve it
+#     for the minted nine. The row here used to read "not minted, refused by design" — false against a
+#     ruling as well as against the disk, and the dangerous direction, because a false exclusion row is
+#     what a regenerated ACL then copies over.
+#   flash4, flash5, flash6, flash7 — retired as LANES, MINTED as leaves. No launcher and no role dir
+#     boots these four, and R-2804 did not approve them for the minted nine; but their pair directories
+#     exist, with leaves expiring 6 Feb 2027 (same fact row). "retired seats, not minted" was the wrong
+#     claim: the lane retirement is settled and recorded, and a leaf nobody boots is a separate object
+#     from it — see the revocation question below.
 #   bot — the nick an extension takes when MQTT_NICK is unset. Not minted ON PURPOSE (R-2804): a seat
 #     that comes up without a chosen identity is refused at connect, and that refusal is the wanted
 #     behaviour, not a fault to smooth over by giving `bot` a leaf.
@@ -62,6 +73,17 @@ dust
 #     R-2811 close-out paragraph in decisions.md, and R-2811's own clause accepting that they stop.
 #     Spelling, because a grep will be run against it one day: the trackers write `gemma` in three places
 #     and `gemm` in one, so search both forms and conclude nothing from whichever one misses.
-#   ajax — a montana launcher name, listed in the step-6 writer enumeration that the two faces disagree
-#     on over this name alone (OWNER-OPEN.md, the step-6 enumeration note). No client leaf is tracked for
-#     it anywhere this pen can read, and this file makes no claim beyond that.
+#   ajax — MINTED: a launcher name on both hosts with a pair directory and a leaf (same fact row), and
+#     listed in the step-6 writer enumeration the two faces disagree on over this name alone
+#     (OWNER-OPEN.md, the step-6 enumeration note). Still no roster line: nothing in this file decides a
+#     boot face, and a roster line is read by a mint as an instruction to sign.
+#   checker, observer — MINTED, with pair directories and leaves expiring 6 Feb 2027 (same fact row), and
+#     until this row existed they carried NO line in this file at all. That is the case the completeness
+#     rule above names: an identity in neither the list nor a named row is a defect in this file, not a
+#     decision by it. Neither is a bootable seat in the current launcher set.
+#   OPEN, OWNER-HANDS, covering all eight names above (vega, flash4, flash5, flash6, flash7, ajax,
+#   checker, observer): retired-and-minted is not revoked-and-minted. A leaf that no launcher boots still
+#     authenticates if it is presented, so whether those leaves should be revoked is a different question
+#     from the lane retirements already recorded, and this file decides neither. Nothing was revoked to
+#     write these rows: no CA, no broker host, no ACL, and no measurement from a lane pen — the disk facts
+#     are cited from the row above and the in-service `user CN=` blocks are a root-side reading.
