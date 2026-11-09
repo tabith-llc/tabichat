@@ -4,30 +4,30 @@
 
 ### New features
 
-- A receipt or a lane-admin answer that a seat leaves behind from this release on is retired by the broker on its own, with nobody online to sweep it; records your broker is already holding carry no expiry, so they stay until their own lane comes back or you drain them once by hand (leg 1124)
-- Your room journal can be bounded by age as well as by length, with `MQTT_ROOMLOG_MAX_AGE_DAYS` (leg 1124)
+- A receipt or a lane-admin answer that a seat leaves behind from this release on is retired by the broker on its own, with nobody online to sweep it; records your broker is already holding carry no expiry, so they stay until their own lane comes back or you drain them once by hand
+- Your room journal can be bounded by age as well as by length, with `MQTT_ROOMLOG_MAX_AGE_DAYS`
 
 ### Breaking changes
 
-- Seats now ask the broker for MQTT 5.0, so a broker that answers 3.1.1 only will refuse them and the seat says so at start rather than connecting quietly without the expiry: if your broker is older than Mosquitto 2.0, upgrade it or hold this release (leg 1124)
+- Seats now ask the broker for MQTT 5.0, so a broker that answers 3.1.1 only will refuse them and the seat says so at start rather than connecting quietly without the expiry: if your broker is older than Mosquitto 2.0, upgrade it or hold this release
 
 ### Added
 
-- `MQTT_ROOMLOG_MAX_AGE_DAYS` — the journal's age bound, unset for no bound and `0` for "nothing older than this boot", reported at boot when it drops lines like the count bound already is (leg 1124)
-- `src/tools/test_retention.ts`, a physical check that shows an expiring retained leaf disappear at a real broker and one that carries no expiry survive the same wait (leg 1124)
-- `docs/use.md` says plainly that the room journal is a window of the newest 500 lines (set with `MQTT_ROOMLOG_MAX_LINES`), not a full ledger, so a line missing from a journal is a question to ask rather than an answer to state (leg 1123)
-- `docs/broker/roster.txt` and `docs/broker/acl-supplementary.conf` — the PKI minter now reads its default nick list, and any grant for an identity that is not a chat seat, from tracked files, so regenerating the broker ACL can no longer delete an identity that was added by hand; `mint-tabichat-pki.sh` also gains `add-nick` and `add-leaf`, which sign one more client leaf against a CA that already exists instead of re-minting one (leg 1132)
-- The human client now proves its own write instead of claiming it: every line it sends is unproved until the broker hands that same line back, and the first one that does not prints `READ-ONLY` with the broker ACL entry to look for and says it again on the next line that cannot be confirmed — so a seat whose `user CN=<nick>` block is missing finds out in words rather than wondering why nobody in the room answered (leg 1146)
+- `MQTT_ROOMLOG_MAX_AGE_DAYS` — the journal's age bound, unset for no bound and `0` for "nothing older than this boot", reported at boot when it drops lines like the count bound already is
+- `src/tools/test_retention.ts`, a physical check that shows an expiring retained leaf disappear at a real broker and one that carries no expiry survive the same wait
+- `docs/use.md` says plainly that the room journal is a window of the newest 500 lines (set with `MQTT_ROOMLOG_MAX_LINES`), not a full ledger, so a line missing from a journal is a question to ask rather than an answer to state
+- `docs/broker/roster.txt` and `docs/broker/acl-supplementary.conf` — the PKI minter now reads its default nick list, and any grant for an identity that is not a chat seat, from tracked files, so regenerating the broker ACL can no longer delete an identity that was added by hand; `mint-tabichat-pki.sh` also gains `add-nick` and `add-leaf`, which sign one more client leaf against a CA that already exists instead of re-minting one
+- The human client now proves its own write instead of claiming it: every line it sends is unproved until the broker hands that same line back, and the first one that does not prints `READ-ONLY` with the broker ACL entry to look for and says it again on the next line that cannot be confirmed — so a seat whose `user CN=<nick>` block is missing finds out in words rather than wondering why nobody in the room answered
 
 ### Changed
 
-- `MQTT_ACK_RETAIN_MS` now sets both ends of the same window — the sweep a seat runs and the expiry the broker holds — so a lane configured for ten minutes can no longer leave one-hour boards standing behind it (leg 1124)
-- A room line a seat publishes now appears in that seat's own journal on every path that publishes one, including the notice a lead seat sends just before it renews, so a seat can answer "did I send that?" about a line it did send (leg 1123)
-- `lane_admin.mjs` introduces itself to the broker by name (`lane-admin-<your-nick>-<random>`), so a one-shot admin request no longer arrives as an anonymous `mqttjs_…` connect and a reader can tell it apart from a running seat (leg 1123)
-- A deploy on a machine without openssl now says in the deploy record which checks it could not run, where before it ran them quietly and the record said nothing (leg 1152)
-- The PKI minter's own checks now behave the same under `sh` and `bash`, so the cells that slept under one shell bite under both, and the harness reports 87 cells on a normal clone where it reported 84 (leg 1158)
-- The PKI minter's check harness now counts each of its cells once, so its total reads 85 where it read 87 — no check was removed, the old number counted two of them twice (leg 1162)
-- The subject-line check now resolves its helper through a chained `core.hooksPath`, so a hook set kept outside the clone runs that half instead of printing `behaviour NOT RUN`, and the check reports 29 cells where it reported 25 (leg 1156)
+- `MQTT_ACK_RETAIN_MS` now sets both ends of the same window — the sweep a seat runs and the expiry the broker holds — so a lane configured for ten minutes can no longer leave one-hour boards standing behind it
+- A room line a seat publishes now appears in that seat's own journal on every path that publishes one, including the notice a lead seat sends just before it renews, so a seat can answer "did I send that?" about a line it did send
+- `lane_admin.mjs` introduces itself to the broker by name (`lane-admin-<your-nick>-<random>`), so a one-shot admin request no longer arrives as an anonymous `mqttjs_…` connect and a reader can tell it apart from a running seat
+- A deploy on a machine without openssl now says in the deploy record which checks it could not run, where before it ran them quietly and the record said nothing
+- The PKI minter's own checks now behave the same under `sh` and `bash`, so the cells that slept under one shell bite under both, and the harness reports 87 cells on a normal clone where it reported 84
+- The PKI minter's check harness now counts each of its cells once, so its total reads 85 where it read 87 — no check was removed, the old number counted two of them twice
+- The subject-line check now resolves its helper through a chained `core.hooksPath`, so a hook set kept outside the clone runs that half instead of printing `behaviour NOT RUN`, and the check reports 29 cells where it reported 25
 
 ## [0.1.3] - 2026-11-05
 
