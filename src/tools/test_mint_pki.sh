@@ -343,7 +343,9 @@ check "PLANT PAIRED — and the shipped generator prints no such line (0)" \
 # back reddens this by proving the predicate can fire on the real historical bytes.
 base_echo=$(git -C "$REPO" show 2a1d8047be65a8f5a7b8d172fe6233ec17521d40:docs/broker/mint-tabichat-pki.sh 2>/dev/null || true)
 if [ -n "$base_echo" ]; then
-  ran=$((ran + 1))
+  # NO `ran` bump on this path: both branches below call ok/bad, and each of those counts the cell
+  # (`:45-46`). The bump in the `else` two lines down STAYS — that path prints a `note` through no helper,
+  # so it is the only thing that counts the face. The two sites were not symmetric and that was the bug.
   if [ "$(echo_count "$base_echo" '/etc/mosquitto/acl')" -gt 0 ]; then
     ok "PLANTED — the echo at 2a1d804 does print the hard-coded destination, so the cell above can fail"
   else
@@ -362,7 +364,8 @@ if [ -n "$base_echo" ]; then
   PLANT="$SCR/plant-mint.sh"
   printf '%s\n' "$base_echo" > "$PLANT"
   pr=$(TABICHAT_ROSTER="$ROSTER" TABICHAT_ACL_SUPPLEMENT="$SUPP" sh "$PLANT" -o "$SCR/plant-out" seat-a 2>&1); prc=$?
-  ran=$((ran + 1))
+  # Same rule as the plant above: ok/bad count this cell, so it is counted once. No assertion, expected
+  # value, or scanned-output behaviour moves — this corrects the census, not the checks.
   if [ "$(echo_count "$pr" '/etc/mosquitto/acl')" -gt 0 ]; then
     ok "PLANTED AND RUN — the same predicate fires on a mint whose echo still prints the destination (the cell above is not decoration)"
   else
