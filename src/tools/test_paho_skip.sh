@@ -106,7 +106,15 @@ check "the exemption no longer tests one filename (0 sites)" "$old" "0"
 hard=$(grep -c 'tools/test_wrap_rows.py did NOT RUN' "$REPO/$DEP_REL" || true)
 check "and the skip line is not hard-wired to one gate either — it names the loop variable (0 sites)" "$hard" "0"
 says=$(grep -c 'tools/\$t did NOT RUN' "$REPO/$DEP_REL" || true)
-check "the WARNING names the gate it skipped, from the loop variable (1)" "$says" "1"
+# Re-derived at this face: 2, not 1. The second is NOT a paho line — it is the openssl family
+# (`SHGATES_NO_OPENSSL`), declared the same way and saying its own cause, and its faces live in
+# src/tools/test_gate_words.sh CASE 7, not here. This cell counts a SHAPE in the deployer — a skip that
+# names the gate from the loop variable — so when the shape legitimately gains an instance the number
+# moves with it, and the paired cells above and below are what stop the move from hiding a hard-wired
+# name or an orphaned declaration.
+check "every capability skip names the gate it skipped, from the loop variable (2: paho family + openssl family)" "$says" "2"
+mint_hard=$(grep -c 'tools/test_mint_pki.sh did NOT RUN' "$REPO/$DEP_REL" || true)
+check "PAIRED — and neither family hard-wires a gate name into its skip (0 sites)" "$mint_hard" "0"
 orphan=$(grep_absent "$DECLARED" "$GATE_MEMBERS")
 check "every exempted name is a member of PYGATES — a stale exemption names nothing (0 orphans)" \
       "$(printf '%s' "$orphan" | grep -c . )" "0"

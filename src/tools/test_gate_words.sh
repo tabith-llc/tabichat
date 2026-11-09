@@ -208,6 +208,60 @@ plant_loud()  { printf '#!/bin/sh\n# a planted fixture for src/tools/test_gate_w
 plant_quiet() { printf '#!/bin/sh\n# a planted fixture for src/tools/test_gate_words.sh — not shipped\nexit %s\n' "$2" > "$1"; }
 run_deploy()  { ( cd "$SCR/clone/src" && env -u MQTT_LEAD_NICK EXT=fs-gate TARGET="$SCR/clone/target" \
                     bash tools/deploy-tabichat.sh > "$SCR/out.txt" 2>&1 ); printf '%s' "$?"; }
+# The CASE 7 family runs the same deploy in its OWN clones, so it needs the same call with the clone
+# named — the env is identical except for the one variable a skip is decided on.
+run_deploy_in() { # $1 = clone dir
+  ( cd "$1/src" && env -u MQTT_LEAD_NICK EXT=fs-gate TARGET="$1/target" \
+      bash tools/deploy-tabichat.sh > "$SCR/out.txt" 2>&1 ); printf '%s' "$?";
+}
+run_nossl() { # $1 = clone dir, $2 = a PATH dir with no openssl in it
+  ( cd "$1/src" && env -u MQTT_LEAD_NICK PATH="$2" EXT=fs-gate TARGET="$1/target" \
+      bash tools/deploy-tabichat.sh > "$SCR/out.txt" 2>&1 ); printf '%s' "$?";
+}
+# A PATH that has no `openssl` in it, built from symlinks and nothing else: no host change, no removal,
+# no mount namespace. The names outside the system directories are linked too — the deploy reaches `bun`
+# through an absolute default, but nested runs look several of these up by NAME, and a missing one is an
+# instrument fault wearing a product face (measured at this leg's first run: `command -v bun` came back
+# empty under a /usr-only PATH, and the refusal that followed was about node, not about openssl).
+build_noopenssl_bin() {
+  local d="$SCR/nossl-bin" src extra p
+  rm -rf "$d"; mkdir -p "$d" || return 1
+  for src in /usr/bin /bin /usr/local/bin /usr/sbin /sbin; do
+    [ -d "$src" ] || continue
+    ln -sf "$src"/* "$d"/ 2>/dev/null || true
+  done
+  for extra in bun node npm uv pi; do
+    p=$(command -v "$extra" 2>/dev/null) && ln -sf "$p" "$d/$extra"
+  done
+  rm -f "$d/openssl"
+  printf '%s' "$d"
+}
+# Trim THIS CLONE's arrays for the CASE 7 faces: the shell-gate array down to two names — the declared
+# no-openssl gate and one ordinary gate — and the other gate arrays emptied, the way
+# src/tools/test_paho_skip.sh empties the arrays it is not about. Why the emptying, stated as measured:
+# the stage order in the deployer is GATES -> SHGATES -> PYGATES (`src/tools/deploy-tabichat.sh:236`,
+# `:394`, `:426`), so on a PATH with no `openssl` the shell stage IS reached, and first — its
+# `WARNING: … did NOT RUN` line prints — and the run then stops later at
+# `src/tools/test_tlsenv.py:214`, which names the same binary (`FileNotFoundError`, rc 1). PYGATES is
+# emptied here so that unrelated stop does not decide THIS cell's exit code; it is not because the shell
+# stage is unreachable, and that gate's own capability question is a separate leg
+# (`F-deploy-stage-required-openssl-since-the-shipped-tag`). The emptiness guard at the array site needs
+# at least one shell member, which is why one ordinary gate stays in rather than the array going empty.
+trim_shgates_ssl() { # $1 = a clone's deploy-tabichat.sh
+  python3 - "$1" <<'PY' || return 1
+import sys
+p = sys.argv[1]; s = open(p).read()
+for arr in ("GATES", "PYGATES", "PHYSICAL"):
+    a = '  for t in "${%s[@]}"; do' % arr
+    if a in s:
+        s = s.replace(a, '  %s=()   # emptied by test_gate_words.sh CASE 7\n%s' % (arr, a), 1)
+i = s.index('  SHGATES=(check_guard_armed.sh)')
+j = s.index('  [ "${#SHGATES[@]}" -gt 0 ]')
+new = ('  SHGATES=(test_mint_pki.sh check_release_record.sh)   # trimmed by test_gate_words.sh\n'
+       '  SHGATES_NO_OPENSSL=(test_mint_pki.sh)\n')
+open(p, 'w').write(s[:i] + new + s[j:])
+PY
+}
 OUT=""; RC=0
 fire() { RC=$(run_deploy); OUT=$(cat "$SCR/out.txt"); }
 
@@ -310,6 +364,81 @@ check "the deploy stops (rc=1)" "$RC" "1"
 contains "$OUT" "GATEWORD-LOUD" "the first planted gate ran and was heard"
 lacks "$OUT" "GATEWORD-SECOND" "the second never ran — a gate that reports all four cases instead of stopping at the first is a worse bug than the sentence it fixes"
 check "exactly one REFUSED line was printed" "$(printf '%s\n' "$OUT" | grep -c REFUSED)" "1"
+
+say "CASE 7 — a gate declared as needing openssl, on a box that has none: named skip, rc 0, nothing swallowed"
+# WHY THIS CASE LIVES HERE: it is about what the shell-gate loop is allowed to SAY. A gate that skips
+# itself with rc 0 prints to a capture the success path never shows, so the skip has to be said by the
+# loop, in the loop's own words, from the declared set — the shape PYGATES_NO_PAHO already uses. Three
+# faces, each paired: absent capability (skip and complete), capability present (no skip line at all),
+# and present-but-broken (the declared set is NOT a doormat: it still stops the deploy).
+# The clone's array is trimmed to two gates for these runs, the shipped tree untouched, so the cells
+# measure the loop's decision and not every registered gate's runtime — the same scoping
+# src/tools/test_paho_skip.sh uses for its deploy faces.
+dep7=$(cat "$REPO/$DEP_REL")
+check "SHGATES_NO_OPENSSL is declared as its own array (1 line)" "$(printf '%s\n' "$dep7" | grep -cE '^[[:space:]]*SHGATES_NO_OPENSSL=\(')" "1"
+check "and the skip sentence names the loop variable, not one hardcoded gate (0 literal sites)" "$(printf '%s\n' "$dep7" | grep -c 'tools/test_mint_pki.sh did NOT RUN')" "0"
+ssl_orphans=$(printf '%s\n' "$dep7" | sed -n 's/^[[:space:]]*SHGATES_NO_OPENSSL=(\(.*\))/\1/p' | tr -d '()' | tr ' \t' '\n\n' | grep . || true)
+sh_mem=$(printf '%s\n' "$dep7" | grep -E '^[[:space:]]*SHGATES\+?=\(' | sed 's/^[^=]*=+*//' | tr -d '()' | tr ' \t' '\n\n' | grep . || true)
+bad_orphan=0
+for n in $ssl_orphans; do printf '%s\n' "$sh_mem" | grep -qxF "$n" || bad_orphan=$((bad_orphan + 1)); done
+check "every declared name is also a registered gate — a stale declaration would name nothing (0)" "$bad_orphan" "0"
+
+BINN=$(build_noopenssl_bin) || { printf 'FAIL  could not build a PATH without openssl\n' >&2; exit 1; }
+# The link list is written down because two of these cells passed vacuously at this leg's first run: the
+# trimmed dir inherited a `openssl` symlink from /usr/local/bin and a shadowed `python3`, so the "no
+# openssl" claim was FALSE and a rc came back 1 for a reason outside this loop. A cell that cannot fail
+# is not a cell: the dir is printed, the lookup is asserted empty, and the names the deploy needs are
+# asserted present, one per lookup (dash's `command -v` prints only the first of several arguments).
+printf 'note  the trimmed bin dir holds %s links; `ls` names them here so a stray openssl entry cannot hide:\n' "$(ls "$BINN" | grep -c .)" >&2
+printf '%s\n' "$(ls "$BINN" | grep -E '^(openssl|python3|bun|bash|sh)$' | tr '\n' ' ')" >&2
+check "CONTROL — this environment finds openssl" "$(command -v openssl >/dev/null 2>&1 && echo found || echo absent)" "found"
+check "and the trimmed PATH does not" "$(env -i PATH="$BINN" sh -c 'command -v openssl >/dev/null 2>&1 && echo found || echo absent')" "absent"
+# One lookup per name: POSIX `command -v` takes a single argument, and dash prints only the first hit,
+# so a four-name call returns 1 whether or not the others resolve (measured at this leg's first run).
+found_n=0
+for b in bash sh python3 git; do
+  env -i PATH="$BINN" sh -c "command -v $b >/dev/null 2>&1" && found_n=$((found_n + 1))
+done
+check "while the trimmed PATH still resolves the four names the deploy needs (4)" "$found_n" "4"
+
+build_clone "$SCR/clone_ssl" "" || { printf 'FAIL  clone\n' >&2; exit 1; }
+trim_shgates_ssl "$SCR/clone_ssl/$DEP_REL" || { printf 'FAIL  could not trim the clone array\n' >&2; exit 1; }
+RC=$(run_nossl "$SCR/clone_ssl" "$BINN"); OUT=$(cat "$SCR/out.txt")
+check "openssl-less host: the deploy completes (rc=0)" "$RC" "0"
+contains "$OUT" "WARNING: openssl is absent on this box — tools/test_mint_pki.sh did NOT RUN" "the skip names the gate it skipped"
+contains "$OUT" "gate: sh tools/check_release_record.sh" "the other registered gate still ran"
+contains "$OUT" "deployed set complete and identical" "and the run ends with its completion line"
+check "exactly one gate was skipped" "$(printf '%s\n' "$OUT" | grep -c 'did NOT RUN')" "1"
+check "and it is the declared one, never an undeclared gate" "$(printf '%s\n' "$OUT" | grep 'did NOT RUN' | grep -vc test_mint_pki)" "0"
+
+say "CASE 7b — PAIRED: with openssl present, no skip line appears and the gate ran"
+build_clone "$SCR/clone_with" "" || exit 1
+trim_shgates_ssl "$SCR/clone_with/$DEP_REL" || exit 1
+RC=$(run_deploy_in "$SCR/clone_with"); OUT=$(cat "$SCR/out.txt")
+check "the deploy completes (rc=0)" "$RC" "0"
+check "no skip line was printed anywhere (0)" "$(printf '%s\n' "$OUT" | grep -c 'did NOT RUN')" "0"
+contains "$OUT" "gate: sh tools/test_mint_pki.sh" "the gate was run, not skipped"
+contains "$OUT" "deployed set complete and identical" "and the deploy finished"
+
+say "CASE 7c — PAIRED: the declared set is not a doormat — openssl present and the gate broken still stops"
+build_clone "$SCR/clone_broke" "" || exit 1
+trim_shgates_ssl "$SCR/clone_broke/$DEP_REL" || exit 1
+python3 - "$SCR/clone_broke/src/tools/test_mint_pki.sh" <<'PY' || { printf 'FAIL  could not plant\n' >&2; exit 1; }
+import sys
+p = sys.argv[1]; lines = open(p).read().split('\n')
+for i, l in enumerate(lines):
+    if l.startswith('[ "$failed" -gt 0 ] && exit 1'):
+        lines.insert(i, 'bad "PLANTED gate-word probe: this gate must still refuse" "planted for CASE 7c"')
+        break
+else:
+    raise SystemExit('anchor not found')
+open(p, 'w').write('\n'.join(lines))
+PY
+RC=$(run_deploy_in "$SCR/clone_broke"); OUT=$(cat "$SCR/out.txt")
+check "the deploy STOPS (rc=1)" "$RC" "1"
+contains "$OUT" "test_mint_pki.sh is not green: it ran and exited 1." "with the gate's own code, not a borrowed cause"
+contains "$OUT" "PLANTED gate-word probe" "and the check's own words survived"
+check "and no skip line was printed for a box that HAS openssl (0)" "$(printf '%s\n' "$OUT" | grep -c 'did NOT RUN')" "0"
 
 say "THE LOOP IS STILL CONSUMED, AND THE OLD DISCARD IS GONE (static face of the same rule)"
 # A behaviour cell proves the shape today; this pair proves nobody can quietly re-introduce the swallow.
