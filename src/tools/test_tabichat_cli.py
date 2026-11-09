@@ -699,6 +699,37 @@ check("and every payload the planted scan names is a seconds stamp, never an unt
 check("UNPLANTED — the shipped source is clean under the same scan, so the plant is the whole difference",
       unbeat(CLI_SRC), [])
 
+# --- ack_id: its parameter is a value, not the id builder (leg 1141) --------------
+# `def ack_id(msg_id, sender)` shadowed the module-level `msg_id()` builder for the whole body. Nothing
+# broke — the body only reads the string — but any later edit that reshapes an id in there would have been
+# calling a str, and python says that at runtime, not at review. Renamed; these cells keep it renamed and
+# keep the ack itself identical.
+ack_params = list(inspect.signature(tb.ack_id).parameters)
+check("no parameter of ack_id is named after the module's id builder", "msg_id" in ack_params, False)
+check("and the builder is still the module-level callable it was", callable(tb.msg_id), True)
+
+
+class AckRecorder:
+    def __init__(self):
+        self.calls = []
+
+    def publish(self, topic, payload):
+        self.calls.append((topic, payload))
+
+
+SAVED_ACK = (tb.CLIENT, tb.CTL, tb.SELF)
+tb.CLIENT, tb.CTL, tb.SELF = AckRecorder(), "chat/tabith/_ctl", "dust"
+tb.ack_id("dust-1-aaaaaa", "wren")
+at, ap = tb.CLIENT.calls[0]
+ab = tb.json.loads(ap)
+check("the ack still lands on the control topic carrying the id it was handed",
+      (at, ab["kind"], ab["id"], ab["to"], ab["by"]),
+      ("chat/tabith/_ctl", "ack", "dust-1-aaaaaa", "wren", "dust"))
+tb.CTL = ""
+tb.ack_id("dust-2-bbbbbb", "wren")
+check("NEGATIVE: with no control topic, it publishes nothing new (still 1 call)", len(tb.CLIENT.calls), 1)
+tb.CLIENT, tb.CTL, tb.SELF = SAVED_ACK
+
 print()
 if failed:
     print(f"{failed} check(s) FAILED")
