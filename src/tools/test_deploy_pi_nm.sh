@@ -209,9 +209,16 @@ fresh_target "$SCR/ok/t3"; fire "$SCR/ok" "$SCR/home-empty" "$SCR/ok/t3" "$CACHE
 check "empty-bun-cache host: the deploy completes (rc=0)" "$RC" "0"
 check "empty-bun-cache host: same two hermetic lines (2)" "$(nherm "$OUT")" "2"
 check "empty-bun-cache host: same two load lines (2)" "$(nload "$OUT")" "2"
-[ "$(printf '%s\n' "$OUT" | grep -c '^  moved :')" = "13" ] \
-  && ok "a fresh destination moves all 13 tabichat members (=13)" \
-  || bad "fresh-destination move count" "got '$(nmoved "$OUT")', want '13'"
+# The count is READ from the shipped array, never remembered: a fresh destination receives exactly the
+# members of FILES, so this line moves by the rule this file documents whenever a leg ships a new file — and
+# a leg that ships one without saying so reads RED here, which is the point. The old literal 13 sat there
+# through two ships precisely because a typed number cannot report that it expired; a read one does.
+FILES_LIST=$(grep -m1 -E '^[[:space:]]*FILES=\(' "$REPO/$DEP_REL" | sed 's/^[^(]*(//; s/)[[:space:]]*$//' | tr ' \t' '\n\n' | grep .)
+MOVED_EXPECT=$(printf '%s\n' "$FILES_LIST" | grep -c .)
+[ "$MOVED_EXPECT" -gt 0 ] || bad "the shipped FILES array was unreadable" "the pin cannot be derived — refusing to fall back to a remembered number"
+[ "$(printf '%s\n' "$OUT" | grep -c '^  moved :')" = "$MOVED_EXPECT" ] \
+  && ok "a fresh destination moves all $MOVED_EXPECT tabichat members (=$MOVED_EXPECT)" \
+  || bad "fresh-destination move count" "got '$(nmoved "$OUT")', want '$MOVED_EXPECT'"
 
 # ================================================================ CELL 4 — A SPECIFIER ONLY THE HOST COULD ANSWER MUST REFUSE
 say "CELL 4 — THE HERMETICITY SCAN IS THE DEFENDER: an unstubbed package specifier refuses by name, and nothing moves"
