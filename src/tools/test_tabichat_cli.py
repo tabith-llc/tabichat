@@ -551,6 +551,98 @@ says("(docs) and the sender-leaf wildcard it reads", join_entry, "chat/<room>/ms
 check("(docs) NEGATIVE: nothing was glued away — /names is still its own entry",
       any(e.startswith("/names") for e in tb.HELP), True)
 
+# --- IS THIS SEAT READ-ONLY? (leg 1146: a refused write must become a sentence) ---------
+# The client used to print "the broker vouches for this name" at join, before it had written anything.
+# A QoS 0 publish an ACL throws away is silent BY PROTOCOL — rc 0, no error, nothing delivered — so a
+# seat with no block spent its whole session read-only and never saw a word (reports/232: two
+# `Denied PUBLISH` on chat/tabith/msg/dust at 17:48:52 and 17:49:05). The witness is the only answer
+# the protocol gives, so it is what this client relies on, and `unknown` is said as `unknown`.
+
+SENT = "chat/tabith/msg/dust"
+UL = tb.write_state_line("unknown", "tabith", "dust", SENT)
+UN = tb.write_state_line("unconfirmed", "tabith", "dust", SENT)
+GR = tb.write_state_line("granted", "tabith", "dust", SENT)
+check("three states, three different sentences — absent is not broken and neither is ok",
+      len({UL, UN, GR}), 3)
+check("the state at rest is unproved, and it says so", "NOT YET PROVED" in UL, True)
+says("and names what would answer it", UL, "first line you send")
+never("NEGATIVE: 'unknown' never reads as a pass", UL, "confirmed")
+never("NEGATIVE: and never as a refusal the operator cannot verify", UL, "READ-ONLY")
+says("(neg) the refused-write sentence says READ-ONLY", UN, "READ-ONLY")
+says("(neg) and names the ACL entry the operator can act on", UN, "user CN=dust")
+says("(neg) and the topic it could not reach", UN, SENT)
+says("(neg) and why the client cannot be certain — the protocol is silent", UN, "silent by protocol")
+never("NEGATIVE: it is not a soft suggestion somebody skims", UN, "you may wish to")
+FLATUN = tb.write_state_line("unconfirmed", "tabith", "dust", "chat/tabith")
+says("a flat seat is told where a granted name actually lands", FLATUN, "chat/tabith/msg/+")
+check("NEGATIVE: a state this file does not know is said as unproved, not as ok",
+      "unproved" in tb.write_state_line("sideways", "tabith", "dust", SENT).lower(), True)
+
+# --- the witness is an exact (topic, id) match, and the window is a number ----------------
+P1 = ("dust-1-aaaaaa", SENT, 1000.0)
+check("my own line, on my own topic, with my own id: witnessed", tb.witness_seen(P1, SENT, "dust-1-aaaaaa"), True)
+check("NEGATIVE: the same id on another topic is somebody else's write",
+      tb.witness_seen(P1, "chat/tabith", "dust-1-aaaaaa"), False)
+check("NEGATIVE: the same topic with another id is a different message",
+      tb.witness_seen(P1, SENT, "dust-2-aaaaaa"), False)
+check("NEGATIVE: nothing pending witnesses nothing", tb.witness_seen(None, SENT, "dust-1-aaaaaa"), False)
+check("the window this client gives a line is the shipped number", tb.WITNESS_S, 5.0)
+check("NEGATIVE: an open window has not expired", tb.pending_expired(P1, 1004.9), False)
+check("and it closes at the boundary", tb.pending_expired(P1, 1005.0), True)
+check("NEGATIVE: no pending write never expires into a warning", tb.pending_expired(None, 9e9), False)
+
+# --- driven through the real on_message: the witness fires, and a foreign line does not -----
+SAVED2 = (tb.CLIENT, tb.ROOM, tb.TOPIC, tb.SELF, tb.WRITE_STATE, tb.PENDING_WRITE, list(tb.SEEN_IDS))
+tb.CLIENT, tb.ROOM, tb.TOPIC, tb.SELF = FakeClient(), "tabith", "chat/tabith", "dust"
+tb.SEEN_IDS[:] = []
+tb.WRITE_STATE, tb.PENDING_WRITE = "unknown", P1
+reset_state(cap=500)
+hear(SENT, "dust", "my own line back", "dust-1-aaaaaa")
+check("the witness flips the state to granted", tb.WRITE_STATE, "granted")
+check("and clears the pending write", tb.PENDING_WRITE, None)
+check("the confirmation reaches the screen", any("write confirmed" in visible(e) for e in tb.ENTRIES), True)
+check("(i) NEGATIVE: a seat whose write landed sees NO READ-ONLY line",
+      any("READ-ONLY" in visible(e) for e in tb.ENTRIES), False)
+check("and echo prevention still holds — the line is not shown again as an incoming one",
+      len(room_lines("my own line back")), 0)
+tb.WRITE_STATE, tb.PENDING_WRITE = "unknown", ("dust-3-aaaaaa", SENT, 2000.0)
+reset_state(cap=500)
+hear("chat/tabith/msg/wren", "wren", "another seat's line", "dust-3-aaaaaa")
+check("(iii) NEGATIVE: another seat's line on another leaf witnesses nothing", tb.WRITE_STATE, "unknown")
+check("and the pending write is still pending", tb.PENDING_WRITE, ("dust-3-aaaaaa", SENT, 2000.0))
+
+# --- the sentence is said when it is learned, and again on the next line -------------------
+tb.PENDING_WRITE = ("dust-4-aaaaaa", SENT, 3000.0)
+tb.WRITE_STATE = "unknown"
+reset_state(cap=500)
+check("NEGATIVE: a window still open says nothing", tb.mark_unconfirmed(now=3004.0), False)
+check("and the screen is still clean", len(tb.ENTRIES), 0)
+check("the sweep speaks when the window closes", tb.mark_unconfirmed(now=3005.0), True)
+check("the state is unconfirmed, not a silent ok", tb.WRITE_STATE, "unconfirmed")
+read_only_lines = [visible(e) for e in tb.ENTRIES if "READ-ONLY" in visible(e)]
+check("one sentence, naming the nick", (len(read_only_lines), "dust" in read_only_lines[0]), (1, True))
+tb.PENDING_WRITE = ("dust-5-aaaaaa", SENT, 4000.0)
+check("and it is said AGAIN on the next line that cannot be confirmed", tb.mark_unconfirmed(now=4005.0), True)
+check("so a second vanished message cannot stack silently on the first",
+      len([1 for e in tb.ENTRIES if "READ-ONLY" in visible(e)]), 2)
+tb.CLIENT, tb.ROOM, tb.TOPIC, tb.SELF, tb.WRITE_STATE, tb.PENDING_WRITE, tb.SEEN_IDS[:] = (
+    SAVED2[0], SAVED2[1], SAVED2[2], SAVED2[3], SAVED2[4], SAVED2[5], SAVED2[6])
+
+# --- the glue is wired, not decorative ------------------------------------------------------
+src_join = inspect.getsource(tb.do_join)
+src_ts = inspect.getsource(tb.text_send)
+src_lq = inspect.getsource(tb.leave_quiet)
+never("the unproved claim is GONE from the join banner", src_join, "the broker vouches for this name")
+says("the banner says unproved instead", src_join, "unproved until one of your lines comes back")
+check("and the join prints the unknown sentence, not silence", "write_state_line('unknown'" in src_join, True)
+says("text_send opens the window", src_ts, "WITNESS_TIMER = threading.Timer(WITNESS_S, report_witness)")
+says("and sweeps the previous line before adding another", src_ts, "mark_unconfirmed()")
+check("NEGATIVE: it does not read a QoS 0 rc as proof of delivery", "if info.rc" in src_ts, False)
+says("leave_quiet resets the state with the room", src_lq, 'WRITE_STATE = "unknown"')
+says("and cancels the timer, so a stopped seat cannot print into the next room", src_lq,
+     "WITNESS_TIMER.cancel()")
+check("the module says READ-ONLY, not a synonym the operator has to learn", "READ-ONLY" in UN, True)
+
 print()
 if failed:
     print(f"{failed} check(s) FAILED")

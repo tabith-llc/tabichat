@@ -438,6 +438,105 @@ check("and the transport built from THAT url is a TLS plan",
 os.environ.pop("TABICHAT_CONFIG", None)
 os.remove(os.path.join(fix_dir, "absent-site-config.json"))
 
+# --- 6. THE WRITE WITNESS ON A REAL BROKER (leg 1146) -------------------------------------------
+# A QoS 0 publish that an ACL throws away is not an error: `publish()` returns, `wait_for_publish`
+# returns, rc is success, and the line is simply gone — which is how a seat with no ACL block spent a
+# whole session read-only without a word on screen (reports/232: two `Denied PUBLISH`). The one thing a
+# client CAN observe is whether the broker hands that same line back on `chat/<room>/msg/+`. These cells
+# measure that on the real fixture with the real phase-2 ACL, and they read the shipped decision
+# functions rather than re-deriving them here.
+import json  # noqa: E402
+
+import tabichat_cli as CLI  # noqa: E402
+
+if phase != "phase2":
+    fail_hard(
+        "the witness cells need a phase-2 ACL (per-nick leaf grants); this fixture came up as %r — "
+        "a phase-1 file grants the flat topic and the denial being measured would not exist" % phase
+    )
+
+
+def witness_probe(topic, mid):
+    """Connect on the shipped transport, subscribe the leaf wildcard, publish once, and look for the
+    line coming back. Returns (delivered, rc, sent_at) — rc is what the CLIENT saw, delivered is what
+    the BROKER did, and the whole defect is that those two disagree."""
+    import paho.mqtt.client as _m
+
+    got = []
+    plan = transport_kwargs("mqtts://127.0.0.1:%s" % port, env)
+    c = _m.Client(_m.CallbackAPIVersion.VERSION2, client_id="%s-witness" % NICK)
+    apply_to_client(c, plan)
+
+    def on_msg(client, userdata, msg, *args):
+        try:
+            if json.loads(msg.payload.decode()).get("id") == mid:
+                got.append(msg.topic)
+        except Exception:
+            pass
+
+    c.on_message = on_msg
+    c.connect("127.0.0.1", int(port), keepalive=10)
+    c.loop_start()
+    sent_at = 0.0
+    try:
+        deadline = time.time() + 6
+        while not c.is_connected() and time.time() < deadline:
+            time.sleep(0.05)
+        if not c.is_connected():
+            fail_hard("the witness session could not connect (rc=%r)" % deadline)
+        c.subscribe("chat/%s/msg/+" % room, qos=0)
+        time.sleep(0.5)  # the SUBACK must be in place before the publish, or the window measures nothing
+        rc_box = []
+        info = c.publish(topic, json.dumps({"nick": NICK, "message": "witness cell", "id": mid, "ts": time.time()}))
+        info.wait_for_publish(timeout=5)
+        rc_box.append(info.rc)
+        sent_at = time.time()
+        deadline = time.time() + CLI.WITNESS_S + 1.0
+        while not got and time.time() < deadline:
+            time.sleep(0.1)
+        return bool(got), rc_box[0], sent_at
+    finally:
+        c.loop_stop()
+        try:
+            c.disconnect()
+        except Exception:
+            pass
+
+
+OWN = "chat/%s/msg/%s" % (room, NICK)
+FOREIGN = "chat/%s/msg/never-granted" % room
+check("the witness cells are reading the phase-2 ACL this denial depends on", phase, "phase2")
+
+# (i) POSITIVE CONTROL: the leaf the ACL DOES grant. Nothing may be called a denial until a granted
+# write is proven to come back through this very subscription.
+d1, rc1, at1 = witness_probe(OWN, "%s-1-%s" % (NICK, CLI.BOOT))
+check("(i) a write to the leaf the ACL grants comes back to the writer", d1, True)
+print("      (client saw rc=%r on a delivered line)" % (rc1,))
+
+# (ii) THE DEFECT: a leaf no ACL block grants. The client's own call still reports success.
+d2, rc2, at2 = witness_probe(FOREIGN, "%s-2-%s" % (NICK, CLI.BOOT))
+check("(ii) a write to a leaf the ACL does NOT grant never comes back", d2, False)
+check("(ii) and the client saw NO error doing it — rc 0, the silence that hid the defect", rc2, 0)
+check("(ii) the shipped witness accepts exactly this (topic, id) shape as pending",
+      CLI.witness_seen(("%s-2-%s" % (NICK, CLI.BOOT), FOREIGN, at2), FOREIGN, "%s-2-%s" % (NICK, CLI.BOOT)),
+      True)
+check("(ii) and the shipped clock says the window has closed on it",
+      CLI.pending_expired(("x", FOREIGN, at2), at2 + CLI.WITNESS_S), True)
+check("(ii) NEGATIVE: it had NOT closed half a window earlier", CLI.pending_expired(("x", FOREIGN, at2), at2 + 1.0),
+      False)
+
+# (iii) THE CONTROL ON THE CONTROL: the subscription was live the whole time, so (ii) is a denial and
+# not a dead reader. Re-run the granted case after the ungranted one, same code path.
+d3, rc3, at3 = witness_probe(OWN, "%s-3-%s" % (NICK, CLI.BOOT))
+check("(iii) and the leaf wildcard is still live after the denial — the granted line comes back", d3, True)
+
+said = CLI.write_state_line("unconfirmed", room, NICK, FOREIGN)
+check("so what the operator is told names READ-ONLY", "READ-ONLY" in said, True)
+check("and names the ACL entry to go and add", "user CN=%s" % NICK in said, True)
+check("and names the topic the broker threw away", FOREIGN in said, True)
+check("NEGATIVE: a granted seat is never told that", "READ-ONLY" in CLI.write_state_line("granted", room, NICK, OWN),
+      False)
+
 print()
 if FAILED:
     print("%d check(s) FAILED of %d" % (len(FAILED), len(RAN)))

@@ -76,6 +76,13 @@ them carries a name the broker vouches for:
   restarts at 0 every run, so without the boot tag a restarted seat would hand the same id to two
   different messages, and a reader that keys a duplicate ledger on that id would swallow the new line.
   A line the reader does drop as a duplicate is announced on screen — silence is not an option here.
+- **A write you cannot make is said, not hidden.** The broker throws away a publish your ACL does not
+  grant and the protocol never tells you: the call returns, the code is 0, the line vanishes. So the
+  client treats every line it sends as unproved until that same line comes back to it on
+  `chat/<room>/msg/+`, and the first one that does not prints `READ-ONLY` with the ACL entry to look
+  for (`user CN=<nick>` granting your topic) and says it again on the next line that cannot be
+  confirmed. Until you have sent something, the join banner says the write path is **not yet proved** —
+  it no longer claims the broker vouches for a name this seat has never written.
 
 In the room: `@worker1 say hi`, `@all status check`, `/names`,
 `/join <room>`, `/quit`. Inside a pi window: chat normally; use
