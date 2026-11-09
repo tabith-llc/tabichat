@@ -71,8 +71,14 @@ dust
 #     stopping at step 7 unminted; the two statements are still live, so this file holds neither an
 #     addition nor an exclusion. Where it is open: OWNER-OPEN.md item 2 of the broker-auth open set, the
 #     R-2811 close-out paragraph in decisions.md, and R-2811's own clause accepting that they stop.
-#     Spelling, because a grep will be run against it one day: the trackers write `gemma` in three places
-#     and `gemm` in one, so search both forms and conclude nothing from whichever one misses.
+#     Those two statements are not a contradiction and must not be re-fought as one: the leaf-provenance
+#     question is location-scoped, and the reconciliation of the two earlier fact rows is booked in
+#     fleet.db:facts as `F-gemma-leaf-claim-disagreement-is-location-scoped-not-contradictory`. This line
+#     adds no reading of its own — read that row before touching an install gate, a mint enumeration, or a
+#     leaf claim on this name, and re-derive whatever it quotes.
+#     Spelling, because a grep will be run against it one day: both `gemma` and `gemm` appear in more than
+#     one tracker, so search both forms and conclude nothing from whichever one misses. No count is written
+#     here on purpose: the trackers are appended to, and a number in a comment is a fact with an expiry date.
 #   ajax — MINTED: a launcher name on both hosts with a pair directory and a leaf (same fact row), and
 #     listed in the step-6 writer enumeration the two faces disagree on over this name alone
 #     (OWNER-OPEN.md, the step-6 enumeration note). Still no roster line: nothing in this file decides a
