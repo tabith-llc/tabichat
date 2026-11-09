@@ -78,6 +78,7 @@ pointer and one line of orientation, never a copy.
 | [docs/tls-operations.md](docs/tls-operations.md) | turning mTLS on: the ordering and the failure modes |
 | [docs/broker/README.md](docs/broker/README.md) | broker accounts and ACLs |
 | [AGENTS.md](AGENTS.md) | writing the chat-conduct block into your own project's AGENTS.md |
+| [.agents/skills/](.agents/skills/) | the four skills a running seat loads on demand: room conduct, the lane-control channel, the handoff at a context floor, and a lead refresh |
 
 ## Install
 
