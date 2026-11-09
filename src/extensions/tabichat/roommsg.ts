@@ -25,6 +25,33 @@ export const HEARTBEAT_MS_DEFAULT = 30_000;
 /** A peer whose last beat is older than this many ms is stale, not present. */
 export const PEER_STALE_AFTER_MS_DEFAULT = 90_000;
 
+/**
+ * ONE FIELD, TWO UNITS, AND THE NUMBER THAT TELLS THEM APART. `ts` on a presence beat is
+ * milliseconds from this side (`Date.now()`) and was epoch-seconds from the python CLI until the face
+ * this note exists on. A seconds stamp read beside an ms clock is ~56 years in the past, so it lost
+ * every ranking it met — a CLI peer could not show online to a seat, and their last-will lost too, so
+ * they could not clear their own row — while the same number read against a seconds clock (the CLI's
+ * `presence.py`) is ~56 years in the future, which that face already classifies as unrankable. That
+ * pair is the defect, and it ships on both reading faces.
+ *
+ * 1e11 ms is 1973-03-18 and 1e11 seconds is 5138-11-20, so a positive stamp BELOW the threshold
+ * cannot be a ms beat from any clock this fleet runs and is read as seconds, multiplied up. This is a
+ * UNIT test, not a clock correction: a stamp that is still impossible to rank after the unit is settled
+ * keeps reading `stale` (`peerState` below), because eating that guard would stop a board's spam by
+ * making it claim a liveness it never measured.
+ */
+export const BEAT_MS_FLOOR = 1e11;
+
+/** The beat stamp in this face's unit — milliseconds — whatever unit it arrived in. */
+export const normBeatTsMs = (ts: number): number => {
+  if (!Number.isFinite(ts) || ts <= 0) return 0;
+  return ts < BEAT_MS_FLOOR ? ts * 1000 : ts;
+};
+
+/** True when a record arrived in the OTHER face's unit and this reading converted it. */
+const beatWasConverted = (ts: number): boolean =>
+  Number.isFinite(ts) && ts > 0 && ts < BEAT_MS_FLOOR;
+
 export type PeerState = "online" | "stale" | "offline";
 
 /**
@@ -282,8 +309,12 @@ export interface PeerSeen {
  */
 export const peerRecordWins = (prev: PeerSeen | undefined, incoming: PeerSeen): boolean => {
   if (!prev) return true;
-  if (incoming.ts <= 0) return prev.ts <= 0;
-  return incoming.ts >= prev.ts;
+  // both sides through ONE unit before any comparison: ranking across units is the whole defect, and a
+  // last-will that loses to a foreign unit is a peer who cannot clear their own record on exit.
+  const prevTs = normBeatTsMs(prev.ts);
+  const incTs = normBeatTsMs(incoming.ts);
+  if (incTs <= 0) return prevTs <= 0;
+  return incTs >= prevTs;
 };
 
 /**
@@ -305,8 +336,9 @@ export const peerState = (
 ): PeerState => {
   if (!seen || seen.status === "offline") return "offline";
   // an unstamped record says nothing about liveness: it cannot be proof of life
-  if (seen.ts <= 0) return "stale";
-  const age = nowMs - seen.ts;
+  const at = normBeatTsMs(seen.ts);
+  if (at <= 0) return "stale";
+  const age = nowMs - at;
   // an age we cannot compute, or a stamp further ahead than one allowance, ranks as nothing.
   if (!Number.isFinite(age) || age < -staleAfterMs) return "stale";
   return age > staleAfterMs ? "stale" : "online";
@@ -328,12 +360,16 @@ export const PEERS_INSTRUMENT =
 
 /** How one row was arrived at, in the row itself: never an age invented from a stamp we cannot rank. */
 export const peerAge = (seen: PeerSeen, nowMs: number): string => {
-  if (seen.ts <= 0) return "no stamp";
-  const age = nowMs - seen.ts;
+  const at = normBeatTsMs(seen.ts);
+  if (at <= 0) return "no stamp";
+  // the row SAYS when the stamp arrived in the other face's unit: a conversion that leaves no trace
+  // makes a converted row indistinguishable from a native one, and the next reader cannot audit it.
+  const note = beatWasConverted(seen.ts) ? " [s stamp, read as ms]" : "";
+  const age = nowMs - at;
   if (!Number.isFinite(age)) return "unrankable";
   // a stamp ahead of us prints the skew it carries, not a clamped "0s" that reads as "just now"
-  if (age < 0) return `ahead ${ageLabel(-age)}`;
-  return ageLabel(age);
+  if (age < 0) return `ahead ${ageLabel(-age)}${note}`;
+  return `${ageLabel(age)}${note}`;
 };
 
 /** Compact age: 42s, 3m12s, 2h05m. */

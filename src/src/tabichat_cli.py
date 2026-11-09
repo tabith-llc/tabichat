@@ -888,6 +888,22 @@ def renderer():
 
 # --- presence / ack / broker (the parts chat_cli already got right) ------------
 
+
+def beat_ts():
+    """The presence beat stamp, in the unit the wire says: MILLISECONDS.
+
+    `docs/wire-format.md` names ms canonical for this one field, because the extension publishes
+    `Date.now()` and this file published `time.time()` — seconds — and the two met in one comparison.
+    A seconds stamp is ~56 years behind an ms record when both are read as ms, so it lost every
+    ranking: a CLI peer could neither show online to a seat nor clear their own row on exit. This is
+    the only clock helper a beat needs. The ack stamp in `ack_publish` and the room-line stamp stay
+    epoch-seconds: those payloads are not beats and nothing ranks a beat against them.
+    `src/src/presence.py` (`norm_ts`) is the reading half — it accepts either unit and SAYS which one
+    it read, because a stamp that quietly becomes another number is how a liveness board starts lying.
+    """
+    return int(time.time() * 1000)
+
+
 def peer_state_for(nick):
     return record_state(ONLINE.get(nick), time.time())
 
@@ -899,7 +915,7 @@ def beat(client=None):
     try:
         c.publish(
             PRESENCE_SELF,
-            json.dumps({"nick": SELF, "status": "online", "ts": time.time()}),
+            json.dumps({"nick": SELF, "status": "online", "ts": beat_ts()}),
             retain=True,
         )
     except Exception:
@@ -1139,7 +1155,7 @@ def leave_quiet():
         try:
             c.publish(
                 self_topic,
-                json.dumps({"nick": SELF, "status": "offline", "ts": time.time()}),
+                json.dumps({"nick": SELF, "status": "offline", "ts": beat_ts()}),
                 retain=True,
             ).wait_for_publish(timeout=2)
         except Exception:
@@ -1211,7 +1227,7 @@ def do_join(room_name):
         SEQ += 1
         c.will_set(
             PRESENCE_SELF,
-            json.dumps({"nick": SELF, "status": "offline", "ts": time.time()}),
+            json.dumps({"nick": SELF, "status": "offline", "ts": beat_ts()}),
             retain=True,
         )
         CLIENT = c

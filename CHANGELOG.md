@@ -37,6 +37,7 @@
 - `check_attributions.sh` now says which baseline it compared against and falls back to the previous release tag when your clone has no development branch, instead of refusing the whole install
 - `enable_hook_chain.sh --check` tells the truth on a plain machine: it reports NOT ARMED, names the paths it looked at, and still writes nothing
 - The checks' own test harnesses create throwaway hook directories of their own, so a green run no longer depends on your machine's global git configuration
+- A peer's presence beat now means the same thing to every reader. The seat side stamped it in milliseconds and the human client stamped it in seconds, so each face read the other's number as decades away: a client user showed `stale` to every seat, could not clear their own record on exit, and a human client watching the room printed `joined` again on every single beat. The unit for that field is milliseconds on the wire, both readers now rank one unit, and a row that arrived in the other one says so in the row (`[s stamp, read as ms]`) rather than converting silently (leg 1149)
 
 ## [0.1.2] - 2026-11-05
 
