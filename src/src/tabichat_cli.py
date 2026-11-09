@@ -32,7 +32,8 @@ KEYS (raw mode; only a full-screen app can offer this, and only a separate clien
 COMMANDS
     /connect [host[:port]]  connect to the broker (no argument = the broker you configured:
                            the site config "mqttUrl", or $MQTT_URL, or $MQTT_HOST/$MQTT_PORT)
-    /join <room>            join a room (topic chat/<room>)
+    /join <room>            join a room: READS chat/<room> and chat/<room>/msg/+; WRITES
+                           chat/<room>/msg/<nick> when a client certificate pair is configured
     /names                  the beats this client heard: * online, ? quiet or unrankable, - gone
     /up [rows]  /down [rows]   scroll the window (default: a screen)
     /top                    oldest line in the buffer
@@ -46,6 +47,22 @@ COMMANDS
     /clear screen           blank the screen and KEEP the buffer — PgUp brings it back
     /help                   this list
     /quit                   leave (presence offline) and exit
+
+THE TWO TOPIC SHAPES — what this client reads, and which one it writes
+    READS BOTH: the flat room topic `chat/<room>` and every per-nick sender leaf
+    `chat/<room>/msg/+`. MQTT one-level matching means the two filters never BOTH hear one publish (a
+    leaf line does not arrive on the flat subscription), but a line that does reach this client twice
+    — a re-delivery across a reconnect, or a sender that writes both shapes — is printed ONCE, keyed on
+    the message id, the same way the pi extension collapses them (`roommsg.ts:noteRoomId`).
+    WRITES the leaf `chat/<room>/msg/<nick>` when the transport carries a client certificate pair
+    (`MQTT_TLS_CERTFILE` + `MQTT_TLS_KEYFILE`) AND the nick was chosen by the operator (`--nick` or
+    `MQTT_NICK`). Both halves are required: the ACL grants that leaf to the certificate whose subject
+    names the nick, so a leaf write without the pair is refused by the broker SILENTLY (rc 0, nothing
+    delivered) and a leaf write under an inferred name aims at a leaf nobody granted. Without them the
+    client writes the flat topic and says so on screen, and every line it read from a flat topic is
+    shown marked `unverified` — that name is text the sender typed, not an identity the broker vouched
+    for. `--flat-send` keeps the flat write available on purpose: a room whose ACL has not migrated
+    needs it, and it is then a choice the operator made rather than a fallback that happened to them.
 
 MARKDOWN-LITE, and the deliberate limit (whether markdown is worth it at all is a real question): the room
 stays BYTE-FOR-BYTE PLAIN TEXT on the wire — no markup is ever sent, and the agent-side cap rule
@@ -67,6 +84,7 @@ import fcntl
 import getpass
 import json
 import os
+import random
 import re
 import shutil
 import signal
@@ -87,7 +105,14 @@ from broker import BrokerError, resolve_broker, resolve_broker_url
 # transport: TLS + client certificates, decided by the pure module next to this one. It is a
 # separate file because the pi extension enforces the SAME refusal rules in tlsopts.ts, and two
 # inline copies of "never fall back to plaintext" drift until only one of the clients obeys it.
-from tlsenv import TransportBlocked, TransportRefusal, apply_to_client, build_ssl_context, transport_kwargs
+from tlsenv import (
+    TLS_ENV,
+    TransportBlocked,
+    TransportRefusal,
+    apply_to_client,
+    build_ssl_context,
+    transport_kwargs,
+)
 
 warnings.filterwarnings("ignore", "Callback API version 1 is deprecated")
 
@@ -182,7 +207,7 @@ CLEAR_KEEP = threading.Event()   # /clear screen handshake
 
 HELP = [
     "/connect [host[:port]]  connect to the broker",
-    "/join <room>            join a room (topic chat/<room>)",
+    "/join <room>            read chat/<room> + chat/<room>/msg/+; write the msg/<nick> leaf",
     "/names                  the beats this client heard: * online, ? quiet or unrankable, - gone",
     "/up [rows] /down [rows] scroll the window (default: a screen)",
     "/top   /live | /back    oldest, newest (clears the unread count)",
@@ -203,12 +228,182 @@ def clean(nick):
     return re.sub(r"[^a-zA-Z0-9_\-]", "", nick or "")[:20] or "user"
 
 
-SELF = clean(
-    os.environ.get("USER")
-    or os.environ.get("chat_nick")
-    or os.environ.get("irc_nick")
-    or getpass.getuser()
-)
+# --- THE PER-NICK SENDER LEAF ------------------------------------------------
+# Shape (B), broker-first authorship. The rules live here as PURE functions (no paho, no filesystem,
+# no socket) for the same reason `tlsenv.py` is a separate module: the pi extension holds the same
+# decisions in `roommsg.ts` (`topicLeaf`, `msgTopic`, `msgWild`, `nickFromMsgTopic`, `authorVerdict`,
+# `noteRoomId`) and two inline copies of "whose name is this" drift until only one client obeys it.
+# These are mirrors of that shape, not an import of it — python and TS stay separate by design.
+NICK_ENV = "MQTT_NICK"
+NICK_EXPLICIT = ("--nick", NICK_ENV)
+SEEN_IDS_MAX = 200            # roommsg.ts:SEEN_IDS_MAX — one ledger, same size on both clients
+UNVERIFIED = " unverified"    # roommsg.ts:renderLine — the SAME word leg 1120 ships, no second vocabulary
+
+
+def topic_leaf(nick):
+    """The topic-level form of a nick: what survives is the leaf, and the payload nick is not it."""
+    return re.sub(r"[^a-zA-Z0-9_-]", "", (nick or "").strip())
+
+
+def msg_topic(room, nick):
+    """`chat/<room>/msg/<leaf>`, or "" — the empty-leaf case refuses instead of aiming at a
+    trailing-separator topic nobody reads (roommsg.ts:msgTopic)."""
+    leaf = topic_leaf(nick)
+    return f"chat/{room}/msg/{leaf}" if (room and leaf) else ""
+
+
+def msg_wild(room):
+    """The read half of the same shape: every sender leaf in this room (roommsg.ts:msgWild)."""
+    return f"chat/{room}/msg/+" if room else ""
+
+
+def nick_from_msg_topic(topic, room):
+    """The nick the TOPIC asserts, or "" when it is not a sender leaf. One level only."""
+    pre = f"chat/{room}/msg/"
+    if not room or not topic.startswith(pre):
+        return ""
+    leaf = topic[len(pre):]
+    return "" if (not leaf or "/" in leaf) else leaf
+
+
+def author_verdict(topic, room, payload_nick):
+    """(ok, author, verified, why) for one inbound room line — roommsg.ts:authorVerdict.
+
+    A line on a sender leaf carries its author in the TOPIC, because that leaf is the only topic the
+    broker's ACL let the authenticated certificate write. The payload `nick` is a string the sender
+    typed. When the two disagree the topic is right and the line is DROPPED AND SAID, never re-labelled
+    quietly: a client that accepts a rewritten author is one ack away from trusting a forgery.
+    A flat-topic line is deliverable but `verified` is False — that is the limit leg 1120 marks.
+    """
+    leaf = nick_from_msg_topic(topic, room)
+    typed = (payload_nick or "").strip()
+    if not leaf:
+        return True, typed, False, ""
+    if not typed:
+        return True, leaf, True, f"no nick in the payload; author taken from the topic {topic}"
+    if typed == leaf:
+        return True, leaf, True, ""
+    return False, leaf, True, f'topic {topic} asserts "{leaf}" but the payload names "{typed}"'
+
+
+def note_room_id(seen, mid, cap=SEEN_IDS_MAX):
+    """(dup, seen) — the id ledger that makes dual-read print one line (roommsg.ts:noteRoomId).
+    An absent id dedupes nothing: it is not a key, and swallowing a line for want of one is worse
+    than showing it twice."""
+    key = (mid or "").strip()
+    if not key:
+        return False, seen
+    if key in seen:
+        return True, seen
+    nxt = list(seen) + [key]
+    return False, nxt[len(nxt) - cap:] if len(nxt) > cap else nxt
+
+
+def has_client_identity(plan):
+    """True only when the transport carries a client certificate PAIR — the thing a leaf write is keyed on."""
+    if not plan or not plan.get("tls"):
+        return False
+    kw = plan.get("kwargs") or {}
+    return bool(kw.get("certfile")) and bool(kw.get("keyfile"))
+
+
+def write_plan(room, nick, source, plan, flat=False):
+    """(topic, says) — where the NEXT line actually goes, and the one clear line naming what is missing.
+
+    The per-nick leaf is the only room topic whose author the broker vouches for, and reaching it takes
+    a client certificate pair AND a nick the operator chose. Anything else writes the flat topic — and
+    says so, because a silent wrong-topic write is the failure this shape creates: the publish succeeds,
+    the socket stays open, the broker returns nothing.
+    """
+    flat_topic = f"chat/{room}"
+    if flat:
+        return flat_topic, (
+            "--flat-send is on, so this line went on the flat "
+            f"{flat_topic}: the broker vouches for the topic, not for the name in it."
+        )
+    if not has_client_identity(plan):
+        return flat_topic, (
+            f'no client certificate for "{nick}": {TLS_ENV["certfile"]} and {TLS_ENV["keyfile"]} are not '
+            f"both set, so this line went on the flat {flat_topic}. Writing {msg_topic(room, nick)} needs "
+            f"a client certificate minted for this nick AND an ACL entry granting that leaf to it — "
+            "minting is the operator's act against the live CA, and this client will not invent either."
+        )
+    if source not in NICK_EXPLICIT:
+        return flat_topic, (
+            f'the nick "{nick}" was inferred from {source}, not chosen with --nick or {NICK_ENV}, so no '
+            f"per-nick leaf is claimed for it and this line went on the flat {flat_topic}. A leaf write "
+            "aims at the name a certificate was minted for, so name it yourself."
+        )
+    leaf = msg_topic(room, nick)
+    if not leaf:
+        return flat_topic, (
+            f'nick "{nick}" has no topic-leaf-safe form; posted to the flat room topic instead, so the '
+            "per-sender ACL does NOT apply to this line."
+        )
+    return leaf, ""
+
+
+def boot_tag(rand=random.random):
+    """Six hex chars, the shipped builder's width (`roommsg.ts:bootTag`), from an injectable draw so the
+    mapping is testable without a random number."""
+    return f"{int(rand() * 0x100000):06x}"
+
+
+def msg_id(nick, seq, boot):
+    """`<nick>-<seq>-<boot>` — the shipped id shape, `roommsg.ts:msgId`, and the boot tag is not decoration.
+
+    `MSG_SEQ` restarts at 0 every session, so `<nick>-<seq>` alone hands the SAME id to two different
+    messages in two sessions of one seat — and this client's own id ledger keys on exactly that string,
+    so a restarted sender's first line would be swallowed as a duplicate of a line already on screen.
+    The extension carries the tag for the same reason: its receipt board is filed by id.
+    """
+    return f"{nick}-{seq}-{boot}"
+
+
+def resolve_nick(cli=None, env=None):
+    """(nick, source, refusal). An operator-chosen roster nick first; a refusal, never a rewrite.
+
+    `clean()` STRIPS characters and truncates at 20, so a nick it alters cannot be the leaf the ACL
+    grants: `"Dusty Smith"` sanitises to `"DustySmith"` and a publish aimed at the truncated leaf is
+    refused by the broker with rc 0 and no error. So an altered nick that the OPERATOR CHOSE (`--nick`,
+    `MQTT_NICK`) is refused with a named reason instead of being quietly rewritten — the same notice the
+    extension gives for that case. An INFERRED value ($USER, chat_nick, irc_nick, getpass) is not a claim
+    on a leaf and stays what it has always been here: a display name, sanitised for the wire by `clean()`,
+    with `write_plan` writing flat because its source is not explicit. Dotted and spaced account names are
+    ordinary, and refusing start-up for one tells a person to choose an identity they never chose.
+    """
+    env = os.environ if env is None else env
+    if cli:
+        raw, source = str(cli), "--nick"
+    elif (env.get(NICK_ENV) or "").strip():
+        raw, source = env[NICK_ENV], NICK_ENV
+    elif (env.get("USER") or "").strip():
+        raw, source = env["USER"], "$USER"
+    elif (env.get("chat_nick") or env.get("irc_nick") or "").strip():
+        raw, source = (env.get("chat_nick") or env.get("irc_nick")), "chat_nick/irc_nick"
+    else:
+        raw, source = getpass.getuser(), "getpass"
+    raw = raw.strip()
+    if not raw:
+        return raw, source, (
+            "no nick to post as — refusing to join under a borrowed name. Choose the roster nick: "
+            f"--nick <nick> or {NICK_ENV}=<nick>."
+        )
+    # THE LEAF-SHAPE GATE FIRES ON A CHOICE. The refusal below binds only a nick somebody named, because
+    # that is the only nick a leaf is ever claimed under; an inferred one is refused its leaf by
+    # `write_plan`, which is the same fact stated where the write actually happens.
+    if source in NICK_EXPLICIT and clean(raw) != raw:
+        return raw, source, (
+            f'nick "{raw}" has no topic-leaf-safe form: it is not what this client would put on the '
+            f"wire (`clean()` alters it to {clean(raw)!r}), and an altered nick aims the publish at a "
+            f"leaf the ACL will not grant. Choose the nick the certificate was minted for: "
+            f"--nick <nick> or {NICK_ENV}=<nick>."
+        )
+    return raw, source, ""
+
+
+SELF_RAW, NICK_SOURCE, NICK_REFUSAL = resolve_nick()
+SELF = clean(SELF_RAW)
 
 # --- state -------------------------------------------------------------------
 ENTRIES: list[str] = []          # UNWRAPPED messages, oldest first — the buffer
@@ -230,6 +425,9 @@ CONN_LOCK = threading.Lock()
 SEQ = 1
 HOST, PORT = BROKER_HOST, BROKER_PORT
 TOPIC = ""
+MSG_WILD = ""                # chat/<room>/msg/+ — the read half of shape (B)
+FLAT_SEND = False            # --flat-send: the operator chose the flat write
+SEEN_IDS: list[str] = []     # the id ledger that makes dual-read print one line
 PRESENCE = ""
 PRESENCE_W = ""
 PRESENCE_SELF = ""
@@ -239,6 +437,7 @@ ONLINE: dict[str, tuple[str, float]] = {}
 ACKS: list[tuple[float, str, str, str]] = []
 MSG_SEQ = 0
 HB_S = 30.0
+BOOT = boot_tag()             # this run's tag in every id it mints (see msg_id)
 LAST_BYTE = None
 _RENDERER_RUNNING = True
 
@@ -710,6 +909,12 @@ def on_connect(client, userdata, flags, rc):
         return
     if TOPIC:
         client.subscribe(TOPIC)
+        # DUAL READ, shape (B): the per-sender leaves are heard ALONGSIDE the flat room topic, and a
+        # line that arrives on both is collapsed by the id ledger, so this cannot print twice. It is
+        # unconditional: a client that reads only the flat topic is deaf from the moment the writer
+        # migrates, and the writer has already migrated in the lanes.
+        if MSG_WILD:
+            client.subscribe(MSG_WILD)
         client.subscribe(CTL)
         client.subscribe(PRESENCE_W)
         if PRESENCE:
@@ -727,6 +932,7 @@ def on_connect(client, userdata, flags, rc):
 
 
 def on_message(client, userdata, msg):
+    global SEEN_IDS
     if not active(client):
         return
     try:
@@ -762,9 +968,33 @@ def on_message(client, userdata, msg):
         elif status == "offline" and was == "online":
             note(f"{ts()} — {BLUE}{nick}{RESET} left")
         return
-    if msg.topic == TOPIC:
-        sender = data.get("nick", "unknown")
+    on_leaf = bool(ROOM) and bool(nick_from_msg_topic(msg.topic, ROOM))
+    if msg.topic == TOPIC or on_leaf:
+        # BROKER-FIRST AUTHORSHIP: on a sender leaf the TOPIC names the author, because that leaf is
+        # the only topic the ACL lets the authenticated certificate write. A disagreement between the
+        # topic and the typed payload nick is dropped AND SAID, never re-labelled. A flat-topic line
+        # is shown marked `unverified` — the same word leg 1120 renders, so a human reader is not told
+        # that a typed name is a proven identity.
+        ok, author, verified, why = author_verdict(msg.topic, ROOM, data.get("nick", ""))
+        if not ok:
+            note(f"{ts()} [!] line dropped, authorship conflict: {why}. Nothing was delivered.")
+            return
+        if why:
+            note(f"{ts()} [!] authorship note: {why}")
+        sender = author or "unknown"
         if sender == SELF:
+            return
+        # ONE MESSAGE, ONE LINE: a line can still reach this client on BOTH shapes — a re-delivery
+        # across a reconnect, or a sender that writes the flat topic and the leaf — and the flat
+        # subscription is not going away while half the room still posts to it. The repeat is collapsed
+        # here, before the buffer and before any ack, so a duplicate can be neither read nor answered
+        # twice.
+        dup, SEEN_IDS = note_room_id(SEEN_IDS, data.get("id", ""))
+        if dup:
+            # SAID, not swallowed. A line that vanishes off the wire with no word on screen is the exact
+            # failure class this leg exists to close, and a reader cannot tell "already shown" from "lost".
+            note(f"{ts()} [!] duplicate dropped: id {data.get('id')!r} from {sender} was already read "
+                 "here — nothing new was printed")
             return
         ONLINE[sender] = ("online", time.time())
         message = data.get("message", "")
@@ -781,7 +1011,10 @@ def on_message(client, userdata, msg):
             # the human deserves the same nudge the lanes get: a line addressed to you is not
             # background reading, and while scrolled back it would otherwise be silent
             message = f"{BOLD}{MENTION}[for you]{RESET} {message}"
-        note(f"{ts()} {BLUE}{sender}{RESET}: {highlight_mentions(message)}")
+        note(
+            f"{ts()} {BLUE}{sender}{RESET}{'' if verified else UNVERIFIED}: "
+            f"{highlight_mentions(message)}"
+        )
 
 
 def on_disconnect(client, userdata, rc):
@@ -815,13 +1048,14 @@ def make_client(seq, plan=None):
 
 
 def leave_quiet():
-    global CLIENT, ROOM, TOPIC, PRESENCE, PRESENCE_W, PRESENCE_SELF, CTL
+    global CLIENT, ROOM, TOPIC, MSG_WILD, PRESENCE, PRESENCE_W, PRESENCE_SELF, CTL
     c = CLIENT
     in_room = bool(ROOM and TOPIC and PRESENCE_SELF)
     self_topic = PRESENCE_SELF
     CLIENT = None
     ROOM = None
     TOPIC = ""
+    MSG_WILD = ""
     PRESENCE = ""
     PRESENCE_W = ""
     PRESENCE_SELF = ""
@@ -872,7 +1106,7 @@ def do_connect(host, port):
 
 
 def do_join(room_name):
-    global TOPIC, PRESENCE, PRESENCE_W, PRESENCE_SELF, CTL, ONLINE, SEQ, CLIENT
+    global TOPIC, MSG_WILD, PRESENCE, PRESENCE_W, PRESENCE_SELF, CTL, ONLINE, SEQ, CLIENT
     if HOST is None:
         note(f"{ts()} [!] {BROKER_ERROR or 'no broker configured'}")
         return
@@ -888,7 +1122,15 @@ def do_join(room_name):
         PRESENCE_W = f"{PRESENCE}/#"
         PRESENCE_SELF = f"{PRESENCE}/{SELF}"
         CTL = f"{TOPIC}/_ctl"
-        note(f"{ts()} joining {TOPIC} ...")
+        MSG_WILD = msg_wild(room)
+        wtopic, wsays = write_plan(room, SELF, NICK_SOURCE, TLS_PLAN, FLAT_SEND)
+        note(f"{ts()} joining {TOPIC} — reading {TOPIC} and {MSG_WILD}")
+        note(
+            f"{ts()} writing {wtopic}"
+            + (" — the broker vouches for this name" if wtopic != TOPIC else "")
+        )
+        if wsays:
+            note(f"{ts()} [!] {wsays}")
         c = make_client(SEQ, TLS_PLAN)
         SEQ += 1
         c.will_set(
@@ -923,17 +1165,24 @@ def text_send(text):
         note(f"{ts()} [!] nothing to send — a blank line stays here")
         return
     MSG_SEQ += 1
-    mid = f"{SELF}-{MSG_SEQ}"
+    # THREE PARTS, THE SHIPPED SHAPE (msg_id / roommsg.ts:msgId): MSG_SEQ restarts at 0 every run, so a
+    # two-part id hands the same string to two different messages across two sessions — and this client's
+    # own duplicate ledger keys on it.
+    mid = msg_id(SELF, MSG_SEQ, BOOT)
+    # THE TOPIC IS CHOSEN, NOT ASSUMED: the leaf is the write the broker can vouch for, and the flat
+    # topic stays available (--flat-send, or no certificate yet). Either way the echo names the topic
+    # the line ACTUALLY went on — a wrong-topic write is otherwise silent, rc 0, nothing delivered.
+    topic, _ = write_plan(ROOM, SELF, NICK_SOURCE, TLS_PLAN, FLAT_SEND)
     try:
         info = CLIENT.publish(
-            TOPIC,
+            topic,
             json.dumps({"nick": SELF, "message": text, "id": mid, "ts": time.time()}),
         )
         info.wait_for_publish(timeout=3)
     except Exception as e:
         note(f"{ts()} [!] send failed: {e}")
         return
-    note(f"{ts()} {BLUE}{SELF}{RESET}: {text}")
+    note(f"{ts()} {BLUE}{SELF}{RESET}: {text} {DIM}\u2192 {topic}{RESET}")
 
 
 def cmd_depth():
@@ -1227,20 +1476,35 @@ def parse_args(argv):
                    help="broker host for THIS run — overrides the site config and $MQTT_URL; "
                         "without it and with nothing configured, the client refuses")
     p.add_argument("--port", type=int, default=None, help="broker port (default $MQTT_PORT or 1883)")
-    p.add_argument("--nick", default=None, help="display nick (default $USER)")
+    p.add_argument("--nick", default=None,
+                   help="the roster nick to post as — the name on the sender leaf "
+                        f"chat/<room>/msg/<nick>. Order: --nick, then ${NICK_ENV}, then $USER. "
+                        "A nick this client cannot put on the wire is refused, never rewritten.")
+    p.add_argument("--flat-send", dest="flat_send", action="store_true",
+                   help="post to the flat chat/<room> topic even when a client certificate is "
+                        "configured; a line written there is marked unverified, because the broker "
+                        "vouches for the topic and not for the name in it")
     p.add_argument("--history", type=int, default=None, help=f"buffer cap in messages (default {HISTORY_CAP_DEFAULT}, env {HISTORY_ENV})")
     p.add_argument("--no-md", action="store_true", help="render room text verbatim, no markdown-lite")
     return p.parse_args(argv)
 
 
 def main(argv=None):
-    global _WIDTH, _HEIGHT, _RENDERER_RUNNING, HISTORY_CAP, MD, SELF, HOST, PORT, BROKER_ERROR, TLS_PLAN
+    global _WIDTH, _HEIGHT, _RENDERER_RUNNING, HISTORY_CAP, MD, SELF, SELF_RAW, NICK_SOURCE
+    global NICK_REFUSAL, FLAT_SEND, HOST, PORT, BROKER_ERROR, TLS_PLAN
     args = parse_args(sys.argv[1:] if argv is None else argv)
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print("tabichat_cli needs a real terminal (TTY)", file=sys.stderr)
         return 1
-    if args.nick:
-        SELF = clean(args.nick)
+    # THE NICK IS AN OPERATOR CHOICE, AND A BROKEN ONE IS A REFUSAL. `clean()` strips characters and
+    # truncates at 20, so an altered nick would aim the leaf write at a topic the ACL never granted —
+    # refused here, in words, before the TUI is touched, and never quietly rewritten.
+    SELF_RAW, NICK_SOURCE, NICK_REFUSAL = resolve_nick(cli=args.nick)
+    if NICK_REFUSAL:
+        print(f"tabichat_cli: refusing to start — {NICK_REFUSAL}", file=sys.stderr)
+        return 1
+    SELF = clean(SELF_RAW)
+    FLAT_SEND = bool(args.flat_send)
     # "must be set" — never guessed: --host for this run, or the site file, or the env. Nothing
     # configured is a REFUSAL with an exit code, printed before the TUI is touched — a client that
     # starts silent and then cannot connect is the mystery refusal a customer would read
@@ -1300,7 +1564,7 @@ def main(argv=None):
     threading.Thread(target=renderer, daemon=True).start()
 
     for entry in [
-        f"you are {BLUE}{SELF}{RESET} — tabichat (scrollback client)",
+        f"you are {BLUE}{SELF}{RESET} (nick from {NICK_SOURCE}) — tabichat (scrollback client)",
         f"buffer: {HISTORY_CAP} messages ({HISTORY_ENV}, /history <n>) — PgUp scrolls",
         "",
     ] + HELP:

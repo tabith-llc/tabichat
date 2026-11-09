@@ -26,6 +26,7 @@ The halves that matter most are the negative ones, per the project's truth-table
     demands the same invariant, and it is a deploy gate).
 """
 
+import inspect
 import os
 import pty
 import sys
@@ -311,6 +312,244 @@ sample = {"nick": "lane16", "message": "try `alembic upgrade head`", "id": "lane
 enc = tb.json.dumps(sample)
 says("the published payload is plain JSON text", enc, '"message": "try `alembic upgrade head`"')
 never("no markup is added to an outgoing message", enc, "\033[")
+
+# --- THE PER-NICK SENDER LEAF: what this client reads, and what it writes --------
+# Leg 1131. The broker was cut over to `require_certificate true` plus the per-nick ACL, which means a
+# client that still READS only `chat/<room>` is deaf and one that still WRITES only `chat/<room>` is
+# mute — and both look perfectly healthy on screen, because a refused write comes back rc 0 with no
+# error. These cells are the client's half of that. The broker's half is physical and lives in
+# `tools/test_tlsenv_paho.py` (the no-certificate cell): THIS file is a pure truth table and must stay
+# runnable with no docker and no broker, because `deploy-tabichat.sh` runs it in PYGATES on hosts that
+# have neither.
+def mqtt_match(filt, topic):
+    """MQTT 3.1.1 §4.7 one-level (`+`) filter match. TEST-LOCAL on purpose: the product never matches a
+    filter (the broker does), so this exists only to prove the topic the writer picks is really inside
+    the filter the reader subscribes. `#` is neither supported nor needed here."""
+    f, t = filt.split("/"), topic.split("/")
+    return len(f) == len(t) and all(a == b or a == "+" for a, b in zip(f, t))
+
+
+check("the read half names every sender leaf", tb.msg_wild("tabith"), "chat/tabith/msg/+")
+check("(i) a leaf write is INSIDE the filter the client subscribes",
+      mqtt_match(tb.msg_wild("tabith"), tb.msg_topic("tabith", "flash1")), True)
+check("(i) NEGATIVE: that filter does NOT match the flat topic, so the flat subscription must stay",
+      mqtt_match(tb.msg_wild("tabith"), "chat/tabith"), False)
+check("(i) NEGATIVE: nor a two-level leaf (`msg/a/b` is nobody's leaf)",
+      mqtt_match(tb.msg_wild("tabith"), "chat/tabith/msg/a/b"), False)
+check("(ii) the flat topic is still subscribed, and matches itself exactly",
+      mqtt_match("chat/tabith", "chat/tabith"), True)
+check("(ii) NEGATIVE: a leaf publish does NOT arrive on the flat subscription (one publish, one copy)",
+      mqtt_match("chat/tabith", "chat/tabith/msg/flash1"), False)
+check("an empty leaf refuses instead of aiming at a trailing separator",
+      tb.msg_topic("tabith", "!!!"), "")
+
+# AUTHORSHIP — broker-first, and leg 1120's word for the case the broker cannot place
+check("(i) on a sender leaf the TOPIC is the author",
+      tb.author_verdict("chat/tabith/msg/wren", "tabith", "wren"), (True, "wren", True, ""))
+check("(i) NEGATIVE: a leaf line whose payload names someone else is REFUSED, never re-labelled",
+      tb.author_verdict("chat/tabith/msg/wren", "tabith", "dust")[0], False)
+forged = tb.author_verdict("chat/tabith/msg/wren", "tabith", "dust")[3]
+says("and the refusal names the asserting topic", forged, "chat/tabith/msg/wren")
+says("and the name the payload claimed", forged, "dust")
+check("a leaf line with NO payload nick is delivered under the topic name",
+      tb.author_verdict("chat/tabith/msg/wren", "tabith", "")[:2], (True, "wren"))
+check("(ii) a FLAT line's name is typed text: delivered, and NOT verified",
+      tb.author_verdict("chat/tabith", "tabith", "wren"), (True, "wren", False, ""))
+check("(mark) the client uses leg 1120's word for that, byte for byte", tb.UNVERIFIED, " unverified")
+check("(mark) NEGATIVE: a flat verdict is never reported as verified",
+      tb.author_verdict("chat/tabith", "tabith", "wren")[2], False)
+
+# THE ID LEDGER + THE RENDERED LINE, driven through the real on_message
+
+
+class FakeMsg:
+    def __init__(self, topic, payload):
+        self.topic = topic
+        self.payload = payload.encode("utf-8")
+
+
+class FakeClient:
+    def publish(self, *a, **k):
+        raise AssertionError("reading a room line must not publish anything")
+
+
+SAVED = (tb.CLIENT, tb.ROOM, tb.TOPIC, tb.MSG_WILD, tb.PRESENCE, tb.CTL, tb.SELF, list(tb.SEEN_IDS))
+tb.CLIENT, tb.ROOM, tb.TOPIC = FakeClient(), "tabith", "chat/tabith"
+tb.PRESENCE, tb.CTL, tb.MSG_WILD = "chat/tabith/presence", "chat/tabith/_ctl", tb.msg_wild("tabith")
+tb.SELF = "flash1"
+
+
+def hear(topic, nick, text, mid):
+    tb.on_message(tb.CLIENT, None, FakeMsg(topic, tb.json.dumps(
+        {"nick": nick, "message": text, "id": mid, "ts": 1.0})))
+
+
+def room_lines(needle):
+    return [visible(e) for e in tb.ENTRIES if needle in visible(e)]
+
+
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+DUAL = tb.json.dumps({"nick": "wren", "message": "one id two copies", "id": "wren-77", "ts": 1.0})
+tb.on_message(tb.CLIENT, None, FakeMsg("chat/tabith/msg/wren", DUAL))   # the leaf copy
+tb.on_message(tb.CLIENT, None, FakeMsg("chat/tabith", DUAL))            # the same id, flat
+both = room_lines("one id two copies")
+check("(iii) a line that arrives on BOTH shapes is displayed ONCE", len(both), 1)
+check("(iii) and the copy kept is the broker-vouched one (no unverified mark)",
+      "unverified" in both[0], False)
+
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+hear("chat/tabith/msg/wren", "wren", "distinct one", "wren-80")
+hear("chat/tabith/msg/wren", "wren", "distinct two", "wren-81")
+check("(iii) NEGATIVE: two different ids are two lines", len(room_lines("distinct")), 2)
+
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+NO_ID = tb.json.dumps({"nick": "wren", "message": "no id at all", "ts": 1.0})
+tb.on_message(tb.CLIENT, None, FakeMsg("chat/tabith", NO_ID))
+tb.on_message(tb.CLIENT, None, FakeMsg("chat/tabith", NO_ID))
+check("(iii) NEGATIVE: an absent id is not a key, so the ledger never swallows the line",
+      len(room_lines("no id at all")), 2)
+
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+hear("chat/tabith", "wren", "flat only", "wren-90")
+check("(mark) a flat line reaches the reader marked unverified",
+      "wren unverified: flat only" in room_lines("flat only")[0], True)
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+hear("chat/tabith/msg/wren", "wren", "leaf only", "wren-91")
+check("(mark) NEGATIVE: a leaf line reaches it unmarked",
+      "wren: leaf only" in room_lines("leaf only")[0], True)
+
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+hear("chat/tabith/msg/wren", "dust", "forged body", "wren-92")
+check("(i) NEGATIVE: the forged line never reaches the reader", len(room_lines("forged body")), 0)
+check("and the drop is SAID on screen, not left silent",
+      "authorship conflict" in visible(tb.ENTRIES[-1]), True)
+
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+hear("chat/tabith/msg/flash1", "flash1", "my own echo", "flash1-99")
+check("echo prevention holds on the leaf too", len(room_lines("my own echo")), 0)
+
+# D-1 (leg 1135): THE ID AND THE SILENT DROP. The shipped builder is `<nick>-<seq>-<boot>`; a two-part
+# id repeats itself across two sessions of one sender because the sequence restarts at 0, and this
+# client's ledger keys on that string — so a restarted sender's next line would be swallowed.
+check("the id builder is the shipped 3-part shape (roommsg.ts:msgId)",
+      tb.msg_id("dust", 7, "ab12cd"), "dust-7-ab12cd")
+check("the boot tag is six hex chars at the shipped width", tb.boot_tag(lambda: 0.5), "080000")
+# The draw space is 0x100000 values, so the top of the range is 0xfffff — FIVE f's, zero-padded to the
+# six-char width. Same range and same padding as `roommsg.ts:bootTag`, which is the point of pinning it.
+check("NEGATIVE: the largest draw lands at the top of that range, padded not shortened",
+      tb.boot_tag(lambda: 1.0 - 2 ** -24), "0fffff")  # 1-2**-24 is the biggest a draw can be
+check("NEGATIVE: a zero draw is padded, not shortened", tb.boot_tag(lambda: 0.0), "000000")
+check("this run carries one tag, six hex chars", (len(tb.BOOT), all(c in "0123456789abcdef" for c in tb.BOOT)),
+      (6, True))
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+hear("chat/tabith/msg/dust", "dust", "restarted one", "dust-1-aaaaaa")
+hear("chat/tabith/msg/dust", "dust", "restarted two", "dust-1-bbbbbb")
+check("D-1 a RE-MINTED id from a restarted sender is displayed, not swallowed",
+      len(room_lines("restarted")), 2)
+reset_state(cap=500)
+tb.SEEN_IDS[:] = []
+hear("chat/tabith/msg/dust", "dust", "one message twice", "dust-9-cccccc")
+hear("chat/tabith/msg/dust", "dust", "one message twice", "dust-9-cccccc")
+check("NEGATIVE: the same id twice is still one line", len(room_lines("one message twice")), 1)
+check("D-1 and the duplicate drop is SAID on screen, not silent",
+      any("duplicate dropped" in visible(e) and "dust-9-cccccc" in visible(e) for e in tb.ENTRIES), True)
+
+src_oc = inspect.getsource(tb.on_connect)
+check("the client subscribes the flat room AND the leaf wildcard (dual read)",
+      ("client.subscribe(TOPIC)" in src_oc, "client.subscribe(MSG_WILD)" in src_oc), (True, True))
+check("NEGATIVE: the leaf subscription is guarded, so a stale empty filter is never subscribed",
+      "if MSG_WILD:" in src_oc, True)
+
+src_ts = inspect.getsource(tb.text_send)
+check("a send goes where write_plan says, and echoes THAT topic on screen",
+      ("write_plan(ROOM, SELF, NICK_SOURCE, TLS_PLAN, FLAT_SEND)" in src_ts, "{topic}" in src_ts),
+      (True, True))
+check("NEGATIVE: text_send no longer publishes to the flat TOPIC global",
+      "CLIENT.publish(\n            TOPIC," in src_ts, False)
+check("D-1 the client mints its id through msg_id with this run's boot tag",
+      "mid = msg_id(SELF, MSG_SEQ, BOOT)" in src_ts, True)
+check("NEGATIVE: and the two-part id that collides across sessions is gone",
+      'mid = f"{SELF}-{MSG_SEQ}"' in src_ts, False)
+
+tb.CLIENT, tb.ROOM, tb.TOPIC, tb.MSG_WILD = SAVED[0], SAVED[1], SAVED[2], SAVED[3]
+tb.PRESENCE, tb.CTL, tb.SELF = SAVED[4], SAVED[5], SAVED[6]
+tb.SEEN_IDS[:] = SAVED[7]
+
+# THE NICK IS AN OPERATOR CHOICE (item 4)
+check("(iv) --nick is taken verbatim, from --nick", tb.resolve_nick(cli="flash1"), ("flash1", "--nick", ""))
+check("(iv) MQTT_NICK is an operator input too", tb.resolve_nick(env={"MQTT_NICK": "dust"}), ("dust", "MQTT_NICK", ""))
+check("an explicit --nick outranks MQTT_NICK", tb.resolve_nick(cli="a", env={"MQTT_NICK": "b"}), ("a", "--nick", ""))
+check("MQTT_NICK outranks $USER", tb.resolve_nick(env={"MQTT_NICK": "b", "USER": "a"}), ("b", "MQTT_NICK", ""))
+check("$USER is a DISPLAY fallback, recorded as inferred", tb.resolve_nick(env={"USER": "dusty"})[1], "$USER")
+alt_raw, alt_src, alt_why = tb.resolve_nick(cli="Dusty Smith")
+check("(iv) a nick clean() would alter is REFUSED", alt_why != "", True)
+check("(iv) and the value comes back UNCHANGED — never rewritten onto the wire", alt_raw, "Dusty Smith")
+says("the refusal uses the extension's own case name", alt_why, "no topic-leaf-safe form")
+says("and names both doors to fix", alt_why, "--nick")
+says("and", alt_why, "MQTT_NICK")
+check("(iv) NEGATIVE: a 20-character nick is accepted", tb.resolve_nick(cli="n" * 20)[2], "")
+check("(iv) a 21-character nick is refused (clean() truncates at 20)", tb.resolve_nick(cli="n" * 21)[2] != "", True)
+check("(iv) an all-punctuation nick is refused", tb.resolve_nick(cli="!!!")[2] != "", True)
+check("NEGATIVE CONTROL: clean() would have borrowed the name \"user\"", tb.clean("!!!"), "user")
+
+# D-2 (leg 1135): THE GATE FIRES ON A CHOICE, NOT ON AN ACCOUNT NAME. An inferred value is a display
+# name; only a nick the operator named can be refused for a shape it cannot hold on the wire.
+check("D-2 an inferred dotted account name is NOT refused", tb.resolve_nick(env={"USER": "dusty.smith"}),
+      ("dusty.smith", "$USER", ""))
+check("D-2 an inferred spaced display name is NOT refused either",
+      tb.resolve_nick(env={"USER": "Dusty Smith"}), ("Dusty Smith", "$USER", ""))
+check("D-2 and the client still puts a leaf-safe DISPLAY form on the wire",
+      tb.clean(tb.resolve_nick(env={"USER": "dusty.smith"})[0]), "dustysmith")
+check("NEGATIVE: the SAME name chosen with --nick IS refused", tb.resolve_nick(cli="dusty.smith")[2] != "", True)
+check("NEGATIVE: and by MQTT_NICK too", tb.resolve_nick(env={"MQTT_NICK": "dusty.smith"})[2] != "", True)
+check("NEGATIVE: and the refused value still comes back unchanged", tb.resolve_nick(cli="dusty.smith")[0],
+      "dusty.smith")
+
+# WHERE A LINE ACTUALLY GOES, and what is said when it cannot go further (items 2 and B)
+PAIR = {"tls": True, "kwargs": {"certfile": "/x/cert.pem", "keyfile": "/x/key.pem"}}
+HALF = {"tls": True, "kwargs": {"certfile": "/x/cert.pem", "keyfile": None}}
+NO_PAIR = {"tls": True, "kwargs": {"ca_certs": "/x/ca.pem", "certfile": None, "keyfile": None}}
+PLAIN_PLAN = {"tls": False, "kwargs": {}}
+check("(v) a full pair + a chosen nick writes the sender leaf",
+      tb.write_plan("tabith", "dust", "MQTT_NICK", PAIR), ("chat/tabith/msg/dust", ""))
+check("(v) NEGATIVE: half a pair is not an identity", tb.has_client_identity(HALF), False)
+check("(v) NEGATIVE: a TLS plan with a CA and no certificate is not an identity",
+      tb.has_client_identity(NO_PAIR), False)
+check("(v) NEGATIVE: a plaintext plan is not an identity", tb.has_client_identity(PLAIN_PLAN), False)
+flat_t, flat_why = tb.write_plan("tabith", "dust", "MQTT_NICK", None)
+check("(v) with no certificate the write is the flat topic", flat_t, "chat/tabith")
+says("(v) and the absence is named by the certificate variable", flat_why, "MQTT_TLS_CERTFILE")
+says("(v) and by the key variable", flat_why, "MQTT_TLS_KEYFILE")
+says("(v) and by the leaf it could not reach", flat_why, "chat/tabith/msg/dust")
+check("(v) and it says an ACL entry is part of what is missing", "ACL" in flat_why, True)
+check("(v) and it does NOT pretend to mint or guess one", "will not invent" in flat_why, True)
+inf_t, inf_why = tb.write_plan("tabith", "dust", "$USER", PAIR)
+check("(v) NEGATIVE: a pair with an inferred nick still writes flat, and says why", inf_t, "chat/tabith")
+says("the inferred-nick line names the source", inf_why, "$USER")
+says("and names the doors", inf_why, "--nick")
+check("D-2 NEGATIVE: an inferred name is still no claim on a leaf, however it was sanitised",
+      tb.write_plan("tabith", "dustysmith", "$USER", PAIR)[0], "chat/tabith")
+says("D-2 and the write says so, naming the inferred source",
+     tb.write_plan("tabith", "dustysmith", "$USER", PAIR)[1], "$USER")
+sent_t, sent_why = tb.write_plan("tabith", "dust", "MQTT_NICK", PAIR, True)
+check("--flat-send keeps the flat write available on purpose", sent_t, "chat/tabith")
+says("NEGATIVE: and it is a stated choice, not the no-certificate case", sent_why, "--flat-send")
+
+join_entry = next((e for e in tb.HELP if e.startswith("/join")), "")
+check("the help list holds one entry per promise (a missing comma glues two and drops one)",
+      len(tb.HELP), 15)
+says("(docs) the /join entry names the leaf it writes", join_entry, "msg/<nick>")
+says("(docs) and the sender-leaf wildcard it reads", join_entry, "chat/<room>/msg/+")
+check("(docs) NEGATIVE: nothing was glued away — /names is still its own entry",
+      any(e.startswith("/names") for e in tb.HELP), True)
 
 print()
 if failed:
