@@ -918,14 +918,17 @@ def start_heartbeat(client):
     threading.Thread(target=heartbeat, args=(client,), daemon=True).start()
 
 
-def ack_id(msg_id, sender):
+def ack_id(target_msg_id, sender):
+    # THE PARAMETER IS A VALUE, NOT THE BUILDER. It used to be named `msg_id`, which shadowed the
+    # module-level `msg_id()` id builder (`:359`) for this whole body: legal while the body only reads the
+    # string, and a silent trap the moment anything here wants to reshape an id — it would be calling a str.
     c = CLIENT
-    if not (c and CTL and msg_id):
+    if not (c and CTL and target_msg_id):
         return
     try:
         c.publish(
             CTL,
-            json.dumps({"kind": "ack", "id": msg_id, "to": sender, "by": SELF, "ts": time.time()}),
+            json.dumps({"kind": "ack", "id": target_msg_id, "to": sender, "by": SELF, "ts": time.time()}),
         )
     except Exception:
         pass
