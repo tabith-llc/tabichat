@@ -346,9 +346,12 @@ armed renew), report the exact gate line that shut you (`laneadmin.ts` self-bran
 result), name the three options back to the lead (arm a remote renew / relaunch
 you with the flag / move the demo to a seat that has it), and HOLD.
 A RENEW THAT NEVER FIRES IS BETTER THAN A RENEW FORGED INTO EXISTENCE.
-The boot tag CHANGES across a real renew — that move, plus the fresh handoff under
-the NEW tag name, is the only observable that a self-renew happened; an "ARMED" or
-a room line is not proof.
+A renew re-mints the boot tag (`roommsg.ts:bootTag`), so a different tag on the seat's
+next room post, beside its own wake line, is the observable that a self-renew happened;
+an "ARMED" or a room line is not proof. The tag is a label, not the test — what admits a
+handoff is the seat plus that file's age against the session's own start
+(`ctxwarn.ts:pickResumeHandoff`) — and no seat can know the tag the boot after this one
+will mint, so there is nothing to compute and nothing to wait for.
 ```
 
 ### Remote lane administration — renew, compact, shutdown from outside a seat
@@ -386,10 +389,12 @@ node src/tools/lane_admin.mjs <by-nick> <target-nick> <renew|compact|shutdown>
 Exit codes: `0` taken · `1` refused · `2` usage · `3` no answer · `4` broker error
 (including no broker). **`0 taken` is `ARMED` or `RUN`, and both are outcomes of
 the lane's DECISION, not proof the session changed** — `ARMED` means the
-addressee took it and will run it at its next idle boundary. The only
-observable that a renew actually happened is the target's boot tag moving on
-its next post plus its own wake line. Arm once, then wait for the wake line —
-re-firing buys nothing. **`3` is the one that misleads:** "no answer" is
+addressee took it and will run it at its next idle boundary. an observable
+that a renew actually happened is the target's boot tag moving on its next post, beside
+its own wake line — but a tag never tells you whether a renew was ADMITTED, because
+admission reads the seat and the handoff's age, not the tag. Arm once, then wait for the
+wake line: the tag is random, so there is nothing to watch for, and re-firing buys
+nothing. **`3` is the one that misleads:** "no answer" is
 identical for
 a lane that refused, a lane that never received it, and a lane that is gone. **Do not
 infer an outcome from it — check `chat_read` scope `acks` for the receipt and
@@ -421,10 +426,13 @@ but it gates the FORCED-HANDOFF tool block, not this bar. So:
   not a review. Before destroying someone's session, look at
   the file they would resume from — its subject, not just its age and size. If it
   is thin, it is worse than absent: silence reads as permission.
-- **The RESUME filename carries a boot tag, and the tag CHANGES across a renew.** A
-  renewed seat's own handoff lives under a *new* name, which is why a second renew of
-  the same seat can correctly refuse until it writes again. That loop brake is a
-  feature; do not "fix" it by deleting or renaming handoffs.
+- **The RESUME filename carries a boot tag, and a renew re-mints it — so a new name is
+  how a fresh handoff is found, not why one is accepted.** `ctxwarn.ts:resumeFileRe`
+  matches any tag for that nick and `pickResumeHandoff` takes the newest by mtime, so a
+  sheet written under an earlier tag still clears the bar while it is fresh. A second
+  renew of the same seat correctly refuses until it writes again because a new session
+  starts with no handoff newer than its own start: the age is the brake, not the name.
+  That brake is a feature; do not "fix" it by deleting or renaming handoffs.
 ## Mechanism facts worth knowing
 
 - A mention for a BUSY lane normally queues behind that lane's entire
