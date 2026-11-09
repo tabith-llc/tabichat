@@ -327,4 +327,8 @@ console.log("\n== READ-ONLY IS A PROPERTY, CHECKED AFTER EVERY CASE ==");
 
 cleanup();
 console.log(`\n${failed > 0 ? `${failed} FAILED — the preflight does not agree with the gate it imports` : "all cases pass — the preflight answers exactly as the shipped gate answers, on the sheet, the dir, and the knobs"}`);
-process.exit(failed > 0 ? 1 : 0);
+// SET the status, never call process.exit at the top level: `test_exit_class.ts` exists because a gate that
+// exits kills the bun process the other gates are running in, which turns one red file into a silent short
+// list. The shipped tool under test DOES exit by name — it is a command an operator runs, not a gate loaded
+// into a shared process, and its exit code is the answer.
+process.exitCode = failed ? 1 : 0;
