@@ -26,9 +26,10 @@
 #
 # WHAT THIS FILE DELIBERATELY DOES NOT DO, in both directions.
 #   * It does not assert array LENGTHS. The interlock this leg hit is the reason:
-#     `test_secret_guard.sh` pins "the shell-gate array holds eight members across both forms", and any
-#     registration reddens that cell until someone re-derives the number by hand. A census that reads
-#     membership never needs re-deriving; a census that repeats a count does, every merge.
+#     `test_secret_guard.sh` pins the shell-gate array's member COUNT in prose ("the shell-gate array holds
+#     N members across both forms", N re-derived at every face that registers a gate), and any registration
+#     reddens that cell until someone re-derives the number by hand. A census that reads membership never
+#     needs re-deriving; a census that repeats a count does, every merge.
 #   * It does not run the deploy, and it rewrites nothing — which is what makes it safe to be a member of the
 #     array it censuses. `test_secret_guard.sh` is not, and stays on the exclusion list: it rewrites the gate
 #     arrays in a scratch clone and then runs the FULL shell stage through that clone, so as a member

@@ -662,20 +662,24 @@ member_count=$(shgate_members | grep -c .)
 # guess confirmed). The thirteenth is `test_mint_pki.sh`, the PKI minter's truth table, registered by the
 # same leg IN BOTH LISTS BELOW — the membership loop and the bun-run fold — because a member named in the
 # array and not in a list is a check those lists report green about a file they never looked at.
-# Re-derived in the tree that registers `test_cite_faces.sh`: 14, read by the same command in the same turn
-# this line was written. The fourteenth is the cite instrument's own truth table — `check_cite_faces.sh` has
-# been a member since iid 27 and nothing ran it, which is the hole leg 1165 closes — and it is named in BOTH
-# lists below for the reason stated one paragraph up.
-check "the shell-gate array holds fourteen members across both forms" "$member_count" "14"
-for gate in check_guard_armed.sh test_hook_chain.sh check_attributions.sh test_attribution_pins.sh test_gate_words.sh check_subject_armed.sh test_subject_guard.sh check_release_record.sh test_gate_coverage.sh test_deploy_pi_nm.sh test_paho_skip.sh check_cite_faces.sh test_mint_pki.sh test_cite_faces.sh; do
+
+# Re-derived in the MERGED tree that carries leg 1165 and leg 1171 together: 16, read by
+# `shgate_members | grep -c .` in this tree, not carried from either branch's own page. Each branch pinned its
+# own count against its own array (1165 said fourteen, 1171 said fifteen) and both were true of one face and
+# false of the union — which is the collision class the merge had to resolve rather than one side overruling
+# the other. The union registers THREE new members over the pre-merge fourteen: `test_cite_faces.sh` from
+# 1165, and `check_changelog_headings.sh` plus `test_changelog_headings.sh` from 1171.
+check "the shell-gate array holds sixteen members across both forms" "$member_count" "16"
+for gate in check_guard_armed.sh test_hook_chain.sh check_attributions.sh test_attribution_pins.sh test_gate_words.sh check_subject_armed.sh test_subject_guard.sh check_release_record.sh test_gate_coverage.sh test_deploy_pi_nm.sh test_paho_skip.sh check_cite_faces.sh test_mint_pki.sh test_cite_faces.sh check_changelog_headings.sh test_changelog_headings.sh; do
     one=$(shgate_members | grep -c "^${gate}$")
     check "  and $gate is individually present" "$one" "1"
 done
-# none of the fourteen is in the bun-run GATES array — the alternation below names all of them, so a shell gate
+# none of the sixteen is in the bun-run GATES array — the alternation below names all of them, so a shell gate
 # cannot be folded into the array whose interpreter cannot run one. Every member belongs in that
 # alternation: a name left out is a fold that prints a green zero instead of refusing.
-inbun=$(grep -Ec '^[[:space:]]*GATES=.*(check_guard_armed|check_attributions|test_attribution_pins|test_hook_chain|test_gate_words|check_subject_armed|test_subject_guard|check_release_record|test_gate_coverage|test_deploy_pi_nm|test_paho_skip|check_cite_faces|test_mint_pki|test_cite_faces)' "$DEP" || true)
-check "none of the fourteen is in the bun-run GATES array, which could not run a shell file" "$inbun" "0"
+inbun=$(grep -Ec '^[[:space:]]*GATES=.*(check_guard_armed|check_attributions|test_attribution_pins|test_hook_chain|test_gate_words|check_subject_armed|test_subject_guard|check_release_record|test_gate_coverage|test_deploy_pi_nm|test_paho_skip|check_cite_faces|test_mint_pki|check_changelog_headings|test_changelog_headings)' "$DEP" || true)
+check "none of the sixteen is in the bun-run GATES array, which could not run a shell file" "$inbun" "0"
+efs/remotes/colorado/feature/changelog-heading-order-gate-1171
 
 say "CLEANUP: no scratch, and no stray file in the real repo's worktree or git dir"
 cd "$REPO"

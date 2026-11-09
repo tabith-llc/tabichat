@@ -18,6 +18,7 @@
 - `docs/use.md` says plainly that the room journal is a window of the newest 500 lines (set with `MQTT_ROOMLOG_MAX_LINES`), not a full ledger, so a line missing from a journal is a question to ask rather than an answer to state (leg 1123)
 - `docs/broker/roster.txt` and `docs/broker/acl-supplementary.conf` — the PKI minter now reads its default nick list, and any grant for an identity that is not a chat seat, from tracked files, so regenerating the broker ACL can no longer delete an identity that was added by hand; `mint-tabichat-pki.sh` also gains `add-nick` and `add-leaf`, which sign one more client leaf against a CA that already exists instead of re-minting one (leg 1132)
 - The human client now proves its own write instead of claiming it: every line it sends is unproved until the broker hands that same line back, and the first one that does not prints `READ-ONLY` with the broker ACL entry to look for and says it again on the next line that cannot be confirmed — so a seat whose `user CN=<nick>` block is missing finds out in words rather than wondering why nobody in the room answered (leg 1146)
+- `src/tools/check_changelog_headings.sh` reads the part of this record a release is still writing — the `[Unreleased]` block and the newest numbered section — and stops a deploy when those six headings come out of order, appear twice, or are printed with nothing under them; older published sections are left exactly as they were written, because the ruling that names the six says history is not re-cut
 
 ### Changed
 
