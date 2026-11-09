@@ -692,11 +692,11 @@ check("PAIRED — the same instant in seconds sits BELOW the ceiling, which is w
 # regression would take — and the scan must name it. Without this pair the section above is a sentence that
 # happens to be true today.
 planted = CLI_SRC.replace('"ts": beat_ts()', '"ts": time.time()', 1)
-check("PLANT — reverting one publish site to time.time() reddens the scan (it names exactly one payload)",
-      len(unbeat(planted)), 1)
-check("and the payload it names is the seconds stamp, not some other site",
-      '"ts": time.time()' in unbeat(planted)[0], True)
-check("UNPLANTED — the same scan on the shipped source is clean, so the plant is the whole difference",
+check("PLANT — reverting one publish site adds exactly one named offender to the scan",
+      len(unbeat(planted)) - len(unbeat(CLI_SRC)), 1)
+check("and every payload the planted scan names is a seconds stamp, never an untouched beat",
+      [p for p in unbeat(planted) if '"ts": time.time()' not in p], [])
+check("UNPLANTED — the shipped source is clean under the same scan, so the plant is the whole difference",
       unbeat(CLI_SRC), [])
 
 print()
