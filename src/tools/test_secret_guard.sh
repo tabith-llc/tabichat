@@ -679,7 +679,6 @@ done
 # alternation: a name left out is a fold that prints a green zero instead of refusing.
 inbun=$(grep -Ec '^[[:space:]]*GATES=.*(check_guard_armed|check_attributions|test_attribution_pins|test_hook_chain|test_gate_words|check_subject_armed|test_subject_guard|check_release_record|test_gate_coverage|test_deploy_pi_nm|test_paho_skip|check_cite_faces|test_mint_pki|check_changelog_headings|test_changelog_headings)' "$DEP" || true)
 check "none of the sixteen is in the bun-run GATES array, which could not run a shell file" "$inbun" "0"
-efs/remotes/colorado/feature/changelog-heading-order-gate-1171
 
 say "CLEANUP: no scratch, and no stray file in the real repo's worktree or git dir"
 cd "$REPO"
