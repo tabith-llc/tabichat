@@ -81,7 +81,8 @@ say "THE SHIPPED RECORD IS THE POSITIVE CASE — the tree this gate ships beside
 rc=0; out=$(run "$REAL") || rc=$?
 check "  this tree's CHANGELOG.md passes the check" "$rc" "0"
 contains "$out" "headings: OK" "and it says so in words"
-contains "$out" "section=[Unreleased] heading=New features rank=1" "and prints the heading it read, so the pass is not silence"
+NEWEST=$(awk '/^## \[/{print $2; exit}' "$REAL")
+contains "$out" "section=$NEWEST heading=New features rank=1" "and prints the heading it read, so the pass is not silence"
 
 say "PLANTED CASES THAT MUST PASS"
 rc=0; out=$(run "$SCR/good.md") || rc=$?
