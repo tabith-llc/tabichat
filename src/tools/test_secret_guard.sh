@@ -649,21 +649,29 @@ member_count=$(shgate_members | grep -c .)
 # in the same turn as this edit, after the registration and before this line was edited — not a value
 # carried over from any branch or any dispatch page. Merge order decides it: a gate that lands after this
 # one makes it nine, and the next face re-derives it here.
-# Re-derived on this face: 12, read by the same command in the same turn this line was written. The
+# Re-derived at the face that wrote this line, `b7ea758` — its own subject is "the shell-gate guard
+# counted eleven members while twelve were registered", and the same command prints 12 there. Read in
+# the same turn this line was written. The
 # twelfth is `check_cite_faces.sh`, registered by the iid-27 leg and NEVER added to the two lists below
 # — so the individual-membership loop and the bun-run fold both printed a green answer about a member
 # they had never looked at, which is the exact failure this file says it exists to catch. Both lists now
 # name it, and the count is what the instrument prints here, not a value carried over from a branch.
-check "the shell-gate array holds twelve members across both forms" "$member_count" "12"
-for gate in check_guard_armed.sh test_hook_chain.sh check_attributions.sh test_attribution_pins.sh test_gate_words.sh check_subject_armed.sh test_subject_guard.sh check_release_record.sh test_gate_coverage.sh test_deploy_pi_nm.sh test_paho_skip.sh check_cite_faces.sh; do
+# Re-derived in the tree that landed as `72586e1`: 13, read by the same command in the same turn this
+# line was written (the run
+# printed `got '13', want '12'` before the number below moved, which is the instrument answering, not a
+# guess confirmed). The thirteenth is `test_mint_pki.sh`, the PKI minter's truth table, registered by the
+# same leg IN BOTH LISTS BELOW — the membership loop and the bun-run fold — because a member named in the
+# array and not in a list is a check those lists report green about a file they never looked at.
+check "the shell-gate array holds thirteen members across both forms" "$member_count" "13"
+for gate in check_guard_armed.sh test_hook_chain.sh check_attributions.sh test_attribution_pins.sh test_gate_words.sh check_subject_armed.sh test_subject_guard.sh check_release_record.sh test_gate_coverage.sh test_deploy_pi_nm.sh test_paho_skip.sh check_cite_faces.sh test_mint_pki.sh; do
     one=$(shgate_members | grep -c "^${gate}$")
     check "  and $gate is individually present" "$one" "1"
 done
-# none of the twelve is in the bun-run GATES array — the alternation below names all of them, so a shell gate
+# none of the thirteen is in the bun-run GATES array — the alternation below names all of them, so a shell gate
 # cannot be folded into the array whose interpreter cannot run one. Every member belongs in that
 # alternation: a name left out is a fold that prints a green zero instead of refusing.
-inbun=$(grep -Ec '^[[:space:]]*GATES=.*(check_guard_armed|check_attributions|test_attribution_pins|test_hook_chain|test_gate_words|check_subject_armed|test_subject_guard|check_release_record|test_gate_coverage|test_deploy_pi_nm|test_paho_skip|check_cite_faces)' "$DEP" || true)
-check "none of the twelve is in the bun-run GATES array, which could not run a shell file" "$inbun" "0"
+inbun=$(grep -Ec '^[[:space:]]*GATES=.*(check_guard_armed|check_attributions|test_attribution_pins|test_hook_chain|test_gate_words|check_subject_armed|test_subject_guard|check_release_record|test_gate_coverage|test_deploy_pi_nm|test_paho_skip|check_cite_faces|test_mint_pki)' "$DEP" || true)
+check "none of the thirteen is in the bun-run GATES array, which could not run a shell file" "$inbun" "0"
 
 say "CLEANUP: no scratch, and no stray file in the real repo's worktree or git dir"
 cd "$REPO"

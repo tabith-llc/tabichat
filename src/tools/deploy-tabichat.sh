@@ -347,6 +347,13 @@ if [ "$gates" = 1 ]; then
   # nowhere — because a cite that opens on the wrong release line is a writing problem a gate must not
   # settle by force. POSIX sh, and the loop's interpreter is `sh` (dash here), so `sh -n` was run on it.
   SHGATES+=(check_cite_faces.sh)
+  # leg 1132: the PKI minter's truth table joins the same stage, appended at the END for the same
+  # reason every line above keeps this shape — test_secret_guard.sh pins these registrations by exact
+  # text, and the census in test_gate_coverage.sh refuses any test_ file in this directory that no
+  # array names. It is a shell file, so it belongs here and not in GATES: bun parses a shell script as
+  # a module and stops at the first `case` arm. Cost, stated rather than discovered: six throwaway CA
+  # mints (RSA-4096), about 15 seconds, and it needs `openssl` on the deploying box.
+  SHGATES+=(test_mint_pki.sh)
   # AN EMPTY SHELL-GATE ARRAY IS NOT AN EMPTY RUN (the class a prior leg closed for FILES and LOADCHECK).
   # Measured here: every `SHGATES`/`SHGATES+=` registration line emptied to `()` gave rc 0, 29 gate lines,
   # zero shell gates, and `deployed set complete and identical` — ten checks deleted, nothing said so. A census
