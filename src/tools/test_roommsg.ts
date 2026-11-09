@@ -290,6 +290,31 @@ check(
   "stale",
 );
 check("an ms stamp is left exactly as it arrived", normBeatTsMs(now + 5), now + 5);
+// THE RENDERER IS NOT A SECOND FACE. `renderPeersBoard` is handed `Date.now()` at both of its call
+// sites (index.ts:1066 tool result, :2864 `/peers`), so it reads a ms clock beside records a human
+// client stamped in seconds — the split the requirement names. It is closed at the reading boundary
+// rather than by threading a new clock through the renderer: `renderPeers` asks `peerState`/`peerAge`
+// per record, and those normalize. This cell is the proof of that claim, not a paraphrase of it.
+check(
+  "THE BOARD ITSELF ranks a client's seconds beat against its own ms clock — online, not stale",
+  renderPeersBoard(
+    [["lane9", seen("online", s)], ["lane10", seen("online", now)]] as [string, PeerSeen][],
+    now,
+    "lane10",
+    "lane16-6",
+  ).includes("lane9"),
+  true,
+);
+check(
+  "and the row carries the unit note, so a converted stamp stays auditable on the board",
+  renderPeersBoard(
+    [["lane9", seen("online", s)], ["lane10", seen("online", now)]] as [string, PeerSeen][],
+    now,
+    "lane10",
+    "lane16-6",
+  ).includes("[s stamp, read as ms]"),
+  true,
+);
 check("fresh beat reads online", peerState(seen("online", now - 5_000), now), "online");
 check(
   "an unstamped record proves no liveness (stale, not online)",
