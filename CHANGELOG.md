@@ -13,11 +13,14 @@
 
 ### Added
 
-- `MQTT_ROOMLOG_MAX_AGE_DAYS` — the journal's age bound, unset for no bound and `0` for "nothing older than this boot", reported at boot when it drops lines like the count bound already is
-- `src/tools/test_retention.ts`, a physical check that shows an expiring retained leaf disappear at a real broker and one that carries no expiry survive the same wait
-- `docs/use.md` says plainly that the room journal is a window of the newest 500 lines (set with `MQTT_ROOMLOG_MAX_LINES`), not a full ledger, so a line missing from a journal is a question to ask rather than an answer to state
-- `docs/broker/roster.txt` and `docs/broker/acl-supplementary.conf` — the PKI minter now reads its default nick list, and any grant for an identity that is not a chat seat, from tracked files, so regenerating the broker ACL can no longer delete an identity that was added by hand; `mint-tabichat-pki.sh` also gains `add-nick` and `add-leaf`, which sign one more client leaf against a CA that already exists instead of re-minting one
-- The human client now proves its own write instead of claiming it: every line it sends is unproved until the broker hands that same line back, and the first one that does not prints `READ-ONLY` with the broker ACL entry to look for and says it again on the next line that cannot be confirmed — so a seat whose `user CN=<nick>` block is missing finds out in words rather than wondering why nobody in the room answered
+
+- `MQTT_ROOMLOG_MAX_AGE_DAYS` — the journal's age bound, unset for no bound and `0` for "nothing older than this boot", reported at boot when it drops lines like the count bound already is (leg 1124)
+- `src/tools/test_retention.ts`, a physical check that shows an expiring retained leaf disappear at a real broker and one that carries no expiry survive the same wait (leg 1124)
+- `docs/use.md` says plainly that the room journal is a window of the newest 500 lines (set with `MQTT_ROOMLOG_MAX_LINES`), not a full ledger, so a line missing from a journal is a question to ask rather than an answer to state (leg 1123)
+- `docs/broker/roster.txt` and `docs/broker/acl-supplementary.conf` — the PKI minter now reads its default nick list, and any grant for an identity that is not a chat seat, from tracked files, so regenerating the broker ACL can no longer delete an identity that was added by hand; `mint-tabichat-pki.sh` also gains `add-nick` and `add-leaf`, which sign one more client leaf against a CA that already exists instead of re-minting one (leg 1132)
+- The human client now proves its own write instead of claiming it: every line it sends is unproved until the broker hands that same line back, and the first one that does not prints `READ-ONLY` with the broker ACL entry to look for and says it again on the next line that cannot be confirmed — so a seat whose `user CN=<nick>` block is missing finds out in words rather than wondering why nobody in the room answered (leg 1146)
+- `preflight_renew.ts` answers one question before anyone arms a renew — would the handoff already on disk actually be admitted? — and running `bun ~/.pi/agent/extensions/tabichat/preflight_renew.ts` prints the directory it read and why, the sheet it picked, the seat's start it measured against, and the block-by-block answer, every one of those imported from the same check a renew applies rather than restated here, so the two cannot drift apart; it reads only, so it never writes or invents a handoff and never touches your broker.
+efs/remotes/colorado/feature/selfrenew-preflight-durable-1183
 
 ### Changed
 

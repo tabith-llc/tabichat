@@ -53,7 +53,16 @@ case "$EXT" in
     # reason the deploy is safe — a file that is not listed here never moves, so an omitted sibling
     # lands an index.ts importing a module that is not in the live directory, and every lane starting
     # after it dies at import. ORDER STILL MATTERS: leaf modules first, index.ts last.
-    FILES=(mention.ts ctxwarn.ts errnote.ts exitlog.ts roommsg.ts mentionq.ts laneadmin.ts broker.ts tlsopts.ts diaglog.ts roomlog.ts steer.ts index.ts)
+    #
+    # preflight_renew.ts joins the set for the reason every name above is here: it IMPORTS ctxwarn.ts,
+    # laneadmin.ts and broker.ts, and a file not listed in this array never moves, so a shipped tool that
+    # is absent from it would be a tool no installed box has. It sits in this directory rather than in
+    # src/tools/ because this array is the only thing the deployer copies, and `src/tools/` is not copied
+    # anywhere by this script — so "present after an install" and "lives beside the other tools" are not
+    # both available to one file, and the release asked for the first. Nothing imports it, so the closure
+    # check that walks `from "./x.ts"` edges from index.ts is untouched by its presence; it is a sibling
+    # that reads the gate, not a node the extension loads.
+    FILES=(mention.ts ctxwarn.ts errnote.ts exitlog.ts roommsg.ts mentionq.ts laneadmin.ts broker.ts tlsopts.ts diaglog.ts roomlog.ts steer.ts preflight_renew.ts index.ts)
     # diaglog.ts joins FILES for the reason recorded above: index.ts IMPORTS it, and a file
     # not listed here never moves — so the deploy would ship an index.ts whose first act is
     # `Cannot find module "./diaglog.ts"` on every lane. test_diaglog_routing.ts ASSERTS both halves
@@ -64,7 +73,12 @@ case "$EXT" in
     # derives the transitive closure instead of asserting one filename). Dependencies first:
     # roomlog.ts imports roommsg.ts only, so it sits right after diaglog.ts and before index.ts.
     LOADCHECK=(index.ts)
-    GATES=(test_mention.ts test_ctxwarn.ts test_errnote.ts test_exitlog.ts test_roommsg.ts test_notice_prefix.ts test_mentionq.ts test_laneadmin.ts test_broker.ts test_steer.ts test_ctx_scope.ts test_ctx_handle.ts test_tlsopts.ts test_diaglog_routing.ts test_roomlog.ts test_deploy_closure.ts typecheck_ext.ts)
+    # leg 1183: `test_preflight_renew.ts` joins the arm, inserted before the typecheck so the typecheck stays
+    # the last thing a deploy runs. It is a `.ts`, so it belongs here and not in the shell loop: `sh` cannot run
+    # it and bun cannot run a shell file — the same split recorded above for every other member of both arrays.
+    # Its acceptance test is AGREEMENT with the shipped gate on the same sheet in the same process, not a pass
+    # count: the tool it judges exists because a hand-written copy of that bar drifted in both directions.
+    GATES=(test_mention.ts test_ctxwarn.ts test_errnote.ts test_exitlog.ts test_roommsg.ts test_notice_prefix.ts test_mentionq.ts test_laneadmin.ts test_broker.ts test_steer.ts test_ctx_scope.ts test_ctx_handle.ts test_tlsopts.ts test_diaglog_routing.ts test_roomlog.ts test_deploy_closure.ts test_preflight_renew.ts typecheck_ext.ts)
     # NOT deploy gates, on purpose: these need docker and an image, and a deploy gate that depends on
     # host tooling is a gate that fails for reasons unrelated to the code (the same lesson that put
     # `env -u MQTT_LEAD_NICK` below). They are PHYSICAL checks, and this array is now READ, not just
