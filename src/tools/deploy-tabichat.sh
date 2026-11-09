@@ -354,6 +354,13 @@ if [ "$gates" = 1 ]; then
   # a module and stops at the first `case` arm. Cost, stated rather than discovered: six throwaway CA
   # mints (RSA-4096), about 15 seconds, and it needs `openssl` on the deploying box.
   SHGATES+=(test_mint_pki.sh)
+  # The minter's truth table is the one registered shell gate that needs `openssl`: it mints throwaway
+  # CAs, and its cells are about the minter, not about the box that deploys tabichat. Declared as a SET
+  # for the same reason PYGATES_NO_PAHO above is a set and not a filename — an exemption written against
+  # one name cannot be warned about when the array grows — and the deployer probes the capability itself
+  # rather than reading a gate's output to decide whether to skip it. A gate that did not run is NAMED
+  # in the run's own words; it is never counted as a pass.
+  SHGATES_NO_OPENSSL=(test_mint_pki.sh)
   # AN EMPTY SHELL-GATE ARRAY IS NOT AN EMPTY RUN (the class a prior leg closed for FILES and LOADCHECK).
   # Measured here: every `SHGATES`/`SHGATES+=` registration line emptied to `()` gave rc 0, 29 gate lines,
   # zero shell gates, and `deployed set complete and identical` — ten checks deleted, nothing said so. A census
@@ -391,6 +398,14 @@ if [ "$gates" = 1 ]; then
     if [ ! -f "$BASE/tools/$t" ]; then
       # file absent: say the file is absent and that the check therefore never ran
       die "$t is not green: the file src/tools/$t is not in this clone, so the check never ran."
+    fi
+    # The capability is probed here, once per gate, in the deployer's own words: a box without openssl
+    # deploys tabichat fine and simply cannot exercise a minter harness. Declared set, not a filename.
+    needssl=0
+    for k in "${SHGATES_NO_OPENSSL[@]}"; do [ "$k" = "$t" ] && needssl=1; done
+    if [ "$needssl" = 1 ] && ! command -v openssl >/dev/null 2>&1; then
+      say "WARNING: openssl is absent on this box — tools/$t did NOT RUN"
+      continue
     fi
     if out=$( (cd "$BASE" && env -u MQTT_LEAD_NICK sh "tools/$t" 2>&1) ); then
       continue

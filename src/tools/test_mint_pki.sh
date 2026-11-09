@@ -6,6 +6,12 @@
 # Truth table for docs/broker/mint-tabichat-pki.sh — the roster, the include, and the add paths.
 #   sh src/tools/test_mint_pki.sh        (exit 1 on any failure)
 #
+# A BOX THAT MINTS ITS PKI ELSEWHERE: when `openssl` is absent this file prints a `NOT APPLICABLE` line
+# naming the cells that did not run and exits 0, and src/tools/deploy-tabichat.sh says the same skip in
+# its own WARNING (`SHGATES_NO_OPENSSL`), because a deploy stopped by a minter harness on a machine that
+# never mints is the assumption 0.1.3 retired for the checks that came before it. Where openssl EXISTS
+# — every box on this fleet — every cell below runs, and any failure still exits 1.
+#
 # WHAT THIS FILE IS FOR. The generator writes `acl-generated.conf` from scratch on every run, so any
 # grant that is not in the roster and not in the include file is DELETED by the next regeneration —
 # silently, with the run printing nothing wrong. That is the defect this closes, and every cell below
@@ -48,7 +54,37 @@ count()    { if [ -f "$2" ]; then grep -c "$1" "$2" || true; else echo 0; fi; } 
 sh -n "$MINT" 2>/dev/null && ok "the generator parses under sh" || bad "the generator parses under sh" "syntax error"
 bash -n "$MINT" 2>/dev/null && ok "and under bash, since an operator may run it either way" \
   || bad "the generator parses under bash" "syntax error"
-command -v openssl >/dev/null 2>&1 || { printf 'FAIL  openssl is absent; every cell below would be a lie\n'; exit 1; }
+# ABSENT CAPABILITY IS A THIRD OUTCOME, not a failure and not a pass — and this repo already has the
+# words for it (check_guard_armed.sh, test_subject_guard.sh): name the face, say the cells did not run,
+# exit 0. The cells below mint throwaway CAs, so they need `openssl`; a box that deploys tabichat and
+# mints its PKI on another host does not have to carry it, and a deploy that stopped there would be this
+# check assuming it runs on the machine that wrote it — the assumption 0.1.3 retired for the checks that
+# came before it. What is NOT skipped: wherever openssl exists every cell below runs, this fleet's box
+# included, and a missing or unreadable generator above stays a refusal at rc 1.
+command -v openssl >/dev/null 2>&1 || { printf 'mint-pki: NOT APPLICABLE — no openssl on this box, so the minter cannot be exercised here; the mint cells below did NOT RUN. They are named, not counted as passes.\n' >&2; exit 0; }
+
+# THE ABSENT-CAPABILITY FACE, tested by this file on itself. The claim is about THIS file's exit status
+# where `openssl` does not exist, and the only instrument that reaches that branch is this file run under
+# a PATH with no openssl in it. The child stops at the probe, so the cell costs two parse lines and no
+# minting. A minimal bin dir rather than 1,200 symlinks: the probe needs only these to get that far.
+# THE CONTROL IS THE OTHER HALF: the same lookup in the normal environment must find openssl, or the
+# trimmed PATH proves nothing about the branch it aimed at.
+say "THE ABSENT-CAPABILITY FACE — NOT APPLICABLE and rc 0 where openssl is not; a pass here is not a skip"
+MINBIN=$(mktemp -d "${TMPDIR:-/tmp}/mintpki-minbin-XXXXXX") || bad "could not make a minimal bin dir" "mktemp failed"
+for b in sh bash dirname tr sed grep cut; do
+  p=$(command -v "$b" 2>/dev/null) && ln -s "$p" "$MINBIN/$b"
+done
+check "the trimmed bin dir carries no openssl entry" "$(ls "$MINBIN" | grep -c '^openssl$')" "0"
+check "CONTROL — this environment does find openssl" "$(command -v openssl >/dev/null 2>&1 && echo found || echo absent)" "found"
+look=$(env -i PATH="$MINBIN" sh -c 'command -v openssl >/dev/null 2>&1 && echo found || echo absent')
+check "and inside the trimmed PATH the lookup comes back empty" "$look" "absent"
+child=$(env -i PATH="$MINBIN" sh "$REPO/src/tools/test_mint_pki.sh" 2>&1); crc=$?
+contains "$child" "NOT APPLICABLE" "the child names the face it is on, in words"
+contains "$child" "did NOT RUN" "and says the cells below did not run"
+lacks "$child" "FAIL" "without printing a failure line"
+check "the child exits 0 — an absent capability does not stop a deploy" "$crc" "0"
+lacks "$child" "mint cells pass" "and a skip never claims the passes it did not produce"
+rm -rf "$MINBIN"
 
 SCR=$(mktemp -d "${TMPDIR:-/tmp}/mintpki-XXXXXX") || { printf 'no scratch dir\n' >&2; exit 1; }
 cleanup() { [ -n "${KEEP_SCR:-}" ] || rm -rf "$SCR"; }
