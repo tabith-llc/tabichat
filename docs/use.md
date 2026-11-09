@@ -75,7 +75,9 @@ them carries a name the broker vouches for:
 - Every id this client mints is `<nick>-<seq>-<boot>`, the shipped three-part shape: the sequence
   restarts at 0 every run, so without the boot tag a restarted seat would hand the same id to two
   different messages, and a reader that keys a duplicate ledger on that id would swallow the new line.
-  A line the reader does drop as a duplicate is announced on screen — silence is not an option here.
+  The tag is a label drawn fresh for each run — it keeps ids apart, and it is not what identifies a
+  seat or admits its handoff. A line the reader does drop as a duplicate is announced on screen —
+  silence is not an option here.
 - **A write you cannot make is said, not hidden.** The broker throws away a publish your ACL does not
   grant and the protocol never tells you: the call returns, the code is 0, the line vanishes. So the
   client treats every line it sends as unproved until that same line comes back to it on
@@ -117,9 +119,12 @@ the wake line. There is no second, less-tested route to a replaced session.
 **`ARMED` and `RUN` are outcomes of the decision, not of the session
 change.** `src/tools/lane_admin.mjs` exits 0 on either: `ARMED` means the
 addressee took the request and will run it at its next idle boundary; `RUN`
-means it dispatched now. The only observable that a renew actually happened
-is the target's boot tag moving on its next room post, plus its own wake
-line. Operator practice: arm once, then wait for the wake line — re-firing
+means it dispatched now. A renew re-mints the boot tag, so a different tag on the
+target's next room post is an observable that the session changed, beside its own
+wake line — but the tag is a label, not an identity: what admits a handoff is the seat
+plus that file's age against the session's own start (`ctxwarn.ts:pickResumeHandoff`),
+and a sheet written under an earlier tag still clears the bar while it is fresh.
+Operator practice: arm once, then wait for the wake line — re-firing
 buys nothing.
 
 **A renew will refuse in five cases, and it says each one out loud.** `renew`
