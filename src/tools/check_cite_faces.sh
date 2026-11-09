@@ -20,10 +20,29 @@
 # reddening a build on them would let a gate rewrite the meaning of text already history. One case is not
 # a judgment: a cite a reader cannot open at all. That exits 1.
 #
-# WHAT IT JUDGES. Any hex token of 7-40 characters bounded by non-hex text — a bare sha in prose, in a
-# table cell, or inside a code span — plus dotted versions with or without a prefix (`0.1.1`,
-# `pub-0.1.0`). A run of pure digits is left alone (a count, a date, a timestamp). A version that matches
-# no tag here is reported and passes: the packet writes the next heading before the tag exists.
+# WHAT IT JUDGES. A hex TOKEN of 7-40 characters that sits whole between non-alphanumeric text — a bare
+# sha in prose, in a table cell, or inside a code span — plus dotted versions with or without a prefix
+# (`0.1.1`, `pub-0.1.0`). TOKEN, not hex-run: the inside of a word is not a pointer, so `succeeded` is
+# prose while `91ee4b33` is a cite. Two prefixes are recognised because writers use them for pointers and
+# the boundary rule alone would hide them: `0x…` (the run is not hex, `x` sits in front of it) is read
+# after the prefix, and `sha-…` / `sha256-…` need no special case because `-` is already a boundary. A
+# run of pure digits is left alone (a count, a date, a timestamp), and so is a sha whose first characters
+# hold no letter at all. THE NAMED LIMIT: a whole English word that happens to be all-hex is a token and
+# IS judged — `defaced`, `effaced`, `acceded` are three in the system word list — so prose that wants to
+# survive needs to say `defaced (a91ee4b3)`, not a check that skips candidates; see src/tools/test_cite_faces.sh.
+#
+# THE SECOND NAMED LIMIT, written here so an operator reads it BEFORE trusting a zero (leg 1180): a hex run with
+# letters GLUED to it — `xxdeadbeefcafe1234`, `sha1deadbeefcafe` — is not a candidate, so nothing is read and the run
+# exits 0. It is a maximal alphanumeric token that is not wholly hex, and the maximal-token rule IS the fix: judging
+# it would mean judging a SUBSTRING of an alphanumeric word, which is precisely the shape that reddened a customer
+# deploy on the sentence "the run succeeded" — `cceeded` is wholly hex and seven long. No shape test separates the
+# two without a coin toss: "require a digit" silently misses letter-only shas, and that is a second narrowing wearing
+# the costume of a fix. So this file keeps one blind spot it can describe instead of trading it for one it cannot.
+# What still catches a fabricated pointer is the writing convention: a cite is written as a pointer — bare, backticked,
+# `0x`- or `sha-`prefixed, `= <sha>` — and each of those shapes is read and refused when it opens nowhere, pinned by
+# cells that RUN the refusal in a scratch clone. Symmetry, also pinned: a glued token whose run DOES resolve
+# (`xx<real sha>`) is unread too, and that is a pass, not a miss. Residual risk, plainly: a seat that buries a dead sha
+# inside an identifier gets silence from this gate — and a glued identifier is not a pointer a reader could open.
 #
 # WHAT IT CANNOT SEE FROM A CLONE, said so a zero is earned and not assumed. It reads the objects THIS
 # repository holds, so a cite pushed after your last fetch reads as NOWHERE: re-fetch the published
@@ -110,13 +129,21 @@ else
     done
 fi
 
-# Pass 1: every hex token bounded by non-hex characters that also carries at least one letter a-f — a
-# bare sha in prose, in a table cell, or inside a code span all read the same way. A run of pure digits is
+# Pass 1: every TOKEN that is wholly hex, 7-40 characters, and carries at least one letter a-f — a bare
+# sha in prose, in a table cell, or inside a code span all read the same way. Splitting is on the
+# ALPHANUMERIC boundary, not the hex boundary: `tr -c '0-9a-f'` also cut at s, u, x, g, so the tail of an
+# ordinary word (`succeeded` -> `cceeded`, `deadbeat` -> `deadbea`, `prefabbed` -> `efabbed`) came out as a
+# seven-character hex run, was asked of git, resolved nowhere, and refused the run with rc 1 — a red
+# customer deploy caused by prose, from a check that is an SHGATES member of the deploy loop. A token then
+# has to be hex whole, which is what a cite looks like. The `sed` undoes one prefix that the new boundary
+# would otherwise swallow: `0x91ee4b33` is one alphanumeric token, so its run is read after the `0x`. Bare
+# shas, `sha-` and `sha256-` prefixed ones, path- and paren-delimited ones all still arrive here —
+# src/tools/test_cite_faces.sh runs each shape and refuses if one stops being judged. A run of pure digits is
 # never judged as a pointer: that is a count, a date, or a millisecond timestamp, and the cost is a sha
 # whose first seven characters happen to hold no letter at all, which is named here as the limit.
 # Pass 2: dotted version names of three parts, with or without a prefix (`0.1.1`, `pub-0.1.0`,
 # `0.1.2-rc1`), anywhere in the text. Two-part numbers (`BUSL-1.1`, `3.12`) are not release names here.
-hex=$(tr 'A-F' 'a-f' < "$tmp" | tr -c '0-9a-f' '\n' | grep -Ex '[0-9a-f]{7,40}' | grep -E '[a-f]' || true)
+hex=$(tr 'A-F' 'a-f' < "$tmp" | tr -c 'a-z0-9' '\n' | sed -e 's/^0x//' | grep -Ex '[0-9a-f]{7,40}' | grep -E '[a-f]' || true)
 ver=$(grep -Eo '(pub-)?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?' "$tmp" || true)
 cites=$(printf '%s\n%s\n' "$hex" "$ver" | sed '/^$/d' | sort -u)
 if [ -z "$cites" ]; then

@@ -361,6 +361,14 @@ if [ "$gates" = 1 ]; then
   # rather than reading a gate's output to decide whether to skip it. A gate that did not run is NAMED
   # in the run's own words; it is never counted as a pass.
   SHGATES_NO_OPENSSL=(test_mint_pki.sh)
+  # leg 1165: the cite instrument's own truth table joins the stage, appended at the END in the shape every
+  # line above keeps. `check_cite_faces.sh` has been a member since the iid-27 leg, and NOTHING ran it — the
+  # only check that looked at that name was the one counting the array, which is how a word-tail read as a
+  # commit cite (`succeeded` -> `cceeded`) could sit in the deploy loop unrehearsed. A check no array names is
+  # run by nobody; a check that IS in the array but is never exercised is the same hole one step in. Shell
+  # file, so here and not in GATES: bun parses a shell script as a module. Cost, stated: it builds one
+  # throwaway `git init` face clone, no openssl, no docker, no network, under a tenth of a second.
+  SHGATES+=(test_cite_faces.sh)
   # AN EMPTY SHELL-GATE ARRAY IS NOT AN EMPTY RUN (the class a prior leg closed for FILES and LOADCHECK).
   # Measured here: every `SHGATES`/`SHGATES+=` registration line emptied to `()` gave rc 0, 29 gate lines,
   # zero shell gates, and `deployed set complete and identical` — ten checks deleted, nothing said so. A census
