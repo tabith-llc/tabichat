@@ -31,6 +31,16 @@
  *     order; the nick comes from the environment; the strings a refusal prints come from the
  *     functions that enforce the refusal.
  *
+ * THE PARSE INVARIANT, and it is an invariant because a field test paid for it: **a leg the operator
+ * tried to declare must never be silently unread, because unread means no comparison and no comparison
+ * prints ADMISSIBLE.** The first version of this parser matched whole tokens only, so `--leg=1184` — the
+ * ordinary `--flag=value` form — named no flag, fell through to `legDeclared=""`, and blessed a sheet the
+ * gate refuses; a trailing `--leg` with no value did the same. Both now refuse. So: one parse path for
+ * both forms, any `--` token that is not one of the three names is refused by the operator's own words,
+ * an empty value is refused, a flag in tail position is refused, a flag handed another flag as its value
+ * is refused, and a name given twice is refused. Falling through to "nothing was declared" is only ever
+ * the truth when nothing was declared.
+ *
  * ON `--since`, said because the difference matters to the person reading a verdict: the gate
  * compares the handoff's mtime against the start of the session that is about to be replaced. Run
  * by a seat about to renew, that is roughly now, and the default — this process's own start — is
@@ -67,22 +77,49 @@ const die = (msg: string): never => {
 };
 
 // ---- the arguments, and which source won for each of them -----------------------------------------
-const args = process.argv.slice(2);
-const flag = (name: string): string | null => {
-  const i = args.indexOf(name);
-  return i >= 0 && i + 1 < args.length ? args[i + 1] : null;
-};
-const unknown = args.filter((a, i) => !a.startsWith("--") && !args[i - 1]?.startsWith("--"));
-if (unknown.length > 0)
-  die(`I do not know what to do with ${unknown.join(" ")} — my flags are --leg, --since and --nick`);
+// ONE path for `--flag value` and `--flag=value`, so the two forms cannot drift apart later, and a
+// refusal for everything else. See the PARSE INVARIANT above: the wrong answer here is not an error
+// message, it is a bless.
+const FLAG_NAMES = ["--leg", "--since", "--nick"] as const;
+const parsed: Partial<Record<(typeof FLAG_NAMES)[number], string>> = {};
+{
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i];
+    if (!tok.startsWith("--"))
+      die(`I do not understand the argument ${JSON.stringify(tok)} — my flags are ${FLAG_NAMES.join(", ")}`);
+    const eq = tok.indexOf("=");
+    const name = (eq < 0 ? tok : tok.slice(0, eq)) as (typeof FLAG_NAMES)[number];
+    if (!FLAG_NAMES.includes(name))
+      die(`I do not know the flag ${JSON.stringify(tok)} — my flags are ${FLAG_NAMES.join(", ")}`);
+    if (parsed[name] !== undefined)
+      die(`${name} was given twice — once as ${JSON.stringify(parsed[name])} and again as ${JSON.stringify(tok)}. I will not pick which one you meant`);
+    if (eq >= 0) {
+      const v = tok.slice(eq + 1);
+      if (v === "")
+        die(`${JSON.stringify(tok)} names no value — give it one, drop the "=" and pass the next word, or leave the flag out so I can read the environment`);
+      parsed[name] = v;
+    } else {
+      const next = argv[i + 1];
+      if (next === undefined)
+        die(`${name} has no value — I will not guess one, because a guessed leg or start changes the answer, not just the wording`);
+      if (next.startsWith("--"))
+        die(`${name} cannot take ${JSON.stringify(next)} as its value — that is another flag`);
+      parsed[name] = next;
+      i++;
+    }
+  }
+}
 
-const legFlag = flag("--leg");
-const sinceFlag = flag("--since");
-const nickFlag = flag("--nick");
+const legFlag = parsed["--leg"] ?? null;
+const sinceFlag = parsed["--since"] ?? null;
+const nickFlag = parsed["--nick"] ?? null;
 if (legFlag !== null && !/^\d{1,7}$/.test(legFlag))
   die(`--leg wants digits: I got ${JSON.stringify(legFlag)}`);
 if (sinceFlag !== null && !/^\d{10,}$/.test(sinceFlag))
   die(`--since wants epoch milliseconds (the renewing seat's own start): I got ${JSON.stringify(sinceFlag)}`);
+if (nickFlag !== null && nickFlag.trim() === "")
+  die(`--nick names no seat — pass a nick or leave the flag out and I will read ${NICK_ENV}`);
 
 // The seat's start is read once, at launch, and printed: a verdict about age is meaningless without
 // saying which clock answered.

@@ -325,6 +325,42 @@ console.log("\n== READ-ONLY IS A PROPERTY, CHECKED AFTER EVERY CASE ==");
   check("and the real home config was never read or written by these cells", statSync(SITE_PLAIN).size > 0, true);
 }
 
+console.log("\n== CASE 9 — the parse door a field test found: `--flag=value` must not vanish ==");
+{
+  // The defect this case exists for: the first parser matched whole tokens only, so `--leg=1183` named no
+  // flag, fell through to legDeclared="", and printed ADMISSIBLE about a sheet the gate refuses. A bless
+  // where the gate refuses is the one outcome this tool is not allowed to produce, so every form is checked
+  // against the space form it is supposed to mean, and the invariant is asserted over the whole bad list.
+  const d = dirOf("nine");
+  sheet(d, `RESUME-${NICK}-nine99.md`, WRONGLEG, FRESH_SEC); // a sheet for leg 9999, declared here as 1183
+
+  const space = run(d, ["--since", String(STARTED), "--leg", "1183"]);
+  const equals = run(d, [`--since=${STARTED}`, "--leg=1183"]);
+  check("the gate refuses this sheet once the leg is declared", [space.pick, space.content, space.rc], ["ADMITTED", "REFUSED", 1]);
+  check("and the equals form gives the SAME answer, not a bless", [equals.pick, equals.content, equals.rc], ["ADMITTED", "REFUSED", 1]);
+  check("and it says which source won, in the form the operator typed", /leg=1183 source=--leg/.test(equals.out), true);
+  const nickEquals = run(d, [`--nick=${NICK}`, `--since=${STARTED}`, `--leg=1183`]);
+  check("every flag accepts the equals form", [nickEquals.rc, nickEquals.content], [1, "REFUSED"]);
+
+  const bad = [
+    ["empty --leg", [`--leg=`, `--since=${STARTED}`], "names no value"],
+    ["empty --nick", [`--nick=`], "names no value"],
+    ["empty --since", [`--since=`], "names no value"],
+    ["unknown flag", ["--nonsense", "1", `--leg=1183`], "I do not know the flag"],
+    ["near-miss flag name", ["--legs=1183"], "I do not know the flag"],
+    ["tail position", [`--since=${STARTED}`, "--leg"], "has no value"],
+    ["flag as a value", ["--leg", "--nick", NICK], "cannot take"],
+    ["given twice, mixed forms", ["--leg=1", "--leg", "2"], "was given twice"],
+    ["bare positional", ["surprise"], "I do not understand the argument"],
+  ] as const;
+  for (const [what, argv, words] of bad) {
+    const r = run(d, argv as unknown as string[]);
+    check(`refused: ${what} exits 2 and says it`, [r.rc, r.out.includes(words)], [2, true]);
+    // THE INVARIANT, one cell per form rather than a claim: a form this tool cannot parse never answers yes.
+    check(`  INVARIANT: ${what} never prints ADMISSIBLE with rc 0`, `${r.rc}/${/ADMISSIBLE/.test(r.out) && !/NOT ADMISSIBLE/.test(r.out)}`, "2/false");
+  }
+}
+
 cleanup();
 console.log(`\n${failed > 0 ? `${failed} FAILED — the preflight does not agree with the gate it imports` : "all cases pass — the preflight answers exactly as the shipped gate answers, on the sheet, the dir, and the knobs"}`);
 // SET the status, never call process.exit at the top level: `test_exit_class.ts` exists because a gate that
