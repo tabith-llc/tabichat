@@ -20,6 +20,14 @@
  * scratch directory is fingerprinted (names, sizes and mtimes) before and after each run, so a tool
  * that wrote, tidied or fabricated a sheet would refuse this harness rather than answer the question.
  *
+ * AND ONE CLAIM THIS FILE OWNS THAT IS NOT ABOUT THE TOOL'S BEHAVIOUR: the shipped file must still be
+ * SHIPPED. `test_deploy_closure.ts` derives its expectation by walking `from "./x.ts"` edges from
+ * `index.ts`, and nothing imports this tool — it is a command an operator runs, not a module the
+ * extension loads — so it is not in that closure, and its membership test can never name it. Removing
+ * the word from the deployer's `FILES` array left that gate printing ALL PASS at rc 0. The array is the
+ * only thing that knows the file exists, so CASE 8 asserts its own literal name against it and against
+ * the file on disk: an expectation stated independently of the thing it checks.
+ *
  * NO HOME DIRECTORY IS READ. Each case builds its own scratch RESUME dir under this run's tmpdir and
  * points `MQTT_CTX_RESUME_DIR` at it; where a case wants the site-config path, it writes its own file
  * and points `TABICHAT_CONFIG` at it. Nothing here depends on the box that runs it, and no case can
@@ -36,6 +44,7 @@ delete process.env.MQTT_CTX_RESUME_DIR;
 delete process.env.TABICHAT_CONFIG;
 
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -58,7 +67,8 @@ const {
   RESUME_LEG_SCAN_LINES,
 } = await import("../extensions/tabichat/ctxwarn.ts");
 
-const TOOL = join(import.meta.dir, "..", "extensions", "tabichat", "preflight_renew.ts");
+const EXT_DIR = join(import.meta.dir, "..", "extensions", "tabichat");
+const TOOL = join(EXT_DIR, "preflight_renew.ts");
 const NICK = "laneq"; // a name this run invents; no real seat is judged by these cells
 
 let failed = 0;
@@ -284,9 +294,44 @@ console.log("\n== CASE 7 — no sheet at all: the gate's own refusal, not a bare
   check("and it does not fabricate a sheet to answer with", fingerprint(d), "");
 }
 
+console.log("\n== CASE 8a — THE SHIPPING GUARD: stated independently of the array it checks ==");
+{
+  // Review item 1: `test_deploy_closure.ts` derives its expectation by walking `from "./x.ts"` edges from
+  // `index.ts`, and nothing imports this tool, so it is not in that closure and its membership test can
+  // never name it — deleting the word from `FILES` left that gate at ALL PASS rc 0. The array is the only
+  // thing that knows the file exists, so the check below names a LITERAL and reads the array as data.
+  // It runs ahead of CASE 8 because CASE 8 reads the tool's bytes: an absent file must arrive there as a
+  // named FAIL that says which half broke, not as an ENOENT stack that says nothing.
+  const dsrc = readFileSync(join(import.meta.dir, "deploy-tabichat.sh"), "utf8");
+  const arm = /\n\s*tabichat\)\n([\s\S]*?)\n\s*;;/.exec(dsrc);
+  if (!arm) throw new Error("deploy-tabichat.sh: no `tabichat)` arm found — the shipping guard is pointed at the wrong shape");
+  const filesLine = /^\s*FILES=\((.*)\)$/m.exec(arm[1]);
+  if (!filesLine) throw new Error("deploy-tabichat.sh: no FILES array in the tabichat arm — the shipping guard has nothing to read");
+  const shipped = filesLine[1].trim().split(/\s+/);
+  const HERE = "preflight_renew.ts";
+  const fileOnDisk = existsSync(join(EXT_DIR, HERE));
+  const listed = shipped.includes(HERE);
+  check(`shipping guard: ${HERE} exists in the extension dir`, fileOnDisk, true);
+  check(`shipping guard: ${HERE} is in the deployer's FILES by literal name (shipped ${shipped.length})`, listed, true);
+  check(
+    `and it NAMES which half broke — got "${[fileOnDisk, listed].map((x) => (x ? "ok" : "MISSING")).join("+")}"`,
+    [fileOnDisk, listed].map((x) => (x ? "ok" : "MISSING")).join("+"),
+    "ok+ok",
+  );
+  // WHY the closure gate can never answer this for us: it sees a file only if `index.ts` imports it.
+  // Pinned, because the moment that changes this guard is redundant and says so by going red.
+  check(
+    `and index.ts still does not import ${HERE} — so the closure walk cannot name it, which is why this guard exists`,
+    readFileSync(join(EXT_DIR, "index.ts"), "utf8").includes(`from "./${HERE}"`),
+    false,
+  );
+}
+
 console.log("\n== CASE 8 — the strings come from the gate, so a rewrite that stops calling it shows up ==");
 {
-  const src = readFileSync(TOOL, "utf8");
+  // "" rather than a throw: CASE 8a above already refused this file by name, and a stack here would
+  // replace that sentence with noise about the harness.
+  const src = existsSync(TOOL) ? readFileSync(TOOL, "utf8") : "";
   check("it imports the bar rather than restating it", /from "\.\/ctxwarn\.ts"/.test(src), true);
   check("and it calls pickResumeHandoff", /pickResumeHandoff\(/.test(src), true);
   check("and handoffContentVerdict", /handoffContentVerdict\(/.test(src), true);
@@ -297,6 +342,7 @@ console.log("\n== CASE 8 — the strings come from the gate, so a rewrite that s
   check("NEGATIVE GUARD: it never writes — no write call in the file", /writeFileSync|appendFileSync|mkdirSync|utimesSync|unlinkSync|rmSync/.test(src), false);
   check("NEGATIVE GUARD: it never opens a broker — no mqtt import, no socket", /from "mqtt"|createConnection|connect\(/.test(src), false);
   check("and the harness that runs it lives where the census will find it", /test_preflight_renew\.ts/.test(readFileSync(join(import.meta.dir, "deploy-tabichat.sh"), "utf8")), true);
+
 }
 
 console.log("\n== POSITIVE CONTROL — these cells can fail, and here is the proof ==");
@@ -360,6 +406,7 @@ console.log("\n== CASE 9 — the parse door a field test found: `--flag=value` m
     check(`  INVARIANT: ${what} never prints ADMISSIBLE with rc 0`, `${r.rc}/${/ADMISSIBLE/.test(r.out) && !/NOT ADMISSIBLE/.test(r.out)}`, "2/false");
   }
 }
+
 
 cleanup();
 console.log(`\n${failed > 0 ? `${failed} FAILED — the preflight does not agree with the gate it imports` : "all cases pass — the preflight answers exactly as the shipped gate answers, on the sheet, the dir, and the knobs"}`);
