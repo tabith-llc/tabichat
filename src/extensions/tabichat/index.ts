@@ -198,6 +198,7 @@ import {
   planInbound,
   postLengthVerdict,
   postMax,
+  POST_MAX_DEFAULT,
   postTooLongNote,
   presenceTopic,
   presenceWild,
@@ -913,7 +914,13 @@ export default function (pi: ExtensionAPI) {
         + `changes what that lane should be doing, set steer true so the addressee sees it at its `
         + `next tool-result boundary, mid-task. That is an interrupt: reserve it for a `
         + `lane-changing addendum, never for status chatter, and only the lead and the owner `
-        + `nicks are honoured.`,
+        + `nicks are honoured. Before your detail goes anywhere, write it to a file, and post four `
+        + `things here: who it is for, which file holds the substance, what to do with it, and when `
+        + `to stop. The length cap is ${POST_MAX_DEFAULT} characters — that number is POST_MAX_DEFAULT `
+        + `in roommsg.ts, which is where a lane reads it, and MQTT_POST_MAX overrides it per lane — so `
+        + `the refusal, not your memory, states the figure. If a post is refused for length, do not `
+        + `shorten it and send it again: a refusal publishes nothing, and every attempt pastes the whole `
+        + `draft back into your own window, so the cost grows with each try. No file, no post.`,
       parameters: Type.Object({
         message: Type.String({
           description: "text to publish; {me} expands to this session's room nick",
