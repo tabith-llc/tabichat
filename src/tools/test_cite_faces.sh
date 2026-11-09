@@ -95,6 +95,29 @@ judge "the panel was defaced before the run"
 check "THE NAMED LIMIT: a wholly-hex English token is still judged (rc=1)" "$RC" "1"
 contains "$OUT" "defaced" "and it is named rather than swallowed"
 
+printf '\n== the glued-hex limit leg 1180 names instead of hiding ==\n'
+# The shape the maximal-token rule cannot see: letters fused to a hex run with no boundary between them. Base
+# `42e3b7a` refused these; the 1165 rule reads nothing, so they pass. That trade is stated in the check's header
+# and pinned here, so a later widening must rename a cell and edit that header in the open rather than quietly
+# turn a silence into a refusal.
+judge "The run xxdeadbeefcafe1234 failed at the cut."
+check "LIMIT (glued, long): a fused 18-char token is not read (rc=0)" "$RC" "0"
+lacks "$OUT" "cite(s) read" "and it is not judged, so no count line prints"
+judge "The run sha1deadbeefcafe failed at the cut."
+check "LIMIT (glued, short): the same shape at 14 chars is not read (rc=0)" "$RC" "0"
+lacks "$OUT" "cite(s) read" "and the smaller fused form is not read either"
+# Symmetry, the half that keeps the limit honest: when the fused run OPENS a real face it is unread too, and
+# unread is a pass. A limit that hides only misses is not a limit, it is a bug wearing a name.
+judge "the note cites xx$REAL as the face"
+check "LIMIT (glued, resolving): a fused token around a REAL sha is not read either (rc=0)" "$RC" "0"
+# The same value in a cite shape IS read, and it opens: the coverage the limit leaves on the other side.
+judge "the note cites $REAL as the face"
+check "and that same value written as a pointer is still read (rc=0)" "$RC" "0"
+contains "$OUT" "cite(s) read" "so the limit is about the boundary, not about the value"
+# The regression this leg must not cause, asserted rather than hoped: the class 1165 closed stays closed.
+judge "the run succeeded and the gate printed all checks"
+check "LIMIT guard: prose that contains a wholly-hex substring is still not a cite (rc=0)" "$RC" "0"
+
 printf '\n== the states that report instead of refusing (unchanged by this leg) ==\n'
 EMPTY="$TMP/no-commits"; mkdir -p "$EMPTY"; git init -q "$EMPTY"
 OUT=$(printf 'cceeded\n' | CITE_REPO="$EMPTY" sh "$CHK" - 2>&1); RC=$?

@@ -31,6 +31,19 @@
 # IS judged — `defaced`, `effaced`, `acceded` are three in the system word list — so prose that wants to
 # survive needs to say `defaced (a91ee4b3)`, not a check that skips candidates; see src/tools/test_cite_faces.sh.
 #
+# THE SECOND NAMED LIMIT, written here so an operator reads it BEFORE trusting a zero (leg 1180): a hex run with
+# letters GLUED to it — `xxdeadbeefcafe1234`, `sha1deadbeefcafe` — is not a candidate, so nothing is read and the run
+# exits 0. It is a maximal alphanumeric token that is not wholly hex, and the maximal-token rule IS the fix: judging
+# it would mean judging a SUBSTRING of an alphanumeric word, which is precisely the shape that reddened a customer
+# deploy on the sentence "the run succeeded" — `cceeded` is wholly hex and seven long. No shape test separates the
+# two without a coin toss: "require a digit" silently misses letter-only shas, and that is a second narrowing wearing
+# the costume of a fix. So this file keeps one blind spot it can describe instead of trading it for one it cannot.
+# What still catches a fabricated pointer is the writing convention: a cite is written as a pointer — bare, backticked,
+# `0x`- or `sha-`prefixed, `= <sha>` — and each of those shapes is read and refused when it opens nowhere, pinned by
+# cells that RUN the refusal in a scratch clone. Symmetry, also pinned: a glued token whose run DOES resolve
+# (`xx<real sha>`) is unread too, and that is a pass, not a miss. Residual risk, plainly: a seat that buries a dead sha
+# inside an identifier gets silence from this gate — and a glued identifier is not a pointer a reader could open.
+#
 # WHAT IT CANNOT SEE FROM A CLONE, said so a zero is earned and not assumed. It reads the objects THIS
 # repository holds, so a cite pushed after your last fetch reads as NOWHERE: re-fetch the published
 # branches (the same `git fetch <remote> refs/heads/<branch>:refs/remotes/<remote>/<branch>` form the
