@@ -29,11 +29,14 @@ The halves that matter most are the negative ones, per the project's truth-table
 import inspect
 import os
 import pty
+import re
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import tabichat_cli as tb  # noqa: E402
+from presence import MS_CEILING_S, norm_ts  # noqa: E402
 
 failed = 0
 
@@ -642,6 +645,59 @@ says("leave_quiet resets the state with the room", src_lq, 'WRITE_STATE = "unkno
 says("and cancels the timer, so a stopped seat cannot print into the next room", src_lq,
      "WITNESS_TIMER.cancel()")
 check("the module says READ-ONLY, not a synonym the operator has to learn", "READ-ONLY" in UN, True)
+
+# --- THE WRITE SIDE OF THE PRESENCE UNIT (leg 1161, item D2 of the review of leg 1149) -------------
+# Everything above judges what the client PRINTS. Nothing judged what it STAMPS. The presence `ts` is
+# epoch-milliseconds on the wire (docs/wire-format.md) and the publish sites are what put a number in that
+# field; before this section `grep -rn beat_ts src/tools/` returned 0 hits across every harness in the repo,
+# so all three sites could go back to `time.time()` and the whole stage would stay green — a seconds stamp is
+# still a stamp, it simply loses every ranking it meets an ms record, which is the failure leg 1149 cured.
+# The scan is keyed to the SHAPE of a presence payload (a json.dumps dict carrying "status"), not to three
+# remembered line numbers, so a fourth publish site cannot slip past unnamed, and it reads the shipped module
+# through inspect rather than a copy of its text.
+STATUS_PAYLOAD = re.compile(r'json\.dumps\(\{[^{}]*"status"[^{}]*\}\)')
+SECONDS_PAYLOAD = re.compile(r'json\.dumps\(\{[^{}]*"(?:kind|message)"[^{}]*\}\)')
+CLI_SRC = inspect.getsource(tb)
+
+
+def unbeat(src):
+    """Every presence-shaped payload in `src` whose ts is not stamped by beat_ts()."""
+    return [p for p in STATUS_PAYLOAD.findall(src) if '"ts": beat_ts()' not in p]
+
+
+beats = STATUS_PAYLOAD.findall(CLI_SRC)
+secs = SECONDS_PAYLOAD.findall(CLI_SRC)
+# The count is asserted because a scan that found nothing is the vacuous case, and this file exists to refuse
+# reading one as a pass: three publish sites at this face (beat, quiet-leave, last-will).
+check("the presence-shape scan finds the publish sites it is judging (3 at this face)", len(beats), 3)
+check("every presence payload stamps its ts with beat_ts()", unbeat(CLI_SRC), [])
+# The split leg 1149 left alone ON PURPOSE, and docs/wire-format.md now names it: an ack receipt and a room
+# line are separate payload contracts, never ranked against a beat, so their ts stays epoch-seconds. Asserting
+# the direction stops this section from being satisfiable by stamping everything milliseconds.
+check("the payloads that stay epoch-seconds are the ack receipt and the room line (2 at this face)", len(secs), 2)
+check("NEITHER of them carries a beat stamp", [p for p in secs if "beat_ts()" in p], [])
+check("and both are stamped by the clock the doc names", [p for p in secs if '"ts": time.time()' not in p], [])
+# The helper itself, RUN rather than read: a call site named beat_ts() is only a millisecond stamp if the
+# helper makes one, and presence.py decides the unit by the ceiling alone, so a reverted helper would pass
+# every assertion above and fail here.
+now_ms = tb.beat_ts()
+check("a real beat is at or above the unit ceiling, so presence.py classifies it as milliseconds",
+      now_ms >= MS_CEILING_S, True)
+check("and it is this box's moment, not a fixed number that merely clears the ceiling",
+      abs(now_ms / 1000.0 - time.time()) < 5, True)
+check("and it reads down to this box's clock", norm_ts(now_ms), now_ms / 1000.0)
+check("PAIRED — the same instant in seconds sits BELOW the ceiling, which is what a reverted site would print",
+      norm_ts(now_ms / 1000.0), now_ms / 1000.0)
+# THE PLANT, both halves in one run. One site is reverted in a scratch copy of the source text — the shape a
+# regression would take — and the scan must name it. Without this pair the section above is a sentence that
+# happens to be true today.
+planted = CLI_SRC.replace('"ts": beat_ts()', '"ts": time.time()', 1)
+check("PLANT — reverting one publish site to time.time() reddens the scan (it names exactly one payload)",
+      len(unbeat(planted)), 1)
+check("and the payload it names is the seconds stamp, not some other site",
+      '"ts": time.time()' in unbeat(planted)[0], True)
+check("UNPLANTED — the same scan on the shipped source is clean, so the plant is the whole difference",
+      unbeat(CLI_SRC), [])
 
 print()
 if failed:
