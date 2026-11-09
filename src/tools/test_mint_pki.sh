@@ -266,6 +266,66 @@ else
   bad "roster nicks plus the included operator equals the block count" "nicks=$ship_nicks blocks=$ship_blocks"
 fi
 
+# THE NEXT-STEPS ECHO NAMES NO INSTALL DESTINATION FOR THE ACL, because a destination is a fact about
+# the broker host and a minting script cannot know it. The fleet's own in-service file is
+# /etc/mosquitto/acl-generated.conf and /etc/mosquitto/acl.conf does not exist there, so an echo that
+# prints one path as the answer teaches a customer to install a file the daemon never reads — a no-op
+# that reports success. The fix is the pointer: find the name in the broker's config, then run the
+# enumerate-and-diff written into docs/broker/README.md.
+echo_count() { printf '%s\n' "$1" | grep -c "$2" || true; }     # a zero count is an answer, not a crash
+say "THE NEXT-STEPS ECHO — no hard-coded ACL destination, and the pointer is present"
+check "the run's own words carry no /etc/mosquitto/acl destination (0)" "$(echo_count "$sd" '/etc/mosquitto/acl')" "0"
+contains "$sd" "acl-generated.conf" "the generated file still names itself"
+contains "$sd" "enumerate-and-diff" "and sends the operator to the step that decides the target"
+contains "$sd" "docs/broker/README.md" "naming the tracked page the step lives in"
+contains "$sd" "acl_file" "and the command that reads the name off the broker's own config"
+check "PAIRED — the certificate destination line was NOT swept up by the fix (1)" \
+  "$(echo_count "$sd" '/etc/mosquitto/certs/')" "1"
+# And the echo is checked for its own runtime noise, not just for its wording. The first draft of this
+# text put a backtick-quoted command inside DOUBLE QUOTES and the shell EXECUTED it while printing the
+# hint — the published line then carried a redirect error in the middle of it, and every wording cell
+# above still passed. That is the same trap root AGENTS.md names for commit messages, in an echo.
+lacks "$sd" "cannot open" "no shell error leaked into the printed next-steps"
+lacks "$sd" "command not found" "and no failed substitution either"
+check "every Next-steps line is a line the script wrote, not a shell complaint (0 bad lines)" \
+  "$(printf '%s\n' "$sd" | sed -n '/^Next steps/,/^$/p' | grep -Ec '(line [0-9]+: .*(cannot open|not found))' || true)" "0"
+
+# THE PLANT, and it is the cell that makes the line above a check rather than a wish: the old wording is
+# read out of the base face by sha, never retyped here, so a rewrite of the echo that put the destination
+# back reddens this by proving the predicate can fire on the real historical bytes.
+base_echo=$(git -C "$REPO" show 2a1d8047be65a8f5a7b8d172fe6233ec17521d40:docs/broker/mint-tabichat-pki.sh 2>/dev/null || true)
+if [ -n "$base_echo" ]; then
+  ran=$((ran + 1))
+  if [ "$(echo_count "$base_echo" '/etc/mosquitto/acl')" -gt 0 ]; then
+    ok "PLANTED — the echo at 2a1d804 does print the hard-coded destination, so the cell above can fail"
+  else
+    bad "PLANTED — the echo at 2a1d804 does print the hard-coded destination" "the base text read back carries no such line; the plant is not the plant"
+  fi
+else
+  ran=$((ran + 1))
+  printf 'note  NOT RUN — this face has no 2a1d804 object to read the old echo from (a git-init clone or an '
+  printf '      archive extraction), so the plant half did not run. It is named, not counted as a pass.\n'
+fi
+
+# THE SAME PLANT, RUN: a scratch copy of the generator with the base echo restored in it, minted into a
+# throwaway dir, and the predicate applied to what IT prints. This is the cell above shown red, from the
+# bytes a regression would actually produce rather than from a grep over history.
+if [ -n "$base_echo" ]; then
+  PLANT="$SCR/plant-mint.sh"
+  printf '%s\n' "$base_echo" > "$PLANT"
+  pr=$(TABICHAT_ROSTER="$ROSTER" TABICHAT_ACL_SUPPLEMENT="$SUPP" sh "$PLANT" -o "$SCR/plant-out" seat-a 2>&1); prc=$?
+  ran=$((ran + 1))
+  if [ "$(echo_count "$pr" '/etc/mosquitto/acl')" -gt 0 ]; then
+    ok "PLANTED AND RUN — the same predicate fires on a mint whose echo still prints the destination (the cell above is not decoration)"
+  else
+    bad "PLANTED AND RUN — the same predicate fires on a mint whose echo still prints the destination" "the planted run printed no such line; the predicate cannot fail"
+  fi
+  check "and the planted mint still succeeded (rc=0), so this is a wording check, not a run check" "$prc" "0"
+else
+  ran=$((ran + 1))
+  printf 'note  NOT RUN — the planted mint needs the base object too; named above, not passed.\n'
+fi
+
 printf '\n%s\n' "$([ "$failed" -gt 0 ] && printf '%d FAILED of %d cells' "$failed" "$ran" || printf 'all %d mint cells pass' "$ran")"
 [ "$failed" -gt 0 ] && exit 1
 exit 0
