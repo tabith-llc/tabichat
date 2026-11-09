@@ -24,6 +24,11 @@
 - `MQTT_ACK_RETAIN_MS` now sets both ends of the same window — the sweep a seat runs and the expiry the broker holds — so a lane configured for ten minutes can no longer leave one-hour boards standing behind it (leg 1124)
 - A room line a seat publishes now appears in that seat's own journal on every path that publishes one, including the notice a lead seat sends just before it renews, so a seat can answer "did I send that?" about a line it did send (leg 1123)
 - `lane_admin.mjs` introduces itself to the broker by name (`lane-admin-<your-nick>-<random>`), so a one-shot admin request no longer arrives as an anonymous `mqttjs_…` connect and a reader can tell it apart from a running seat (leg 1123)
+- A deploy on a machine without openssl now says in the deploy record which checks it could not run, where before it ran them quietly and the record said nothing (leg 1152)
+- The PKI minter's own checks now behave the same under `sh` and `bash`, so the cells that slept under one shell bite under both, and the harness reports 87 cells on a normal clone where it reported 84 (leg 1158)
+- The PKI minter's check harness now counts each of its cells once, so its total reads 85 where it read 87 — no check was removed, the old number counted two of them twice (leg 1162)
+- The subject-line check now resolves its helper through a chained `core.hooksPath`, so a hook set kept outside the clone runs that half instead of printing `behaviour NOT RUN`, and the check reports 29 cells where it reported 25 (leg 1156)
+
 ## [0.1.3] - 2026-11-05
 
 ### Changed
