@@ -54,9 +54,16 @@ count()    { if [ -f "$2" ]; then grep -c "$1" "$2" || true; else echo 0; fi; } 
 sh -n "$MINT" 2>/dev/null && ok "the generator parses under sh" || bad "the generator parses under sh" "syntax error"
 bash -n "$MINT" 2>/dev/null && ok "and under bash, since an operator may run it either way" \
   || bad "the generator parses under bash" "syntax error"
-# ABSENT CAPABILITY IS A THIRD OUTCOME, not a failure and not a pass — and this repo already has the
-# words for it (check_guard_armed.sh, test_subject_guard.sh): name the face, say the cells did not run,
-# exit 0. The cells below mint throwaway CAs, so they need `openssl`, and this gate no longer stops a
+# ABSENT CAPABILITY IS A THIRD OUTCOME, not a failure and not a pass — and this repo has the words for it
+# (check_guard_armed.sh, test_subject_guard.sh): name the face, say the cells did not run, exit 0. That exit
+# 0 CARRIES A CONDITION, and the two named checks do not both hold it. `test_subject_guard.sh` prints NOT
+# APPLICABLE and exits 0 where the face carries no subject helper to copy: it answers the half it can and
+# names the half that did not run. `check_guard_armed.sh` answers 0 only where it can answer at all — armed,
+# inside a work tree. With no work tree, with no `.githooks/pre-commit` in it, or with no hook path for git
+# to name, it prints NOT ARMED and exits 1. That is the right refusal for a check whose subject is the hook
+# surface itself, and it is not a precedent for exiting 0 on an absent capability. This file claims the first
+# shape, not the second: the capability it names is its own, and the cells that did not run are named there.
+# The cells below mint throwaway CAs, so they need `openssl`, and this gate no longer stops a
 # deploy at the SHELL stage for want of it — a deploy that stopped here would be this check assuming it
 # runs on the machine that wrote it, the assumption 0.1.3 retired for the checks before it.
 #
