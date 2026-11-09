@@ -56,11 +56,18 @@ bash -n "$MINT" 2>/dev/null && ok "and under bash, since an operator may run it 
   || bad "the generator parses under bash" "syntax error"
 # ABSENT CAPABILITY IS A THIRD OUTCOME, not a failure and not a pass — and this repo already has the
 # words for it (check_guard_armed.sh, test_subject_guard.sh): name the face, say the cells did not run,
-# exit 0. The cells below mint throwaway CAs, so they need `openssl`; a box that deploys tabichat and
-# mints its PKI on another host does not have to carry it, and a deploy that stopped there would be this
-# check assuming it runs on the machine that wrote it — the assumption 0.1.3 retired for the checks that
-# came before it. What is NOT skipped: wherever openssl exists every cell below runs, this fleet's box
-# included, and a missing or unreadable generator above stays a refusal at rc 1.
+# exit 0. The cells below mint throwaway CAs, so they need `openssl`, and this gate no longer stops a
+# deploy at the SHELL stage for want of it — a deploy that stopped here would be this check assuming it
+# runs on the machine that wrote it, the assumption 0.1.3 retired for the checks before it.
+#
+# WHAT THIS DOES NOT CLAIM: a box that deploys tabichat and mints its PKI elsewhere still cannot finish a
+# deploy on this branch alone. The stage order is GATES -> SHGATES -> PYGATES
+# (`src/tools/deploy-tabichat.sh:236`, `:394`, `:426`), so the shell stage is reached FIRST and the run
+# then stops at `src/tools/test_tlsenv.py:214`, which names the same binary and refuses. That python-side
+# capability question is its own leg, tracked by the fact row
+# `F-deploy-stage-required-openssl-since-the-shipped-tag`; nothing in this file claims the deploy is green
+# without `openssl`. What is NOT skipped either way: wherever `openssl` exists every cell below runs,
+# this fleet's box included, and a missing or unreadable generator above stays a refusal at rc 1.
 command -v openssl >/dev/null 2>&1 || { printf 'mint-pki: NOT APPLICABLE — no openssl on this box, so the minter cannot be exercised here; the mint cells below did NOT RUN. They are named, not counted as passes.\n' >&2; exit 0; }
 
 # THE ABSENT-CAPABILITY FACE, tested by this file on itself. The claim is about THIS file's exit status

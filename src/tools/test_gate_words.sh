@@ -236,16 +236,17 @@ build_noopenssl_bin() {
   rm -f "$d/openssl"
   printf '%s' "$d"
 }
-# Trim THIS CLONE's shell-gate array to two names: the declared no-openssl gate and one ordinary gate,
-# so a CASE 7 run measures the loop's decision in seconds. The emptiness guard at the array site needs
-# at least one member, which is why the ordinary gate stays in rather than the array going empty.
 # Trim THIS CLONE's arrays for the CASE 7 faces: the shell-gate array down to two names — the declared
 # no-openssl gate and one ordinary gate — and the other gate arrays emptied, the way
-# src/tools/test_paho_skip.sh empties the arrays it is not about. Scope, and it is not a convenience:
-# a python gate registered at main (`test_tlsenv.py:214`) calls `subprocess.run(["openssl", …])` to mint
-# its own throwaway cert, so on a PATH with no openssl it crashes first and the deploy never reaches the
-# shell stage this cell is about. That gate's own capability question is NOT this leg's and is reported
-# separately; here the arrays are emptied so the loop's decision is measured alone.
+# src/tools/test_paho_skip.sh empties the arrays it is not about. Why the emptying, stated as measured:
+# the stage order in the deployer is GATES -> SHGATES -> PYGATES (`src/tools/deploy-tabichat.sh:236`,
+# `:394`, `:426`), so on a PATH with no `openssl` the shell stage IS reached, and first — its
+# `WARNING: … did NOT RUN` line prints — and the run then stops later at
+# `src/tools/test_tlsenv.py:214`, which names the same binary (`FileNotFoundError`, rc 1). PYGATES is
+# emptied here so that unrelated stop does not decide THIS cell's exit code; it is not because the shell
+# stage is unreachable, and that gate's own capability question is a separate leg
+# (`F-deploy-stage-required-openssl-since-the-shipped-tag`). The emptiness guard at the array site needs
+# at least one shell member, which is why one ordinary gate stays in rather than the array going empty.
 trim_shgates_ssl() { # $1 = a clone's deploy-tabichat.sh
   python3 - "$1" <<'PY' || return 1
 import sys
