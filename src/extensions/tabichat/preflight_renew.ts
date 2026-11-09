@@ -41,6 +41,17 @@
  * is refused, and a name given twice is refused. Falling through to "nothing was declared" is only ever
  * the truth when nothing was declared.
  *
+ * THE UNIT OF `--since`, and it is a bound rather than a hint, because an unbounded clock opens a
+ * quiet door: a value is read as epoch MILLISECONDS and nothing else, and a value that cannot be one
+ * is refused at the flag. A ten-digit paste is a legal epoch SECONDS reading — `date +%s` prints ten
+ * digits — and read as milliseconds it names a "now" in January 1970, which makes every sheet younger
+ * than nothing and older than everything, so the age bar ADMITS whatever it finds. The same instant
+ * said two ways, one ADMISSIBLE and one refused, is that defect; the tool refuses the first, answers
+ * with the second, and prints the date it read in both cases so no reader has to trust a bare number.
+ * No silent re-scaling: a tool that guesses whether you meant seconds or milliseconds is the guess
+ * that produced the defect. The bounds are exported, and the cells pin each one from just inside and
+ * just outside, so widening one is an edit that says so.
+ *
  * ON `--since`, said because the difference matters to the person reading a verdict: the gate
  * compares the handoff's mtime against the start of the session that is about to be replaced. Run
  * by a seat about to renew, that is roughly now, and the default — this process's own start — is
@@ -118,6 +129,37 @@ if (legFlag !== null && !/^\d{1,7}$/.test(legFlag))
   die(`--leg wants digits: I got ${JSON.stringify(legFlag)}`);
 if (sinceFlag !== null && !/^\d{10,}$/.test(sinceFlag))
   die(`--since wants epoch milliseconds (the renewing seat's own start): I got ${JSON.stringify(sinceFlag)}`);
+// The two bounds of `--since`, as numbers the cells can pin: neither is a secret, and neither is
+// restated in the test file. `as const` narrows them to their literal types, which is what lets the
+// ceiling refer to a floor that is declared two lines above it.
+export const SINCE_MIN_MS = 1_000_000_000_000 as const; // 2001-09-09T01:46:40Z — below this a value is not ms-scale
+export const SINCE_MAX_AHEAD_MS = 86_400_000 as const; // one day: a seat's start is in the PAST, skew is small
+const sinceIso = (ms: number): string => new Date(ms).toISOString();
+if (sinceFlag !== null) {
+  const v = Number(sinceFlag);
+  // A digit string long enough to fall between two representable milliseconds is not a measurement, and
+  // one long enough to overflow becomes `NaN`, which compares false against BOTH bounds and would sail
+  // through a floor-and-ceiling check that assumed the number existed. Refused by name, before either.
+  if (!Number.isSafeInteger(v))
+    die(
+      `--since ${sinceFlag} is not a number this tool can name: read as milliseconds it lands on ${v} or ` +
+        `worse, past the largest integer milliseconds can hold (${2 ** 53}). I will not round it, because ` +
+        `the rounding is the guess that produced the defect.`,
+    );
+  if (v < SINCE_MIN_MS)
+    die(
+      `--since ${sinceFlag} is ${v} ms — that parses as ${sinceIso(v)}, which is not a seat's start. ` +
+        `I read ${JSON.stringify(sinceFlag)} as epoch MILLISECONDS and I will not re-scale it: if it is "date +%s", ` +
+        `say $(( $(date +%s) * 1000 )).`,
+    );
+  const ceiling = Date.now() + SINCE_MAX_AHEAD_MS;
+  if (v > ceiling)
+    die(
+      `--since ${sinceFlag} is ${v} ms — that parses as ${sinceIso(v)}, more than ${SINCE_MAX_AHEAD_MS} ms past ` +
+        `now (${sinceIso(ceiling)}). A start that far ahead makes every sheet STALE and answers a question ` +
+        `nobody asked; pass the renewing seat's own start.`,
+    );
+}
 if (nickFlag !== null && nickFlag.trim() === "")
   die(`--nick names no seat — pass a nick or leave the flag out and I will read ${NICK_ENV}`);
 
@@ -157,7 +199,7 @@ const dir = resolution.dir as string;
 
 console.log(`preflight: dir=${dir} source=${resolution.source}`);
 console.log(
-  `preflight: nick=${nick} source=${nickFlag !== null ? "--nick" : NICK_ENV} · leg=${leg === "" ? "(none)" : leg} source=${legSource} · started=${startedAtMs} (${sinceSource})`,
+  `preflight: nick=${nick} source=${nickFlag !== null ? "--nick" : NICK_ENV} · leg=${leg === "" ? "(none)" : leg} source=${legSource} · started=${startedAtMs} (${sinceSource}) parsed=${sinceIso(startedAtMs)}`,
 );
 
 // ---- read the directory, hand the gate what it asks for ------------------------------------------

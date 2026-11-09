@@ -71,6 +71,19 @@ const EXT_DIR = join(import.meta.dir, "..", "extensions", "tabichat");
 const TOOL = join(EXT_DIR, "preflight_renew.ts");
 const NICK = "laneq"; // a name this run invents; no real seat is judged by these cells
 
+/**
+ * One exported numeric constant of the tool, read out of its BYTES. This does not `import` the tool:
+ * that file runs its whole body at top level, so loading it would read a real RESUME dir and then
+ * `process.exit` this harness — the read of the file is the only safe way to ask it what it declared.
+ * It refuses rather than yielding `undefined`, because a cell comparing against a silent `undefined`
+ * is a green row about nothing.
+ */
+const numConst = (name: string, src: string = readFileSync(TOOL, "utf8")): number => {
+  const m = new RegExp(`^export const ${name} = ([\\d_]+)`, "m").exec(src);
+  if (!m) throw new Error(`${"preflight_renew.ts"}: no numeric export named ${name} — the reader is pointed at the wrong shape`);
+  return Number(m[1].replace(/_/g, ""));
+};
+
 let failed = 0;
 const check = (name: string, got: unknown, want: unknown) => {
   const g = JSON.stringify(got);
@@ -265,6 +278,8 @@ console.log("\n== CASE 5 — the knobs are the whole configuration: nothing is g
   check("a non-numeric --leg is usage, not a guess", junk.rc, 2);
   const badSince = run(d, ["--since", "yesterday"]);
   check("and a non-epoch --since is usage too", badSince.rc, 2);
+  // It still refuses after the unit bounds landed below, and CASE 10 pins WHY a 10-digit
+  // epoch-seconds value now takes this exit code where it used to take 0.
   const extra = run(d, ["--leg", "1183", "surprise"]);
   check("an argument this tool does not know is refused rather than ignored", extra.rc, 2);
 }
@@ -407,6 +422,69 @@ console.log("\n== CASE 9 — the parse door a field test found: `--flag=value` m
   }
 }
 
+
+console.log("\n== CASE 10 — the `--since` unit door: a value that cannot be epoch milliseconds is refused ==");
+{
+  // The defect: `/^\d{10,}$/` accepted a 10-digit value, and 10 digits is what `date +%s` prints. Read as
+  // milliseconds it names a "now" in January 1970, so every sheet is older than nothing and the age bar
+  // admits whatever it finds — a bless where the gate refuses, reached by a door the shipped gate does
+  // not share (the gate takes a NUMBER, so it cannot see that the number was meant as seconds). Hence
+  // this file owns the bound, and hence the bound is pinned from both sides rather than asserted.
+  const d = dirOf("ten");
+  sheet(d, `RESUME-${NICK}-ten10.md`, COMPLETE, FRESH_SEC);
+  const minMs = numConst("SINCE_MIN_MS");
+  const maxAhead = numConst("SINCE_MAX_AHEAD_MS");
+  const sec = Math.floor(Date.now() / 1000); // 10 digits — exactly what an operator pastes
+  const msNow = sec * 1000;
+
+  const s = run(d, ["--since", String(sec), "--leg", "1183"]);
+  const m = run(d, ["--since", String(msNow), "--leg", "1183"]);
+  check("the SAME INSTANT in seconds is refused at rc 2", s.rc, 2);
+  check("the same instant in milliseconds is answered, not refused", [m.rc === 2, /started=/.test(m.out)], [false, true]);
+  check("NEGATIVE: the seconds form never prints ADMISSIBLE", /ADMISSIBLE/.test(s.out), false);
+  check("and it prints the date the value parses as, so the reader sees 1970", /1970-01-\d\dT/.test(s.out), true);
+  check("and it says seconds explicitly, and names the multiplication, and says it will not re-scale", [s.out.includes("epoch MILLISECONDS"), s.out.includes("* 1000"), s.out.includes("not re-scale")], [true, true, true]);
+  check("NEGATIVE: the ms form is NOT re-scaled to make the seconds value work — the number it echoes is the number it was handed", m.out.includes(`started=${msNow} `), true);
+  check("and the ms form prints a parsed date in the present, not in 1970", /parsed=20\d\d-/.test(m.out), true);
+
+  // Both bounds, pinned from just inside and just outside, so neither is a one-sided check. NOTE the
+  // values: a ceiling probe has to be a LEGAL SHAPE (13 digits) or it is refused by the `\d{10,}` shape
+  // guard upstream and the cell reports on a door it never reached — that trap was found here, by a
+  // `maxAhead`-sized value that came back with the shape refusal, not the ceiling one.
+  const nowMs = Date.now();
+  const justUnder = run(d, ["--since", String(minMs - 1), "--leg", "1183"]);
+  const justOver = run(d, ["--since", String(nowMs + maxAhead + 1_000), "--leg", "1183"]);
+  check(`just under the floor (${minMs - 1}) is refused at rc 2`, justUnder.rc, 2);
+  check(`just over the ceiling, in a legal ${String(nowMs + maxAhead + 1_000).length}-digit shape, is refused at rc 2`, justOver.rc, 2);
+  check("and the ceiling refusal says PAST and prints the date it parsed", [justOver.out.includes("ms past"), justOver.out.includes("that parses as")], [true, true]);
+  const secMs = run(d, ["--since", String(sec * 1000), "--leg", "1183"]);
+  check("the refusal's own recipe answers: `$(date +%s)` x 1000 is ACCEPTED at the same instant, unread and un-rescaled", [secMs.rc === 2, secMs.out.includes(`started=${sec * 1000} (`)], [false, true]);
+  const tooShort = run(d, ["--since", "87400000", "--leg", "1183"]);
+  check("a value with too few digits is refused by the shape guard, naming the unit", [tooShort.rc, tooShort.out.includes("wants epoch milliseconds")], [2, true]);
+  const centurySec = run(d, ["--since", String(4102444800 * 1000), "--leg", "1183"]); // 2100-01-01 as epoch seconds, scaled once
+  check("and a 13-digit ms-scale value years ahead is refused by the ceiling, with the date it parsed", [centurySec.rc, centurySec.out.includes("2100-01-01"), centurySec.out.includes("ms past")], [2, true, true]);
+  const overflow = run(d, ["--since", "41024448000000000000", "--leg", "1183"]);
+  check("and a value past the largest integer milliseconds can hold is named, not silently re-scaled", [overflow.rc, overflow.out.includes("9007199254740992")], [2, true]);
+  const atFloor = run(d, ["--since", String(minMs), "--leg", "1183"]);
+  const insideCeiling = run(d, ["--since", String(nowMs + maxAhead - 1_000), "--leg", "1183"]);
+  check("the floor itself is a legal millisecond value — the door is a unit check, not a size check", [atFloor.rc, /started=1000000000000 /.test(atFloor.out)], [0, true]);
+  check("and the ceiling, 1s short of it, is answered too", insideCeiling.rc === 2, false);
+
+  // The invariant, asserted over the whole bad list rather than claimed: no `--since` this tool cannot
+  // place on a calendar ever answers the question the operator asked.
+  for (const bad of [String(sec), String(minMs - 1), String(nowMs + maxAhead + 1_000), "9999999999", "41024448000000000000", "17942449201234567", "87400000", "4102444800000"]) {
+    const r = run(d, ["--since", bad, "--leg", "1183"]);
+    check(`  INVARIANT: --since ${bad} exits 2 and never prints ADMISSIBLE`, `${r.rc}/${/ADMISSIBLE/.test(r.out) && !/NOT ADMISSIBLE/.test(r.out)}`, "2/false");
+  }
+
+  // POSITIVE CONTROL for this case: the same dir, the same leg, two starts one minute apart — the sheet
+  // is stamped at FRESH_SEC, which sits between them, so the ONLY thing that changes the answer is the
+  // value under test. A unit bound that silently broke every accepted value would show up here as a
+  // run that answers 2 twice.
+  const before = run(d, ["--since", String(Math.round(STARTED) - 60_000), "--leg", "1183"]);
+  const after = run(d, ["--since", String(Math.round(STARTED) + 60_000), "--leg", "1183"]);
+  check(`the accepted path still discriminates: the same sheet answers ${before.rc} and ${after.rc} across its own mtime`, [before.rc, after.rc], [0, 1]);
+}
 
 cleanup();
 console.log(`\n${failed > 0 ? `${failed} FAILED — the preflight does not agree with the gate it imports` : "all cases pass — the preflight answers exactly as the shipped gate answers, on the sheet, the dir, and the knobs"}`);
