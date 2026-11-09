@@ -63,6 +63,13 @@ THE TWO TOPIC SHAPES — what this client reads, and which one it writes
     shown marked `unverified` — that name is text the sender typed, not an identity the broker vouched
     for. `--flat-send` keeps the flat write available on purpose: a room whose ACL has not migrated
     needs it, and it is then a choice the operator made rather than a fallback that happened to them.
+    PROVES IT BY WITNESS, NEVER BY CLAIM: a QoS 0 publish the broker throws away is not an error — the
+    call succeeds, `wait_for_publish` returns, the exit code is 0 and nothing appears anywhere. So this
+    client treats every line it sends as UNPROVED until the broker hands that same id back to it on
+    `chat/<room>/msg/+`, which is the one answer the protocol does give. A write that does not come back
+    within `WITNESS_S` seconds prints `READ-ONLY` with the ACL entry to look for, and says it again on
+    the next line that cannot be confirmed. A transport that cannot answer the question at all is
+    reported as `unknown` — never as a pass, never as a refusal.
 
 MARKDOWN-LITE, and the deliberate limit (whether markdown is worth it at all is a real question): the room
 stays BYTE-FOR-BYTE PLAIN TEXT on the wire — no markup is ever sent, and the agent-side cap rule
@@ -360,6 +367,51 @@ def msg_id(nick, seq, boot):
     return f"{nick}-{seq}-{boot}"
 
 
+WITNESS_S = 5.0        # how long a self-written line is given to come back from the broker
+
+
+def witness_seen(pending, topic, mid):
+    """True when the line coming back IS the line we just sent. Exact (topic, id) only: a different
+    topic is somebody else's write, and a different id is a different message."""
+    return bool(pending) and pending[0] == mid and pending[1] == topic
+
+
+def pending_expired(pending, now, limit=WITNESS_S):
+    """Has the witness window run out? `now` is passed in, so the boundary is testable without sleeping."""
+    return bool(pending) and (now - pending[2]) >= limit
+
+
+def write_state_line(state, room, nick, topic):
+    """What the operator is told, per state. Three states, three different sentences — an ungranted
+    write and an unanswerable transport are NOT the same fact, and `unknown` must never read as `ok`.
+
+    Returns "" only for the state that needs no warning: a write the broker handed back.
+    """
+    leaf = topic and topic != f"chat/{room}"
+    if state == "granted":
+        return (
+            f"write confirmed: your own line came back on {topic} — this broker is accepting writes "
+            "from this seat, so the name on it is one the certificate carried"
+        )
+    if state == "unconfirmed":
+        return (
+            f"READ-ONLY: your line went out on {topic} and never came back, and nothing you type now "
+            f"reaches the room. A refused write is silent by protocol (rc 0, no error), so this is the "
+            f"only signal you will get. What to check: an ACL entry for this nick on this broker — "
+            f"`user CN={nick}` granting `topic readwrite {topic}`"
+            + ("" if leaf else f" (this seat is writing the flat room topic, not its leaf: {msg_wild(room)} is where a granted name lands)")
+            + "."
+        )
+    if state == "unknown":
+        return (
+            f"write path NOT YET PROVED: nothing has been sent on {topic} since this join, so whether "
+            "this broker accepts this seat's writes is unknown — the first line you send is what answers "
+            "it, and if it does not come back this seat will say so here, in words you can act on"
+        )
+    # A state this file does not know is not a pass and not a refusal either: it is said as itself.
+    return f"write path UNKNOWN: this client cannot classify state {state!r} — treat it as unproved"
+
+
 def resolve_nick(cli=None, env=None):
     """(nick, source, refusal). An operator-chosen roster nick first; a refusal, never a rewrite.
 
@@ -438,6 +490,9 @@ ACKS: list[tuple[float, str, str, str]] = []
 MSG_SEQ = 0
 HB_S = 30.0
 BOOT = boot_tag()             # this run's tag in every id it mints (see msg_id)
+WRITE_STATE = "unknown"       # unknown | granted | unconfirmed — proved by witness, never asserted
+PENDING_WRITE = None          # (id, topic, sent_at) of the last write not yet witnessed
+WITNESS_TIMER = None          # the threading.Timer that says READ-ONLY when the window closes
 LAST_BYTE = None
 _RENDERER_RUNNING = True
 
@@ -983,6 +1038,18 @@ def on_message(client, userdata, msg):
             note(f"{ts()} [!] authorship note: {why}")
         sender = author or "unknown"
         if sender == SELF:
+            # THE WITNESS. The broker delivering a line back to the seat that wrote it is the ONLY
+            # answer MQTT 3.1.1 gives about an ACL refusal, so this is where a write stops being a
+            # claim. It has to be read before echo-prevention drops the line as "mine".
+            global WRITE_STATE, PENDING_WRITE, WITNESS_TIMER
+            if witness_seen(PENDING_WRITE, msg.topic, data.get("id", "")):
+                if WITNESS_TIMER:
+                    WITNESS_TIMER.cancel()
+                    WITNESS_TIMER = None
+                PENDING_WRITE = None
+                if WRITE_STATE != "granted":
+                    note(f"{ts()} [ok] {write_state_line('granted', ROOM, SELF, msg.topic)}")
+                WRITE_STATE = "granted"
             return
         # ONE MESSAGE, ONE LINE: a line can still reach this client on BOTH shapes — a re-delivery
         # across a reconnect, or a sender that writes the flat topic and the leaf — and the flat
@@ -1049,6 +1116,12 @@ def make_client(seq, plan=None):
 
 def leave_quiet():
     global CLIENT, ROOM, TOPIC, MSG_WILD, PRESENCE, PRESENCE_W, PRESENCE_SELF, CTL
+    global WRITE_STATE, PENDING_WRITE, WITNESS_TIMER
+    WRITE_STATE = "unknown"
+    PENDING_WRITE = None
+    if WITNESS_TIMER:
+        WITNESS_TIMER.cancel()
+        WITNESS_TIMER = None
     c = CLIENT
     in_room = bool(ROOM and TOPIC and PRESENCE_SELF)
     self_topic = PRESENCE_SELF
@@ -1125,12 +1198,15 @@ def do_join(room_name):
         MSG_WILD = msg_wild(room)
         wtopic, wsays = write_plan(room, SELF, NICK_SOURCE, TLS_PLAN, FLAT_SEND)
         note(f"{ts()} joining {TOPIC} — reading {TOPIC} and {MSG_WILD}")
-        note(
-            f"{ts()} writing {wtopic}"
-            + (" — the broker vouches for this name" if wtopic != TOPIC else "")
-        )
+        # THE WRITE PATH IS NOT ASSERTED HERE. The banner this replaces claimed the broker stood
+        # behind the name before this seat had written anything, and that claim is exactly what hid a
+        # seat whose ACL block is missing. The witness on the first real line is what earns the words.
+        # (A cell in tools/test_tabichat_cli.py pins that the old wording is gone from this function.)
+        note(f"{ts()} writing {wtopic} — unproved until one of your lines comes back")
         if wsays:
             note(f"{ts()} [!] {wsays}")
+        else:
+            note(f"{ts()} [?] {write_state_line('unknown', room, SELF, wtopic)}")
         c = make_client(SEQ, TLS_PLAN)
         SEQ += 1
         c.will_set(
@@ -1155,8 +1231,30 @@ def do_join(room_name):
 
 # --- commands -----------------------------------------------------------------
 
+def mark_unconfirmed(now=None):
+    """Say it when it is learned: a write whose witness window has closed without an answer.
+
+    Called twice on purpose — by the timer at the moment the window closes, and again from the NEXT send,
+    so a second silent line is not possible. One sentence, built in `write_state_line`, never two vocabularies.
+    """
+    global WRITE_STATE
+    at = time.time() if now is None else now
+    if not pending_expired(PENDING_WRITE, at):
+        return False
+    WRITE_STATE = "unconfirmed"
+    note(f"{ts()} [!] {write_state_line(WRITE_STATE, ROOM, SELF, PENDING_WRITE[1])}")
+    return True
+
+
+def report_witness():
+    """The timer trampoline. It answers the window, not the room: a pending write that is gone is a no-op."""
+    global WITNESS_TIMER
+    WITNESS_TIMER = None
+    mark_unconfirmed()
+
+
 def text_send(text):
-    global MSG_SEQ
+    global MSG_SEQ, PENDING_WRITE, WITNESS_TIMER
     if CLIENT is None or not ROOM:
         note(f"{ts()} [!] not in a room — /connect then /join <room>")
         return
@@ -1173,6 +1271,9 @@ def text_send(text):
     # topic stays available (--flat-send, or no certificate yet). Either way the echo names the topic
     # the line ACTUALLY went on — a wrong-topic write is otherwise silent, rc 0, nothing delivered.
     topic, _ = write_plan(ROOM, SELF, NICK_SOURCE, TLS_PLAN, FLAT_SEND)
+    # A previous line may have gone unanswered. Say that BEFORE adding another, so a second vanished
+    # message cannot stack silently on the first.
+    mark_unconfirmed()
     try:
         info = CLIENT.publish(
             topic,
@@ -1182,6 +1283,14 @@ def text_send(text):
     except Exception as e:
         note(f"{ts()} [!] send failed: {e}")
         return
+    # THE WINDOW OPENS. rc 0 and a returned wait_for_publish prove the SOCKET took the bytes, not that
+    # the broker kept them; only the line coming back on our own subscription settles that.
+    PENDING_WRITE = (mid, topic, time.time())
+    if WITNESS_TIMER:
+        WITNESS_TIMER.cancel()
+    WITNESS_TIMER = threading.Timer(WITNESS_S, report_witness)
+    WITNESS_TIMER.daemon = True
+    WITNESS_TIMER.start()
     note(f"{ts()} {BLUE}{SELF}{RESET}: {text} {DIM}\u2192 {topic}{RESET}")
 
 
