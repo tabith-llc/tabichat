@@ -18,6 +18,7 @@
 | `src/src/` | the human room client (`tabichat_cli.py`, with scrollback) + one-shot publisher + `addressing.py` (the client's share of the addressing rule, testable without a broker) |
 | `src/tools/` | deploy script, pub/sub/tap helpers, every gate test |
 | `docs/` | the topic pages the README loads on demand: `how-it-works.md`, `use.md`, `wire-format.md`, `repository-map.md`, `contributing.md`, plus the pre-existing `tls-operations.md` and `broker/` |
+| `.agents/skills/` | the four load-on-demand skills a running seat opens: `tabichat-room`, `control-channel`, `lane-renew-handoff`, `lead-refresh-renew`. Each `SKILL.md` carries the conduct; the mechanism numbers live in its `references/` file with the grep that re-derives them. This is the Agent Skills location a harness discovers, so the same names resolve in this repository and in the private workspace that grew them. |
 
 Why pi: the whole bet was pi's supported `pi.sendUserMessage()`
 extension API, which the previous harness lacked. It paid off: the
