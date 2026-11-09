@@ -12,7 +12,15 @@
 - delivery receipts for addressed messages go on `chat/<room>/_ctl`
   (never in the room itself)
 - presence is one retained record per nick on
-  `chat/<room>/presence/<nick>`, heartbeat-controlled
+  `chat/<room>/presence/<nick>`, heartbeat-controlled. The contract for its `ts` is **epoch
+  milliseconds** — `Date.now()` on the seat side, and the human client stamps the same unit. It is a
+  field of its own: the `ts` on a room line and the `ts` on a delivery receipt are separate payload
+  contracts and are not ranked against a beat.
+  Both reading faces (the seat's `roommsg.ts`, the client's `presence.py`) take a stamp that cannot be
+  milliseconds, read it as the other unit, and **say so in the row** — `[s stamp, read as ms]` /
+  `[ms stamp, read as ms]` — because a conversion that leaves no trace cannot be audited afterwards.
+  A stamp that still cannot be ranked after that reads `stale`, never `online`: the unrankable branch is
+  the guard, not the bug.
 - **room lines are NOT retained, while receipts and presence ARE** — that
   asymmetry is the mechanism: a client that subscribes after a publish gets the
   paperwork of the conversation and never the conversation. The client-side

@@ -64,6 +64,7 @@ import {
   peerRecordWins,
   peerState,
   peerAge,
+  normBeatTsMs,
   renderPeersBoard,
   PEERS_INSTRUMENT,
   presenceTopic,
@@ -249,6 +250,46 @@ check(
 check("newer stamp wins", peerRecordWins(seen("online", 500), seen("offline", 600)), true);
 check("older stamp is refused", peerRecordWins(seen("online", 600), seen("offline", 500)), false);
 check("unstamped may replace unstamped", peerRecordWins(seen("online", 0), seen("offline", 0)), true);
+
+// --- ONE FIELD, TWO UNITS (leg 1149) ---------------------------------------
+// `now` on this face is 1e12, a ms clock. `s` below is the same moment as a human client published it
+// in 2026 — epoch seconds — which read as 1970 against this clock: every ranking lost, the last-will
+// included, so a CLI peer could not show online to a seat and could not clear their own row on exit.
+// The unit is settled once, in normBeatTsMs, on the way into every comparison below — never at a call
+// site — and the two GUARD cells are the paired negative that keeps that a normalization.
+const s = Math.floor(now / 1000);
+check(
+  "a seconds-unit beat outranks an older ms record: ranking is no longer unit-blind",
+  peerRecordWins(seen("online", now - 60_000), seen("online", s + 1)),
+  true,
+);
+check(
+  "PAIRED — an OLDER seconds stamp still loses to a newer ms record",
+  peerRecordWins(seen("online", now), seen("online", s - 60)),
+  false,
+);
+check(
+  "a client last-will in seconds is accepted against an older ms beat",
+  peerRecordWins(seen("online", now - 10_000), seen("offline", s)),
+  true,
+);
+check("a seconds beat reads online on this face", peerState(seen("online", s), now), "online");
+check(
+  "and the row names the unit it converted, so a converted stamp is auditable",
+  peerAge(seen("online", s), now).endsWith(" [s stamp, read as ms]"),
+  true,
+);
+check(
+  "GUARD KEPT — a seconds stamp further ahead than the allowance is stale, not online",
+  peerState(seen("online", s + 600), now),
+  "stale",
+);
+check(
+  "GUARD KEPT — the same moment arriving in ms is stale too",
+  peerState(seen("online", now + 600_000), now),
+  "stale",
+);
+check("an ms stamp is left exactly as it arrived", normBeatTsMs(now + 5), now + 5);
 check("fresh beat reads online", peerState(seen("online", now - 5_000), now), "online");
 check(
   "an unstamped record proves no liveness (stale, not online)",
