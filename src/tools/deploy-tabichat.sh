@@ -437,8 +437,35 @@ if [ "$gates" = 1 ]; then
       # its environment too; the rest of the list does not care and is run the same way for one reason:
       # a gate must not pass because of which terminal fired it.
       say "gate: python3 tools/$t"
-      (cd "$BASE" && env -u MQTT_LEAD_NICK -u MQTT_URL -u MQTT_HOST python3 "tools/$t" >/dev/null) \
-        || die "$t is not green; fix it instead of deploying around it"
+      # CAPTURE FIRST, THEN SURFACE ONLY WHAT A CAPABILITY DECIDED. The swallow had a reason and it is
+      # still the rule: this one gate prints 60 `ok` lines on a green run and the array prints hundreds,
+      # so a green python gate contributes nothing to the record but its `gate:` marker — measured before
+      # choosing, not assumed. What must NOT be swallowed is a capability declaration: on a box with no
+      # `openssl` the gate names every check it could not drive (14 `NOT APPLICABLE` lines plus its own
+      # `did NOT RUN` summary), and dropping those leaves the customer's honest-absence story unread in
+      # the very document a deploy leaves behind. Same capture shape as the shell loop above, and the
+      # success branch comes FIRST because `if !` would hand the `else` a `$?` of 0 about a gate that
+      # failed — a false number in the one sentence written to carry it.
+      if pyout=$( (cd "$BASE" && env -u MQTT_LEAD_NICK -u MQTT_URL -u MQTT_HOST python3 "tools/$t" 2>&1) ); then
+        pycaps=$(printf '%s\n' "$pyout" | grep -E 'NOT APPLICABLE|did NOT RUN' || true)
+        if [ -n "$pycaps" ]; then
+          while IFS= read -r pyline; do
+            say "  $pyline"
+          done <<< "$pycaps"
+        fi
+        continue
+      else
+        # The refusal keeps its words byte-identical to before this change — `REFUSED: <gate> is not green;
+        # fix it instead of deploying around it` is pinned by gate-word cells, and a rewrite here is a
+        # gate-word defect, not a tidy-up. The gate's own output is printed above the refusal so a red
+        # python gate is diagnosable from the record alone, the way a red shell gate already was.
+        if [ -n "$pyout" ]; then
+          printf '%s\n' "$pyout" >&2
+        else
+          printf '%s\n' "(the check printed nothing)" >&2
+        fi
+        die "$t is not green; fix it instead of deploying around it"
+      fi
     done
   else
     say "WARNING: python3 not found — NEITHER python gate ran (${PYGATES[*]})"

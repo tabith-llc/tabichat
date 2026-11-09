@@ -452,6 +452,108 @@ check "this harness is registered in the shell-gate array, by the += form only (
 folded=$(printf '%s\n' "$dep" | grep -c 'SHGATES=(.*test_gate_words' || true)
 check "and it is NOT folded into the pinned literal, which test_secret_guard.sh reads by exact text (0)" "$folded" "0"
 
+# CASE 8 — THE PYTHON GATE LOOP MUST PUT CAPABILITY DECLARATIONS IN THE RECORD, and only those.
+# The python loop used to run each gate with stdout to /dev/null. That swallow had a reason — one green
+# python gate prints 60 `ok` lines and the shipped array prints hundreds, and a deploy record that carries
+# all of them is a record nobody reads — but it also dropped the honest-absence story: on a box with no
+# `openssl`, the tlsenv gate names every check it could not drive (14 `NOT APPLICABLE` lines plus its own
+# `did NOT RUN` summary), and the customer's deploy record never saw any of it. The fix is bounded: capture,
+# print on failure with the refusal words unchanged, and on success surface ONLY the capability shapes the
+# repo already owns. These four faces are the paired negatives that keep that bound from decaying in either
+# direction — a swallowed skip, or a flood.
+trim_py_face() { # $1 = a clone's deploy-tabichat.sh ; $2 = planted gate name, or SHIPPED to leave PYGATES alone
+  python3 - "$1" "$2" <<'PY' || return 1
+import sys
+p, gate = sys.argv[1], sys.argv[2]
+s = open(p).read()
+for arr in ("GATES", "PHYSICAL"):
+    a = '  for t in "${%s[@]}"; do' % arr
+    if a in s:
+        s = s.replace(a, '  %s=()   # emptied by test_gate_words.sh CASE 8\n%s' % (arr, a), 1)
+i = s.index('  SHGATES=(check_guard_armed.sh)')
+j = s.index('  [ "${#SHGATES[@]}" -gt 0 ]')
+s = s[:i] + '  SHGATES=(check_release_record.sh)   # trimmed by test_gate_words.sh CASE 8\n' + s[j:]
+if gate != "SHIPPED":
+    a = '  PYGATES=(test_broker.py test_wrap_rows.py)'
+    b = '  PYGATES+=(test_tlsenv.py test_addressing.py test_paste.py test_presence.py test_tabichat_cli.py)'
+    if a not in s or b not in s:
+        raise SystemExit("PYGATES assignment anchors moved — update CASE 8 rather than let it test nothing")
+    s = s.replace(a, '  PYGATES=(%s)   # trimmed by test_gate_words.sh CASE 8' % gate, 1)
+    s = s.replace(b, '  PYGATES+=()\n', 1)
+open(p, 'w').write(s)
+PY
+}
+plant_py_gate() { # $1 = clone dir, $2 = face (skip | green | fail)
+  python3 - "$1" "$2" <<'PY'
+import sys
+d, face = sys.argv[1], sys.argv[2]
+body = {
+  "skip": ['print("ok    a green cell the record must NOT carry")',
+           'print("NOT APPLICABLE  a planted capability cell: openssl is absent on this host, so this check could not be driven")',
+           'print("plant-gate: 1 REAL-MATERIAL check did NOT RUN on this host — named above, not passed")'],
+  "green": ['print("ok    a green cell the record must NOT carry")',
+            'print("ok    and another one, because volume is the reason the swallow exists")'],
+  "fail":  ['print("ok    one passing cell")',
+            'print("FAIL  PLANTED python gate: this gate must stop the deploy")',
+            'raise SystemExit(1)'],
+}[face]
+open(d + "/src/tools/plant_py_gate.py", "w").write("\n".join(body) + "\n")
+PY
+}
+say "CASE 8 — a python gate's capability lines reach the deploy record; its green noise does not"
+build_clone "$SCR/p8skip" "" || { printf 'FAIL  could not build the CASE 8 clone\n' >&2; exit 1; }
+trim_py_face "$SCR/p8skip/$DEP_REL" plant_py_gate.py || { printf 'FAIL  could not trim CASE 8\n' >&2; exit 1; }
+plant_py_gate "$SCR/p8skip" skip || exit 1
+RC=$(run_deploy_in "$SCR/p8skip"); OUT=$(cat "$SCR/out.txt")
+check "(a) the deploy completes with a declaring-but-green gate (rc=0)" "$RC" "0"
+contains "$OUT" "gate: python3 tools/plant_py_gate.py" "the marker is still printed per gate, one line"
+contains "$OUT" "NOT APPLICABLE  a planted capability cell" "and the capability declaration reached the record"
+contains "$OUT" "did NOT RUN on this host" "plus the harness's own summary sentence"
+lacks "$OUT" "a green cell the record must NOT carry" "NEGATIVE: the gate's ok-line stayed out of the record"
+check "and exactly two capability lines were surfaced from that gate (2)" \
+  "$(printf '%s\n' "$OUT" | grep -cE 'planted capability cell|did NOT RUN on this host')" "2"
+
+build_clone "$SCR/p8green" "" || exit 1
+trim_py_face "$SCR/p8green/$DEP_REL" plant_py_gate.py || exit 1
+plant_py_gate "$SCR/p8green" green || exit 1
+RC=$(run_deploy_in "$SCR/p8green"); OUT=$(cat "$SCR/out.txt")
+check "(b) the deploy completes on an all-green gate (rc=0)" "$RC" "0"
+contains "$OUT" "gate: python3 tools/plant_py_gate.py" "the marker is there"
+lacks "$OUT" "the record must NOT carry" "NEGATIVE: no ok-line leaked — this is the half that keeps a green gate quiet"
+check "and no capability line was invented for a gate that declared nothing (0)" \
+  "$(printf '%s\n' "$OUT" | grep -cE 'NOT APPLICABLE|did NOT RUN')" "0"
+
+build_clone "$SCR/p8fail" "" || exit 1
+trim_py_face "$SCR/p8fail/$DEP_REL" plant_py_gate.py || exit 1
+plant_py_gate "$SCR/p8fail" fail || exit 1
+RC=$(run_deploy_in "$SCR/p8fail"); OUT=$(cat "$SCR/out.txt")
+check "(c) a red python gate stops the deploy (rc=1)" "$RC" "1"
+contains "$OUT" "REFUSED: plant_py_gate.py is not green; fix it instead of deploying around it" \
+  "the refusal words are byte-identical to the ones before this change"
+contains "$OUT" "FAIL  PLANTED python gate" "and the gate's own output is now IN the record, above the refusal"
+
+build_clone "$SCR/p8real" "" || exit 1
+trim_py_face "$SCR/p8real/$DEP_REL" SHIPPED || exit 1
+RC=$(run_nossl "$SCR/p8real" "$BINN"); OUT=$(cat "$SCR/out.txt")
+check "(d) an openssl-less host completes the deploy (rc=0)" "$RC" "0"
+check "and the tlsenv gate's fourteen named skips arrive IN THE RECORD (14)" \
+  "$(printf '%s\n' "$OUT" | grep -c 'NOT APPLICABLE')" "14"
+lacks "$OUT" "all 60 checks pass" "NEGATIVE: the green-path summary stays swallowed — only the named skips surface"
+check "the summary line naming what did not run is carried too (1)" \
+  "$(printf '%s\n' "$OUT" | grep -c 'REAL-MATERIAL checks did NOT RUN')" "1"
+check "NEGATIVE: and no green ok-line from that gate leaked into the record (0)" \
+  "$(printf '%s\n' "$OUT" | grep -cE '^ok ')" "0"
+check "(e) the python loop no longer sends a gate's output to /dev/null (0 sites)" \
+  "$(printf '%s\n' "$dep" | grep -cE 'python3 "tools/\$t" > ?/dev/null')" "0"
+# The refusal sentence appears at TWO loops (the bun GATES and this one), so the honest pin is not a made-up
+# count — it is byte-stability against the base face, read by sha, plus the site inside the python loop.
+base_dep=$(git -C "$REPO" show 4b3b79fea57e10416a43c299346dc9803003195e:src/tools/deploy-tabichat.sh 2>/dev/null || true)
+check "the refusal words are UNCHANGED from the base face (same count both, read by sha)" \
+  "$(printf '%s\n' "$dep" | grep -Fc 'is not green; fix it instead of deploying around it')" \
+  "$(printf '%s\n' "$base_dep" | grep -Fc 'is not green; fix it instead of deploying around it')"
+check "and the python loop itself still carries one such site, inside its own block (1)" \
+  "$(printf '%s\n' "$dep" | sed -n '/for t in "\${PYGATES\[@\]}"; do/,/^    done/p' | grep -Fc 'is not green; fix it instead of deploying around it')" "1"
+
 printf '\n%s\n' "$([ "$failed" -gt 0 ] && printf '%d FAILED of %d cells' "$failed" "$ran" || printf 'all %d gate-word cells pass' "$ran")"
 [ "$failed" -gt 0 ] && exit 1
 exit 0
