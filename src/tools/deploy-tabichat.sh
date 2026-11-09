@@ -361,6 +361,18 @@ if [ "$gates" = 1 ]; then
   # rather than reading a gate's output to decide whether to skip it. A gate that did not run is NAMED
   # in the run's own words; it is never counted as a pass.
   SHGATES_NO_OPENSSL=(test_mint_pki.sh)
+  # leg 1171: the six-heading release-record order joins the same stage, appended at the END for the reason
+  # every line above keeps this shape — test_secret_guard.sh pins these registrations by exact text and counts
+  # the array in both forms. R-2730 names the six headings and their sequence, CHANGELOG-FORMAT.md carries
+  # that form, and nothing in the tree checked it: the shipped release-record read compares the declared
+  # version to the newest section and says nothing about the order inside it, so a section written in any
+  # sequence passed every gate and could reach the public face that way. Two names join together because a
+  # check and its truth table are separate files here: the check judges the record, the harness plants the
+  # swapped pair, the printed-but-empty heading, the heading outside the six, the repeated heading, and the
+  # pair of fixtures that show the scope is drawn where the ruling draws it (a violation in the NEWEST
+  # numbered section refuses, the identical bytes in an older published section do not). POSIX sh, both
+  # files, and `sh -n` was run on each because this loop consults `sh`.
+  SHGATES+=(check_changelog_headings.sh test_changelog_headings.sh)
   # AN EMPTY SHELL-GATE ARRAY IS NOT AN EMPTY RUN (the class a prior leg closed for FILES and LOADCHECK).
   # Measured here: every `SHGATES`/`SHGATES+=` registration line emptied to `()` gave rc 0, 29 gate lines,
   # zero shell gates, and `deployed set complete and identical` — ten checks deleted, nothing said so. A census
