@@ -20,7 +20,8 @@
 # heading, a heading outside the six, a heading repeated, a violation sitting in the NEWEST numbered section
 # rather than in [Unreleased] (which is what makes the scope claim testable instead of asserted), the same
 # violation in an OLDER published section (which must NOT refuse, because the ruling forbids re-cutting
-# history), no section in scope at all, and a file that cannot be read. Each refusal cell also asserts the
+# history), no section in scope at all, a file that cannot be read, and one cell named LIMIT that pins the
+# acceptance of a stamped-and-empty record so that boundary cannot quietly widen in either direction. Each refusal cell also asserts the
 # word `REFUSE` came back, so an empty output never reads as the pass.
 #
 # Runs under sh (dash here) because that is the interpreter the shell-gate loop consults.
@@ -68,6 +69,11 @@ printf '# Changelog\n\n## [Unreleased]\n\n### Added\n\n- One entry\n\n## [8.8.8]
 printf '# Some Page\n\n### Added\n\n- One entry\n\nSome prose.\n' > "$SCR/nosec.md"
 # [Unreleased] with nothing to say at all — the ruling drops the headings, this file must agree
 printf '# Changelog\n\n## [Unreleased]\n\n## [9.9.9] - 2026-01-01\n\n### Changed\n\n- One entry\n' > "$SCR/nounreleased.md"
+# THE LIMIT FACE, named so a future seat has to change this cell and the check's header paragraph in the same
+# commit to turn it into a refusal: a record that has been stamped and carries nothing under either scoped
+# heading. A deploy running in that window is deploying a CORRECT tree — the stamp and the next entry landing
+# are two moments — so this passes, and completeness stays where it lives (the cut-time P4 reading).
+printf '# Changelog\n\n## [Unreleased]\n\n## [9.9.9] - 2026-01-01\n' > "$SCR/emptystamp.md"
 
 run() { sh "$CHK" "$1" 2>&1; }
 
@@ -85,6 +91,11 @@ check "  the same three headings reordered to the ruling's sequence pass" "$rc" 
 rc=0; out=$(run "$SCR/nounreleased.md") || rc=$?
 check "  an [Unreleased] with no headings passes — dropping a heading with nothing to say is the ruling, not a gap" "$rc" "0"
 contains "$out" "headings=0" "and it prints why, rather than reading as nothing happened"
+# ONE cell, named LIMIT, carrying both halves in its expected value so it cannot be softened by deleting an
+# assertion: rc 0 AND both scoped sections printed as headings=0.
+rc=0; out=$(run "$SCR/emptystamp.md") || rc=$?
+stamp="${rc}/$(printf '%s' "$out" | grep -c 'headings=0')"
+check "  LIMIT (leg 1174 §6): a stamped-and-empty record passes — the stamp and the next entry are two moments, and completeness is the cut-time P4 reading, not this check" "$stamp" "0/2"
 rc=0; out=$(run "$SCR/olderbad.md") || rc=$?
 check "  an inversion in an OLDER published section does not refuse — R-2730 does not re-cut history" "$rc" "0"
 contains "$out" "read 2 scoped section(s)" "and the scope is printed: two sections read, three on the page"
@@ -118,11 +129,15 @@ rc=0; run "$SCR/does-not-exist.md" >/dev/null 2>&1 || rc=$?
 check "  a missing file is rc 2, never rc 0" "$rc" "2"
 
 say "ISOLATION — nothing was written into this repository by these fixtures"
-dirty=$(cd "$REPO" && git status --porcelain | grep -c -E 'good\.md|swapped\.md|empty\.md|outside\.md|dup\.md|newestbad\.md|olderbad\.md|promoted\.md|nosec\.md|nounreleased\.md|reordered\.md' || true)
+dirty=$(cd "$REPO" && git status --porcelain | grep -c -E 'good\.md|swapped\.md|empty\.md|outside\.md|dup\.md|newestbad\.md|olderbad\.md|promoted\.md|nosec\.md|nounreleased\.md|reordered\.md|emptystamp\.md' || true)
 check "  no fixture file appears in the work tree" "$dirty" "0"
+# The count is read from the list the cell itself carries, so it cannot go stale in either direction: a fixture
+# that leaked and a fixture that was never written both refuse, and adding one does not need a hand-edit here.
+FIXTURES="good.md swapped.md reordered.md empty.md outside.md dup.md newestbad.md olderbad.md promoted.md nosec.md nounreleased.md emptystamp.md"
+want=$(printf '%s\n' $FIXTURES | grep -c .)
+missing=0; for f in $FIXTURES; do [ -f "$SCR/$f" ] || missing=$((missing + 1)); done
 left=$(ls "$SCR" 2>/dev/null | grep -c . || true)
-[ "$left" = "11" ] && ok "  the scratch holds exactly the 11 fixtures this run wrote (trap clears them at exit)" \
-                   || bad "  scratch fixture count" "got '$left', want '11' — a fixture leaked or was never written"
+check "  the scratch holds exactly the $want fixtures this run wrote — none leaked, none unwritten (trap clears them at exit)" "$left/$missing" "$want/0"
 
 printf '\n%s\n' "$([ "$failed" -gt 0 ] && printf '%d FAILED of %d cells — the six-heading order is not gated' "$failed" "$ran" || printf 'all %d cells pass — the six-heading order is gated both ways' "$ran")"
 [ "$failed" -gt 0 ] && exit 1

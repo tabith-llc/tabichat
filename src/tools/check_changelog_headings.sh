@@ -21,16 +21,21 @@
 #
 # WHAT IS IN SCOPE, and why that is a boundary and not an exception list. R-2730 governs NEW entries: the
 # carrier states it in its own words — "Existing entries are history — never re-cut them into this shape."
-# So this file judges exactly two parts of the record, both of them the part this release is writing:
+# What this file READS, stated as the code states it, is exactly two parts of the record:
 #   * the `## [Unreleased]` section, where entries land before a cut; and
-#   * the FIRST numbered `## [x.y.z]` section, which is the newest one and the one check_release_record.sh
-#     matches against the declared version, so it is the section this tree is publishing.
-# Every older numbered section is published history and is left alone — deliberately, and the reader of this
-# comment can see the reason in the tree itself: `0.1.2` and `0.1.1` both spell the first heading
-# `New Features`, which is not one of the six as R-2730 names them. Refusing on those would be a gate
-# demanding a rewrite of released notes, which the ruling forbids; skipping them silently would be a gate
-# that cannot see the section being cut. This file does neither: it names the scope here and prints which
-# sections it read, so an older section never looks like a pass it earned.
+#   * the FIRST numbered `## [x.y.z]` section in file order — newest by position, and the one
+#     check_release_record.sh compares against the declared version.
+# Everything after that first numbered section is never read. Say plainly what that costs, and when: on a tree
+# where no new section has been cut yet — which is this tree today — the first numbered section is already
+# published (`[0.1.3]`), so a released section IS judged in that window. Position is the only marker that
+# survives the stamp, so this file pays that cost rather than carrying a list of versions to skip; it is not
+# the same act as re-cutting history, which is what the next paragraph refuses to do.
+# Older numbered sections are left alone — deliberately, and the reader of this comment can see the reason in
+# the tree itself: `0.1.2` and `0.1.1` both spell the first heading `New Features`, which is not one of the six
+# as R-2730 names them. Refusing on those would be a gate demanding a rewrite of released notes, which the
+# ruling forbids; skipping the newest section silently would be a gate that cannot see the section being cut.
+# This file does neither: it names its scope here and prints which sections it read, so an older section never
+# looks like a pass it earned.
 #
 # WHAT IT JUDGES, three things and no more.
 #   1. Every `### ` heading in a scoped section is one of the six, spelled as the ruling spells them.
@@ -38,6 +43,17 @@
 #   3. No printed heading is empty: each one carries at least one entry line under it.
 # It does NOT judge prose, entry counts, or whether a heading *should* have been there — the completeness
 # audit that answers that is a cut-time reading job, named in the run sheet.
+#
+# NAMED LIMIT — an empty record PASSES, and that is a decision, not an oversight. A wholly empty
+# `## [Unreleased]` is accepted, and so is a newest numbered section carrying no headings at all. Whether every
+# change that landed has an entry somewhere is COMPLETENESS, and completeness is read at the cut by
+# RELEASE-RUN-SHEET P4, not by a heading-sequence check. The review at leg 1174 §6 measured this hole. It is
+# not closed with a refusal here because the cut commit's own shape makes a refusal the wrong instrument: the
+# stamp moves `[Unreleased]` into `## [x.y.z] - <date>`, so between the stamp and the next entry landing the
+# block is legitimately empty, and a deploy running inside that window would refuse a CORRECT tree — a false
+# refusal in the customer path, the class this repo keeps spending legs to delete. One cell in
+# src/tools/test_changelog_headings.sh is named LIMIT and pins that acceptance, so a seat that later wants a
+# refusal has to change the cell's name and this paragraph in the same commit, in the open.
 
 set -u
 
@@ -108,7 +124,7 @@ END {
         printf "REFUSE  no section in scope — this file has no `## [Unreleased]` and no `## [x.y.z]` section, so it is not a release record this check can judge: %s\n", FILENAME
         exit 1
     }
-    printf "note  read %d scoped section(s) of %s: [Unreleased] and the newest numbered section only — older sections are published history and R-2730 does not re-cut them\n", nscoped, FILENAME
+    printf "note  read %d scoped section(s) of %s: [Unreleased] and the FIRST numbered section in file order; every later section is published history and R-2730 does not re-cut it\n", nscoped, FILENAME
     if (fails > 0) { printf "headings: REFUSE — %d scoped section(s) out of the six-heading form.\n", fails; exit 1 }
     printf "headings: OK — every scoped section carries the six headings in order, none empty, none outside the six.\n"
     exit 0
