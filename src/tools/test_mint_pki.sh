@@ -292,10 +292,51 @@ check "PAIRED — the certificate destination line was NOT swept up by the fix (
 # text put a backtick-quoted command inside DOUBLE QUOTES and the shell EXECUTED it while printing the
 # hint — the published line then carried a redirect error in the middle of it, and every wording cell
 # above still passed. That is the same trap root AGENTS.md names for commit messages, in an echo.
-lacks "$sd" "cannot open" "no shell error leaked into the printed next-steps"
-lacks "$sd" "command not found" "and no failed substitution either"
-check "every Next-steps line is a line the script wrote, not a shell complaint (0 bad lines)" \
-  "$(printf '%s\n' "$sd" | sed -n '/^Next steps/,/^$/p' | grep -Ec '(line [0-9]+: .*(cannot open|not found))' || true)" "0"
+#
+# THE PATTERNS SPEAK BOTH SHELLS, because which shell runs the generator is the product's choice and not
+# this file's: `sh "$MINT"` is what the loop below does (and the parse pair at the head of this file keeps
+# bash working too, because an operator may run it either way). The two shells do not phrase the same
+# failure alike — measured at the face this leg was cut from:
+#   unknown command, sh   ->  "m-int.sh: 1: <name>: not found"            caught by NONE of the old three
+#   unknown command, bash ->  "m-int.sh: line 336: <name>: command not found"  caught by the two bash shapes
+#   `sh /nope.sh`, both   ->  "sh: 0: cannot open /nope.sh: No such file"  caught by the first lack only
+# So a bare `command not found` and a `line [0-9]+:` prefix were half a guard: on this box's `sh`, an
+# unknown command leaking into the next-steps block left all three cells green. The cure is in the
+# patterns, never in the runner — the regexes below take bash's `line N:` and sh's `: N:` alike, and the
+# substring lacks keep both wordings. The PLANT cell at the bottom of this block is what stops any of it
+# going quiet again: it makes the noise on purpose and requires the pattern to see it.
+NOISE_RE='(line [0-9]+:|[^[:space:]]:[[:space:]]*[0-9]+:).*(cannot open|not found)'
+lacks "$sd" "cannot open" "no shell error leaked into the printed next-steps (both shells say this one alike)"
+lacks "$sd" "command not found" "and no failed substitution either (bash wording)"
+lacks "$sd" ": not found" "and not under sh's wording either"
+check "every Next-steps line is a line the script wrote, not a shell complaint, under either shell dialect (0 bad lines)" \
+  "$(printf '%s\n' "$sd" | sed -n '/^Next steps/,/^$/p' | grep -Ec "$NOISE_RE" || true)" "0"
+# THE NOISE PATTERN CAN FIRE — proved on noise this cell makes, not asserted. A copy of the generator gets
+# one backtick-in-double-quotes echo line, the exact shape the first draft shipped, and the same pattern is
+# run over WHAT IT PRINTS. Under `sh` the line reads `: 1: … not found`, under bash `line N: … command not
+# found`; the assertion is `>= 1`, so this cell cannot be satisfied by the wording of one particular shell.
+noise_mint="$SCR/mint-noise.sh"
+cp "$MINT" "$noise_mint"
+python3 - "$noise_mint" <<'PY' || bad "PLANT — could not build the noise-minting copy" "anchor not found"
+import sys
+p = sys.argv[1]; s = open(p).read()
+anchor = 'echo "   4. export for each lane:'
+i = s.index(anchor)
+s = s[:i] + 'echo "      planted noise probe `intentionally-missing-command-1158`"\n' + s[i:]
+open(p, 'w').write(s)
+PY
+noise_out=$(TABICHAT_ROSTER="$ROSTER" TABICHAT_ACL_SUPPLEMENT="$SUPP" sh "$noise_mint" -o "$SCR/noise-out" seat-a 2>&1 || true)
+noise_hits=$(printf '%s\n' "$noise_out" | sed -n '/^Next steps/,/^$/p' | grep -Ec "$NOISE_RE" || true)
+# No `ran` bump here: both branches below call ok/bad, and each of those already counts the cell. The
+# two plant cells further down (shipped by leg 1140) do bump it AND call ok — see this leg's report for
+# the two phantom lines that gives main's 84; this one is written to count once.
+if [ "$noise_hits" -ge 1 ]; then
+  ok "PLANT — the shape the first draft shipped makes the pattern fire under the shell that ran it ($noise_hits line(s))"
+else
+  bad "PLANT — the shape the first draft shipped makes the pattern fire under the shell that ran it" "got $noise_hits, wanted >=1: the guard is a sleeper again"
+fi
+check "PLANT PAIRED — and the shipped generator prints no such line (0)" \
+  "$(printf '%s\n' "$sd" | sed -n '/^Next steps/,/^$/p' | grep -Ec "$NOISE_RE" || true)" "0"
 
 # THE PLANT, and it is the cell that makes the line above a check rather than a wish: the old wording is
 # read out of the base face by sha, never retyped here, so a rewrite of the echo that put the destination
