@@ -36,8 +36,9 @@
 #   NOT ARMED      - a set that carries an executable hook and NO commit-msg: a set that lost one name is
 #                    the tamper class, and it must stay a refusal. That is the doormat negative.
 #   NOT APPLICABLE - a plain `git init` with nothing installed anywhere, rc 0, naming the path it asked.
-# The helper itself is SOURCED from this face if the face has one (the deployed crew set, or a tracked
-# .githooks/subject-guard.sh should the product ever ship it) and COPIED into the fixture, so the behaviour
+# The helper itself is SOURCED from this face if the face has one — adjacent to the consulted hook, or
+# tracked at .githooks/subject-guard.sh should the product ever ship it, or at the fixed path a CHAINED
+# set names in its own text (see the three candidates below) — and COPIED into the fixture, so the behaviour
 # cells below test a real guard in a clone of this harness's making. Where a face has no helper at all, the
 # behaviour half prints the reason it did not run and is never worn as a pass: "cannot run" and "ran and
 # found nothing" do not print the same way.
@@ -58,17 +59,43 @@ check() { if [ "$2" = "$3" ]; then ok "$1 (=$3)"; else bad "$1" "got '$2', want 
 contains() { case "$1" in *"$2"*) ok "$3";; *) bad "$3" "output lacks '$2'";; esac; }
 lacks()    { case "$1" in *"$2"*) bad "$3" "output CONTAINS '$2'";; *) ok "$3";; esac; }
 
-# ---- where the guard helper lives on THIS face. Sourced, never asserted against: the assertion below is
-# always about a fixture this harness wrote, so a host value can only ever supply the bytes of the helper.
+# ---- where a guard helper lives, for whichever hook set is asked about. THREE CANDIDATES, tried IN ORDER:
+# (1) adjacent to the consulted commit-msg, (2) the tracked fallback this repo carries, (3) the fixed
+# absolute path the consulted hook names in its OWN text.
+#
+# The third is what a CHAINED set needs, and this box is shaped that way: githooks-tabichat/commit-msg calls
+# githooks/subject-guard.sh in the other directory. Guessing "adjacent to the hook" misses a guard that runs
+# on every commit there, so the census reads as a face with no helper — a count of WHERE the file sits, never
+# of whether the guard runs. Asking the hook itself answers that without remembering a directory name: only
+# code lines are read (a comment is not a dependency), only an absolute path whose last segment is the guard's
+# own name, and only one that exists. A path built from a variable ($(dirname ...)/subject-guard.sh) is not a
+# fixed path and is not matched — candidate 1 is what answers that shape. Whatever is resolved gets copied,
+# made executable, and committed against, so a wrapper gets to point at a subject-guard and at nothing else.
+#
+# THE FALLBACK IS AN ARGUMENT, not an assumption. The plants below ask about a hook set in a scratch
+# directory, and a scratch question must not inherit this repo's tracked set as a candidate it never asked
+# for — a control that reads its caller's shape can be turned by that caller into a false answer.
+resolve_helper() { # resolve_helper <consulted-commit-msg> [<tracked-fallback>] -> a helper path, or nothing
+    local rh_hook=$1
+    local rh_fallback=${2:-$ROOT/.githooks/subject-guard.sh}
+    local rh="" rh_candidate rh_chained
+    if [ -n "$rh_hook" ] && [ -f "$rh_hook" ] \
+       && grep -v '^[[:space:]]*#' "$rh_hook" 2>/dev/null | grep -qs 'subject-guard\.sh'; then
+        rh_candidate=$(dirname -- "$rh_hook")/subject-guard.sh
+        [ -f "$rh_candidate" ] && rh="$rh_candidate"
+    fi
+    [ -n "$rh" ] || { [ -f "$rh_fallback" ] && rh="$rh_fallback"; }
+    if [ -z "$rh" ] && [ -n "$rh_hook" ] && [ -f "$rh_hook" ]; then
+        rh_chained=$(grep -v '^[[:space:]]*#' "$rh_hook" 2>/dev/null \
+            | grep -oE "/[^\"'\$[:space:]]*/subject-guard\.sh" | head -1)
+        [ -n "$rh_chained" ] && [ -f "$rh_chained" ] && rh="$rh_chained"
+    fi
+    printf '%s\n' "$rh"
+}
+
 ambient_consulted=$(git -C "$ROOT" rev-parse --git-path hooks/commit-msg 2>/dev/null || true)
 case "${ambient_consulted:-}" in ''|/*) ;; *) ambient_consulted="$ROOT/$ambient_consulted" ;; esac
-HELPER=""
-if [ -n "${ambient_consulted:-}" ] && [ -f "$ambient_consulted" ] \
-   && grep -v '^[[:space:]]*#' "$ambient_consulted" 2>/dev/null | grep -qs 'subject-guard\.sh'; then
-    candidate=$(dirname -- "$ambient_consulted")/subject-guard.sh
-    [ -f "$candidate" ] && HELPER="$candidate"
-fi
-[ -n "$HELPER" ] || { [ -f "$ROOT/.githooks/subject-guard.sh" ] && HELPER="$ROOT/.githooks/subject-guard.sh"; }
+HELPER=$(resolve_helper "$ambient_consulted")
 
 # ---- the config world every cell after this line runs in, supplied here rather than inherited ----
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/subject-guard.XXXXXX") || { printf 'subject-guard: no tmpdir\n' >&2; exit 1; }
@@ -127,6 +154,41 @@ lacks "$AOUT" "NOT ARMED" "and the documented arming is never described as tampe
 arm_face global-only "$TMP/g-plain"
 check "PAIRED — the SAME set aimed by a GLOBAL value is a refusal (rc=1): a host guard lost a name" "$ARC" "1"
 contains "$AOUT" "NOT ARMED" "and it says which"
+
+say "HELPER RESOLUTION — a chained set, its missing twin, and a real commit between them"
+# Both plants below chain to a helper in ANOTHER directory, so candidate 1 cannot answer either one and what
+# these cells measure is candidate 3 alone. The first names a helper that EXISTS; the second names the same
+# shape at a path that does NOT. Telling those two apart is the whole job: a resolution that returned the
+# second as if it were the first would go on to copy a file that is not there, and a harness that found
+# nothing has to say so rather than pass. The fallback is passed as a scratch path that holds no helper,
+# so neither plant can be answered by candidate 2 either.
+plant_wrapper() { # plant_wrapper <file> <helper-path> — a chained wrapper: fixed path, refuse when missing
+    printf '#!/bin/sh\n# plant: a chained set — the helper is named by fixed path in ANOTHER directory\nsg=%s\n[ -x "$sg" ] || { printf "subject-guard: helper missing at %%s — refusing rather than committing unchecked.\\n" "$sg" >&2; exit 1; }\n"$sg" "$1"\nexit $?\n' "$2" > "$1"
+    chmod 755 "$1"
+}
+mkdir -p "$TMP/plant-set" "$TMP/plant-gone" "$TMP/plant-far"
+printf '#!/bin/sh\nexit 0\n' > "$TMP/plant-far/subject-guard.sh"
+chmod 755 "$TMP/plant-far/subject-guard.sh"
+plant_wrapper "$TMP/plant-set/commit-msg" "$TMP/plant-far/subject-guard.sh"
+resolved=$(resolve_helper "$TMP/plant-set/commit-msg" "$TMP/plant-gone/subject-guard.sh")
+check "a chained set naming a helper that EXISTS resolves the path the hook itself printed" "$resolved" "$TMP/plant-far/subject-guard.sh"
+plant_wrapper "$TMP/plant-gone/commit-msg" "$TMP/plant-gone/subject-guard.sh"
+resolved=$(resolve_helper "$TMP/plant-gone/commit-msg" "$TMP/plant-gone/subject-guard.sh")
+check "PAIRED — the same shape naming a helper that does NOT exist resolves to nothing, which is the branch that prints the skip" "$resolved" ""
+# And that missing plant, driven by a REAL commit, so "cannot find" is proven at the hook rather than worn
+# as a pass: the refuse-when-missing law is exercised here, not restated.
+GONE="$TMP/venue-gone"
+git init -q "$GONE" || { printf 'subject-guard: cannot build the missing-helper venue\n' >&2; exit 1; }
+git -C "$GONE" config user.name "Tabith LLC"
+git -C "$GONE" config user.email "info@tabith.com"
+git -C "$GONE" config core.hooksPath "$TMP/plant-gone"
+echo seed > "$GONE/f"; git -C "$GONE" add -A
+MOUT=$(git -C "$GONE" commit -qm "docs: record the two faces of helper resolution" 2>&1); MRC=$?
+case "$MOUT" in
+    *"nothing to commit"*) bad "the missing-helper plant" "instrument fault: nothing to commit — the fixture did not change";;
+    *) check "a real commit through a chained set whose helper is missing is refused, not accepted (rc=1)" "$MRC" "1";;
+esac
+contains "$MOUT" "subject-guard: helper missing at" "and the refusal names the path it could not find"
 
 BEHAVIOUR=1
 if [ -z "$HELPER" ]; then
